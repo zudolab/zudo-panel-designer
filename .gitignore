@@ -1,0 +1,7 @@
+node_modules/
+dist/
+worktrees/
+.playwright-cli/
+*.log
+.DS_Store
+_temp-resource/**/node_modules
