@@ -1,0 +1,24 @@
+name = "zpd"
+compatibility_date = "2026-07-11"
+
+# preview_urls defaults to match workers_dev, so an omitted value here would
+# also flip to false the moment workers_dev changes. Set both explicitly.
+workers_dev = true
+preview_urls = true
+
+# Static-only Workers Static Assets site: no Worker script, no Functions,
+# no D1/R2/KV in stage 1. `assets` is inherited by every named environment
+# below, so it does not need to be repeated under [env.production].
+[assets]
+directory = "./packages/app/dist"
+not_found_handling = "single-page-application"
+
+# Custom-domain route lives on the production environment only, so a
+# `wrangler versions upload` / plain `wrangler deploy` preview stays on the
+# generated *.workers.dev URL and never serves the real domain.
+[env.production]
+workers_dev = false
+
+[[env.production.routes]]
+pattern = "zpd.takazudomodular.com"
+custom_domain = true
