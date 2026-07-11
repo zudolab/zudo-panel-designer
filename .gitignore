@@ -5,3 +5,7 @@ worktrees/
 *.log
 .DS_Store
 _temp-resource/**/node_modules
+coverage/
+*.tsbuildinfo
+.env
+.env.local
