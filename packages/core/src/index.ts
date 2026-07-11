@@ -28,3 +28,11 @@ export { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig } from './
 export { createDefaultDoc, DEFAULT_PANEL_HP } from './default-doc';
 
 // --- geometry/ops/history ---
+
+export * from './bbox';
+export * from './path-geometry';
+export * from './hit-test';
+export * from './resize';
+export * from './snap';
+export * from './layer-ops';
+export * from './history';
