@@ -39,5 +39,15 @@ export default tseslint.config(
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
+  {
+    // Self-registering extension modules: each file defines a tool/inspector/
+    // dialog component and registers it via a side-effect call, exporting
+    // nothing. Fast-refresh's "must export the component" rule does not apply
+    // to these registration modules (see packages/app/src/editor/README.md).
+    files: ['packages/app/src/editor/{tools,inspectors,dialogs,add-actions}/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
   eslintConfigPrettier,
 );
