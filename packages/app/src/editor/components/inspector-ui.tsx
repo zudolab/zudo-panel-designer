@@ -1,7 +1,7 @@
 // Small shared building blocks for the built-in inspectors. Kept OUTSIDE the
 // globbed inspectors/ folder so it is never mistaken for a registering module.
 import { PALETTE, type ColorIndex } from '@zpd/core';
-import type { ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -9,6 +9,19 @@ export function Field({ label, children }: { label: string; children: ReactNode 
       <span className="text-neutral-400">{label}</span>
       <span className="flex-1 max-w-[60%]">{children}</span>
     </label>
+  );
+}
+
+// Same layout as Field but a <div> instead of a <label> — use this when the
+// row's control is a <button> (e.g. an "open a dialog" action) rather than a
+// form field. A <label> implicitly renames a wrapped button to the label
+// text in the accessibility tree, which stomps the button's own name.
+export function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-2 text-xs">
+      <span className="text-neutral-400">{label}</span>
+      <span className="flex-1 max-w-[60%]">{children}</span>
+    </div>
   );
 }
 
@@ -28,6 +41,19 @@ export function NumberField({
       value={value}
       onChange={(e) => onCommit(Number(e.target.value))}
       className="w-full rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-right text-neutral-100"
+    />
+  );
+}
+
+// Full-width action button for an inspector's "open a dialog" affordance
+// (e.g. pattern Browse…, image Convert to vector…). disabled gets its own
+// dimmed style since these fire before their target dialog exists yet.
+export function ActionButton({ className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      {...props}
+      className={`w-full truncate rounded border border-neutral-700 bg-neutral-800 px-1.5 py-1 text-left text-neutral-200 hover:bg-neutral-700 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-neutral-800 ${className}`}
     />
   );
 }
