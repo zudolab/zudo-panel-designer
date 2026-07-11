@@ -56,7 +56,9 @@ export function LayerList({ ctx, selectedId }: LayerListProps) {
   // close the editor, so a blur racing an Escape-driven unmount can never
   // fire a second (stale) commit.
   const commitRename = (id: string) => {
-    ctx.commit({ ...ctx.doc, layers: renameLayer(layers, id, draftName.trim() || id) });
+    // An empty name is a valid stored value — the row display already falls
+    // back to layer.type (see the span below), same as the initial data.
+    ctx.commit({ ...ctx.doc, layers: renameLayer(layers, id, draftName.trim()) });
     setRenamingId(null);
   };
 
