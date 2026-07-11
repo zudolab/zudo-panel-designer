@@ -36,3 +36,32 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+  wrangler-dry-run:
+    name: Validate wrangler config (dry run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # wrangler deploy --dry-run requires the assets directory to exist but
+      # not to contain a real build, so an empty placeholder is enough to
+      # validate wrangler.toml without running the full app build.
+      - name: Create placeholder assets directory
+        run: mkdir -p packages/app/dist
+
+      - name: Validate wrangler config
+        run: pnpm exec wrangler deploy --dry-run --env production
