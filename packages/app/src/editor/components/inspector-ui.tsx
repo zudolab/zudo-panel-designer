@@ -1,7 +1,7 @@
 // Small shared building blocks for the built-in inspectors. Kept OUTSIDE the
 // globbed inspectors/ folder so it is never mistaken for a registering module.
 import { PALETTE, type ColorIndex } from '@zpd/core';
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -25,6 +25,13 @@ export function Row({ label, children }: { label: string; children: ReactNode })
   );
 }
 
+// A numeric field that commits ONE undo entry per discrete edit. While focused
+// it holds a local draft string, so typing "250" or clearing-and-retyping never
+// snaps to 0 or streams a commit per keystroke. It commits once on blur and on
+// Enter; a cleared/NaN draft reverts to the last valid prop value instead of
+// committing 0. Arrow-up/down step discretely (one commit per press). When the
+// incoming value prop changes (undo/redo, a canvas drag) while not editing, the
+// draft re-syncs to it.
 export function NumberField({
   value,
   step = 0.1,
@@ -34,12 +41,63 @@ export function NumberField({
   step?: number;
   onCommit: (v: number) => void;
 }) {
+  const [draft, setDraft] = useState(String(value));
+  const [editing, setEditing] = useState(false);
+  const [lastValue, setLastValue] = useState(value);
+
+  // Sync the draft to an incoming value change (undo/redo, a canvas drag, a
+  // sibling edit) while the field isn't being actively edited. This is the
+  // render-time "adjust state when a prop changes" pattern React recommends over
+  // a setState-in-effect (https://react.dev/learn/you-might-not-need-an-effect).
+  if (!editing && value !== lastValue) {
+    setLastValue(value);
+    setDraft(String(value));
+  }
+
+  const commitDraft = (raw: string) => {
+    const parsed = Number(raw);
+    if (raw.trim() === '' || Number.isNaN(parsed)) {
+      setDraft(String(value)); // empty/NaN reverts to the last valid value — never commits 0
+      return;
+    }
+    setDraft(String(parsed));
+    if (parsed !== value) onCommit(parsed);
+  };
+
+  // Round to the step's decimal precision so a 0.1 step gives 6.1, not
+  // 6.300000000000001, and an integer step stays integral.
+  const stepBy = (dir: 1 | -1, raw: string) => {
+    const base = Number(raw);
+    const start = Number.isNaN(base) ? value : base;
+    const decimals = (String(step).split('.')[1] ?? '').length;
+    const next = Number((start + dir * step).toFixed(decimals));
+    setDraft(String(next));
+    if (next !== value) onCommit(next);
+  };
+
   return (
     <input
       type="number"
       step={step}
-      value={value}
-      onChange={(e) => onCommit(Number(e.target.value))}
+      value={draft}
+      onFocus={() => {
+        setEditing(true);
+        setDraft(String(value));
+      }}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={(e) => {
+        setEditing(false);
+        commitDraft(e.target.value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitDraft(e.currentTarget.value);
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          e.preventDefault(); // own the step so it's one discrete commit, not per-frame
+          stepBy(e.key === 'ArrowUp' ? 1 : -1, e.currentTarget.value);
+        }
+      }}
       className="w-full rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-right text-neutral-100"
     />
   );

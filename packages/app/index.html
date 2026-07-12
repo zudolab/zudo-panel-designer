@@ -3,6 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Inline SVG favicon (gold dot on black soldermask — the panel colors) so
+         the app never 404s /favicon.ico under the SPA not-found handler and
+         ships no binary asset. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23151515'/%3E%3Ccircle cx='16' cy='16' r='7' fill='%23d4af37'/%3E%3C/svg%3E"
+    />
     <title>zpd — Zudo Panel Designer</title>
   </head>
   <body>

@@ -57,7 +57,9 @@ export function boundsOfPoints(points: Pt[]): Rect {
 // Rotated axis-aligned bounding box: rotate the 4 corners about the rect's
 // own center, then take min/max. rotationDeg 0/undefined is a fast no-op.
 export function rotatedRectAABB(rect: Rect, rotationDeg?: number): Rect {
-  if (!rotationDeg) return rect;
+  // Return a fresh copy (never the input by reference) so callers can freely
+  // mutate the result, matching the rest of this module.
+  if (!rotationDeg) return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
   const center = rectCenter(rect);
   const corners = rectCorners(rect).map((c) => rotatePoint(c, center, rotationDeg));
   return boundsOfPoints(corners);

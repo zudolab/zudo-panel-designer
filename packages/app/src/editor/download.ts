@@ -14,6 +14,10 @@ export function downloadPanelConfig(doc: DocState): void {
   const a = document.createElement('a');
   a.href = url;
   a.download = `zpd-panel-${doc.panelHp}hp.json`;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  // Defer revocation to a later tick: revoking in the same tick as click() can
+  // abort the download before the browser has read the blob in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

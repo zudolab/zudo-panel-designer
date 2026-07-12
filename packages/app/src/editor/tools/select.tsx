@@ -127,11 +127,16 @@ registerTool({
   },
   onPointerMove(e: ToolPointerEvent, ctx: ToolContext) {
     if (!drag) return;
+    // Open the undo entry LAZILY: a pure click or a sub-snap jitter that nets a
+    // zero effective change must leave history untouched (no phantom entry). We
+    // only ensureGesture once the change is actually non-zero. Once the gesture
+    // is open, keep streaming so a drag back toward the start still updates.
     switch (drag.kind) {
       case 'move': {
-        ensureGesture(ctx);
         const dx = e.mm.x - drag.startMm.x;
         const dy = e.mm.y - drag.startMm.y;
+        if (!gestureOpen && snap(dx) === 0 && snap(dy) === 0) break;
+        ensureGesture(ctx);
         const orig = drag.orig;
         if (orig.type === 'path') {
           updateLayer(ctx, drag.layerId, translatePathLayer(orig, snap(dx), snap(dy)), false);
@@ -141,35 +146,46 @@ registerTool({
         break;
       }
       case 'resize': {
-        ensureGesture(ctx);
         const dx = e.mm.x - drag.startMm.x;
         const dy = e.mm.y - drag.startMm.y;
         const r = resizeRect(drag.orig, drag.handle, dx, dy, MIN_RESIZE_MM);
-        updateLayer(
-          ctx,
-          drag.layerId,
-          { x: snap(r.x), y: snap(r.y), width: snap(r.width), height: snap(r.height) },
-          false,
-        );
+        const patch = { x: snap(r.x), y: snap(r.y), width: snap(r.width), height: snap(r.height) };
+        if (
+          !gestureOpen &&
+          patch.x === drag.orig.x &&
+          patch.y === drag.orig.y &&
+          patch.width === drag.orig.width &&
+          patch.height === drag.orig.height
+        ) {
+          break;
+        }
+        ensureGesture(ctx);
+        updateLayer(ctx, drag.layerId, patch, false);
         break;
       }
       case 'anchor': {
-        ensureGesture(ctx);
         const layer = ctx.doc.layers.find((l) => l.id === drag!.layerId);
         if (layer?.type === 'path') {
+          const nx = snap(e.mm.x);
+          const ny = snap(e.mm.y);
+          const cur = layer.points[drag.index];
+          if (!gestureOpen && cur && nx === cur.x && ny === cur.y) break;
+          ensureGesture(ctx);
           updateLayer(
             ctx,
             drag.layerId,
-            { points: movePathAnchor(layer.points, drag.index, snap(e.mm.x), snap(e.mm.y)) },
+            { points: movePathAnchor(layer.points, drag.index, nx, ny) },
             false,
           );
         }
         break;
       }
       case 'handle': {
-        ensureGesture(ctx);
         const layer = ctx.doc.layers.find((l) => l.id === drag!.layerId);
         if (layer?.type === 'path') {
+          const cur = layer.points[drag.index]?.[drag.which];
+          if (!gestureOpen && cur && e.mm.x === cur.x && e.mm.y === cur.y) break;
+          ensureGesture(ctx);
           updateLayer(
             ctx,
             drag.layerId,

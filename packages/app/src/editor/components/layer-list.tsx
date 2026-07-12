@@ -39,7 +39,10 @@ export function LayerList({ ctx, selectedId }: LayerListProps) {
 
   const move = (id: string, dir: 1 | -1) => {
     const from = layers.findIndex((l) => l.id === id);
-    ctx.commit({ ...ctx.doc, layers: reorderLayer(layers, from, from + dir) });
+    // reorderLayer returns the SAME array when the move is a no-op (already at
+    // the top/bottom of the stack) — don't write a phantom undo entry for that.
+    const next = reorderLayer(layers, from, from + dir);
+    if (next !== layers) ctx.commit({ ...ctx.doc, layers: next });
   };
   const remove = (id: string) => {
     ctx.commit({ ...ctx.doc, layers: removeLayer(layers, id) });

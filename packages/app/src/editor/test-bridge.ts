@@ -36,7 +36,9 @@ declare global {
 
 function isTestContext(): boolean {
   if (import.meta.env.DEV) return true;
-  return typeof location !== 'undefined' && location.search.includes('e2e');
+  // A real `?e2e` flag only — not any URL that merely contains the substring
+  // "e2e" (e.g. `?ref=free2eat`), which the old includes() check let through.
+  return typeof location !== 'undefined' && new URLSearchParams(location.search).has('e2e');
 }
 
 export interface TestBridgeSource {

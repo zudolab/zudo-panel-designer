@@ -37,11 +37,9 @@ export function replace<T>(state: HistoryState<T>, next: T): HistoryState<T> {
 // calls during the gesture so one drag/resize/node-edit gesture = exactly
 // one undo entry, regardless of how many intermediate updates it produces.
 export function beginGesture<T>(state: HistoryState<T>): HistoryState<T> {
-  return {
-    past: [...state.past, state.present].slice(-MAX_HISTORY),
-    present: state.present,
-    future: [],
-  };
+  // Same as committing the current present onto itself: it opens one undo entry
+  // without changing present, and inherits the MAX_HISTORY cap from commit().
+  return commit(state, state.present);
 }
 
 export function undo<T>(state: HistoryState<T>): HistoryState<T> {

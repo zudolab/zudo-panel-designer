@@ -5,7 +5,7 @@
 //  - add-actions/add-pattern.ts "Add pattern…" opens with no props: clicking
 //    a card adds a brand-new pattern layer on top and selects it.
 // Either path is a single commit() — one undo entry — then closes.
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { mintId, type PatternLayer } from '@zpd/core';
 import {
   defaultParams,
@@ -27,7 +27,11 @@ export const THUMBNAIL_SIZE_PX = 96;
 function PatternCard({ gen, onPick }: { gen: PanelPatternGenerator; onPick: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  useEffect(() => {
+  // useLayoutEffect (not useEffect) so the thumbnail is sized+drawn before the
+  // browser's first paint — otherwise the canvas shows its default 300x150 box
+  // for one frame and the grid visibly jumps. The inline style width/height
+  // pins the CSS box to its final size even before this runs.
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     renderPatternThumb(canvas, gen, THUMBNAIL_SIZE_PX);
@@ -40,7 +44,11 @@ function PatternCard({ gen, onPick }: { gen: PanelPatternGenerator; onPick: () =
       title={gen.displayName}
       className="flex flex-col items-center gap-1.5 rounded border border-neutral-700 bg-neutral-800 p-2 hover:border-sky-400 hover:bg-neutral-700"
     >
-      <canvas ref={canvasRef} className="rounded" />
+      <canvas
+        ref={canvasRef}
+        className="rounded"
+        style={{ width: THUMBNAIL_SIZE_PX, height: THUMBNAIL_SIZE_PX }}
+      />
       <span className="w-full truncate text-center text-[11px] text-neutral-300">
         {gen.displayName}
       </span>

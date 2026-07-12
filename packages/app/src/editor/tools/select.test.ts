@@ -147,6 +147,66 @@ describe('select tool — one gesture == one undo entry', () => {
     expect(reverted.y).toBe(10);
   });
 
+  it('a zero-delta drag (sub-snap jitter) leaves history untouched — no phantom entry', () => {
+    const shape: ShapeLayer = {
+      id: 's1',
+      name: 'Rect',
+      type: 'shape',
+      shape: 'rect',
+      x: 10,
+      y: 10,
+      width: 20,
+      height: 10,
+      color: 1,
+    };
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [shape],
+    });
+    ctx.select('s1');
+
+    // press inside the rect, then jitter by less than the 0.1mm snap step both
+    // moves — every snapped delta is 0, so nothing should be committed
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 15.02, y: 15.03 }), ctx);
+    select.onPointerMove?.(ptr({ x: 14.98, y: 15.01 }), ctx);
+    select.onPointerUp?.(ptr({ x: 14.98, y: 15.01 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(0);
+    expect(getHistory().past).toHaveLength(0);
+    const unmoved = layerById('s1') as ShapeLayer;
+    expect(unmoved).toMatchObject({ x: 10, y: 10 });
+  });
+
+  it('a real move after a zero-delta jitter is still exactly one undo entry', () => {
+    const shape: ShapeLayer = {
+      id: 's1',
+      name: 'Rect',
+      type: 'shape',
+      shape: 'rect',
+      x: 10,
+      y: 10,
+      width: 20,
+      height: 10,
+      color: 1,
+    };
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [shape],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 15.02, y: 15.01 }), ctx); // jitter — no entry yet
+    select.onPointerMove?.(ptr({ x: 20, y: 18 }), ctx); // real move — opens the entry
+    select.onPointerUp?.(ptr({ x: 20, y: 18 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(1);
+    expect(getHistory().past).toHaveLength(1);
+    const moved = layerById('s1') as ShapeLayer;
+    expect(moved).toMatchObject({ x: 15, y: 13 }); // (20-15, 18-15) = (+5, +3)
+  });
+
   it('a resize drag (8-handle) is exactly one undo entry', () => {
     const shape: ShapeLayer = {
       id: 's1',

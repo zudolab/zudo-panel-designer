@@ -23,7 +23,9 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: `pnpm build && pnpm preview --port ${PORT} --strictPort`,
+    // Call vite preview directly (not `pnpm preview`, whose script bakes in
+    // --port 15200) so the port isn't doubled — only ${PORT} applies here.
+    command: `pnpm build && pnpm exec vite preview --port ${PORT} --strictPort`,
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

@@ -151,11 +151,14 @@ function drawLayer(
       if (layer.shape === 'rect') {
         ctx.rect(layer.x, layer.y, layer.width, layer.height);
       } else {
+        // ctx.ellipse throws IndexSizeError on a negative radius, so normalize:
+        // the center (x + w/2) already mirrors for a negative dim like the rect
+        // branch does; the radii must be absolute.
         ctx.ellipse(
           layer.x + layer.width / 2,
           layer.y + layer.height / 2,
-          layer.width / 2,
-          layer.height / 2,
+          Math.abs(layer.width) / 2,
+          Math.abs(layer.height) / 2,
           0,
           0,
           Math.PI * 2,
@@ -310,6 +313,7 @@ function drawSelectionChrome(
 ): void {
   const selected = layers.find((l) => l.id === extras.selectedId);
   if (!selected) return;
+  if (selected.hidden) return; // the layer pass skips hidden layers — chrome must too
   const rawBbox = layerBbox(selected, panel);
   if (!rawBbox) return;
   const rotation = layerRotation(selected);
