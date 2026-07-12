@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ImageLayer, PatternLayer, Pt } from '@zpd/core';
-import { registerDialog, unregisterDialog } from '../registry/dialogs';
+import { getDialog, registerDialog, unregisterDialog } from '../registry/dialogs';
 import type { ToolContext } from '../types';
 import './pattern';
 import './image';
@@ -54,17 +54,33 @@ describe('pattern inspector — Browse… hook', () => {
   };
 
   it('is disabled when no pattern-picker dialog is registered', () => {
-    const ctx = stubCtx();
-    const Inspector = getInspector('pattern')!;
-    render(<Inspector layer={layer} onChange={vi.fn()} ctx={ctx} />);
+    // Same nested-execution hazard: force the "nothing registered" premise
+    // rather than assuming it, since a real pattern-picker dialog (#12) may
+    // already be registered by the time this runs nested inside another
+    // file's suite. Restore afterward.
+    const original = getDialog('pattern-picker');
+    if (original) unregisterDialog('pattern-picker');
+    try {
+      const ctx = stubCtx();
+      const Inspector = getInspector('pattern')!;
+      render(<Inspector layer={layer} onChange={vi.fn()} ctx={ctx} />);
 
-    const button = screen.getByRole<HTMLButtonElement>('button', { name: /Browse…/ });
-    expect(button.disabled).toBe(true);
-    fireEvent.click(button);
-    expect(ctx.openDialog).not.toHaveBeenCalled();
+      const button = screen.getByRole<HTMLButtonElement>('button', { name: /Browse…/ });
+      expect(button.disabled).toBe(true);
+      fireEvent.click(button);
+      expect(ctx.openDialog).not.toHaveBeenCalled();
+    } finally {
+      if (original) registerDialog(original);
+    }
   });
 
   it('opens the pattern-picker dialog once one is registered', () => {
+    // This file lives under inspectors/, which registry/index.ts eagerly
+    // globs — so it can also run nested inside another file's <App/> smoke
+    // test, by which point the real pattern-picker dialog (#12) is already
+    // registered. Restore whatever was there rather than unconditionally
+    // deleting it, or we'd wipe out that real registration.
+    const original = getDialog('pattern-picker');
     registerDialog({ id: 'pattern-picker', component: NullDialog });
     try {
       const ctx = stubCtx();
@@ -76,7 +92,8 @@ describe('pattern inspector — Browse… hook', () => {
       fireEvent.click(button);
       expect(ctx.openDialog).toHaveBeenCalledWith('pattern-picker', { layerId: 'pat-1' });
     } finally {
-      unregisterDialog('pattern-picker');
+      if (original) registerDialog(original);
+      else unregisterDialog('pattern-picker');
     }
   });
 });
@@ -94,17 +111,27 @@ describe('image inspector — Convert to vector… hook', () => {
   };
 
   it('is disabled when no trace dialog is registered', () => {
-    const ctx = stubCtx();
-    const Inspector = getInspector('image')!;
-    render(<Inspector layer={layer} onChange={vi.fn()} ctx={ctx} />);
+    // Same defensive premise as the pattern inspector test above.
+    const original = getDialog('trace');
+    if (original) unregisterDialog('trace');
+    try {
+      const ctx = stubCtx();
+      const Inspector = getInspector('image')!;
+      render(<Inspector layer={layer} onChange={vi.fn()} ctx={ctx} />);
 
-    const button = screen.getByRole<HTMLButtonElement>('button', { name: /Convert to vector…/ });
-    expect(button.disabled).toBe(true);
-    fireEvent.click(button);
-    expect(ctx.openDialog).not.toHaveBeenCalled();
+      const button = screen.getByRole<HTMLButtonElement>('button', { name: /Convert to vector…/ });
+      expect(button.disabled).toBe(true);
+      fireEvent.click(button);
+      expect(ctx.openDialog).not.toHaveBeenCalled();
+    } finally {
+      if (original) registerDialog(original);
+    }
   });
 
   it('opens the trace dialog once one is registered', () => {
+    // Same nested-execution hazard as the pattern-picker case above — restore
+    // rather than delete so a real trace dialog (#11) survives this test.
+    const original = getDialog('trace');
     registerDialog({ id: 'trace', component: NullDialog });
     try {
       const ctx = stubCtx();
@@ -116,7 +143,8 @@ describe('image inspector — Convert to vector… hook', () => {
       fireEvent.click(button);
       expect(ctx.openDialog).toHaveBeenCalledWith('trace', { layerId: 'img-1' });
     } finally {
-      unregisterDialog('trace');
+      if (original) registerDialog(original);
+      else unregisterDialog('trace');
     }
   });
 });
