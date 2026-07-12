@@ -10,3 +10,7 @@ coverage/
 *.tsbuildinfo
 .env
 .env.local
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/

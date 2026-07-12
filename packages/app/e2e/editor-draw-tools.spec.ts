@@ -1,0 +1,51 @@
+// Wave 6 (#13) smoke suite — the pen and text tools. Real trusted input only
+// (page.mouse / page.keyboard): synthetic dispatchEvent PointerEvents are
+// unreliable against React's event delegation.
+import { expect, test } from '@playwright/test';
+import { bridge, openEditor, toScreenPoint } from './helpers';
+
+test('@smoke pen tool draws a closed path', async ({ page }) => {
+  await openEditor(page);
+  const before = await bridge(page).getLayerCount();
+
+  await page.keyboard.press('p');
+
+  const anchors = [
+    { x: 10, y: 10 },
+    { x: 30, y: 12 },
+    { x: 20, y: 30 },
+  ];
+  for (const mm of anchors) {
+    const screen = await toScreenPoint(page, mm);
+    await page.mouse.click(screen.x, screen.y);
+  }
+  await page.getByRole('button', { name: '⬠ Close path' }).click();
+
+  await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 1);
+  const selectedId = await bridge(page).getSelectedId();
+  const layer = (await bridge(page).getDoc()).layers.find((l) => l.id === selectedId);
+  expect(layer).toMatchObject({ type: 'path', closed: true });
+});
+
+test('@smoke text tool places a layer and loads the Orbitron font', async ({ page }) => {
+  await openEditor(page);
+
+  await page.keyboard.press('t');
+  const target = await toScreenPoint(page, { x: 20, y: 60 });
+  await page.mouse.click(target.x, target.y);
+
+  const selectedId = await bridge(page).getSelectedId();
+  expect(selectedId).not.toBeNull();
+  const placed = (await bridge(page).getDoc()).layers.find((l) => l.id === selectedId);
+  expect(placed?.type).toBe('text');
+
+  // Font <select> is the last <select> once a text layer's inspector is
+  // showing — the panel-size <select> in the Panel section is always first.
+  await page.getByRole('combobox').last().selectOption('Orbitron');
+
+  // self-hosted @fontsource/orbitron — no external font network involved.
+  await page.waitForFunction(() => document.fonts.check('16px "Orbitron"'));
+
+  const updated = (await bridge(page).getDoc()).layers.find((l) => l.id === selectedId);
+  expect(updated).toMatchObject({ fontFamily: 'Orbitron' });
+});
