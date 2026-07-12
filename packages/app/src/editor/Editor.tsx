@@ -27,6 +27,7 @@ import { renderScene } from './renderer';
 import { getTool, toolByShortcut } from './registry';
 import { closeDialog, openDialog } from './registry/dialogs';
 import { createDemoDoc } from './demo-doc';
+import { installTestBridge } from './test-bridge';
 import { useDocHistory } from './use-doc-history';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from './types';
 import { CanvasViewport } from './components/canvas-viewport';
@@ -85,6 +86,16 @@ export function Editor() {
     selectedIdRef.current = selectedId;
     panelRef.current = panel;
   });
+
+  // e2e test bridge (Wave 6, #13) — reads through the same live refs as ctx,
+  // so it never lags a commit. See test-bridge.ts for the prod/dev gating.
+  useEffect(() => {
+    installTestBridge({
+      getDoc: () => docRef.current,
+      getSelectedId: () => selectedIdRef.current,
+      getCamera: () => cameraRef.current,
+    });
+  }, []);
 
   // Built once — all mutators are stable, all reads go through refs.
   const ctx = useMemo<ToolContext>(
