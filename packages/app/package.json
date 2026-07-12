@@ -10,10 +10,12 @@
     "preview": "vite preview --port 15200"
   },
   "dependencies": {
+    "@image-tracer-ts/browser": "^1.0.3",
     "@zpd/core": "workspace:*",
     "@zpd/patterns": "workspace:*",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "svg-pathdata": "^9.0.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.2",
