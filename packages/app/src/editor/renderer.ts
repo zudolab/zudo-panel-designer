@@ -15,6 +15,7 @@ import {
 } from '@zpd/core';
 import { patternByName } from '@zpd/patterns';
 import type { Camera } from './camera';
+import { ensureFont } from './fonts';
 import type { DraftRenderContext, PanelDims } from './types';
 
 const WORKSPACE_BG = '#26282c';
@@ -191,6 +192,9 @@ function drawLayer(
       break;
     }
     case 'text': {
+      ensureFont(layer.fontFamily); // fire-and-forget: kicks off the load so
+      // the next repaint (tool/inspector both request one once it resolves)
+      // has a shot at the real face instead of the fallback drawn right now
       ctx.fillStyle = PALETTE[layer.color].hex;
       ctx.font = `${layer.sizeMm}px "${layer.fontFamily}"`;
       ctx.textBaseline = 'top';
@@ -283,7 +287,10 @@ function makeDraftContext(
     ctx,
     camera: cam,
     panel,
-    toScreen: (mm: Pt) => ({ x: mm.x * cam.pxPerMm + cam.offsetX, y: mm.y * cam.pxPerMm + cam.offsetY }),
+    toScreen: (mm: Pt) => ({
+      x: mm.x * cam.pxPerMm + cam.offsetX,
+      y: mm.y * cam.pxPerMm + cam.offsetY,
+    }),
     inMmSpace(draw: () => void) {
       ctx.save();
       ctx.translate(cam.offsetX, cam.offsetY);
@@ -337,7 +344,10 @@ function drawSelectionChrome(
     for (const p of selected.points) {
       for (const handle of [p.hin, p.hout]) {
         if (!handle) continue;
-        const hp = { x: handle.x * cam.pxPerMm + cam.offsetX, y: handle.y * cam.pxPerMm + cam.offsetY };
+        const hp = {
+          x: handle.x * cam.pxPerMm + cam.offsetX,
+          y: handle.y * cam.pxPerMm + cam.offsetY,
+        };
         const ap = { x: p.x * cam.pxPerMm + cam.offsetX, y: p.y * cam.pxPerMm + cam.offsetY };
         ctx.strokeStyle = 'rgba(77,163,255,0.6)';
         ctx.lineWidth = 1;
