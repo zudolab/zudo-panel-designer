@@ -20,10 +20,12 @@
     "@fontsource/press-start-2p": "5.2.7",
     "@fontsource/rajdhani": "5.2.7",
     "@fontsource/share-tech-mono": "5.2.7",
+    "@image-tracer-ts/browser": "^1.0.3",
     "@zpd/core": "workspace:*",
     "@zpd/patterns": "workspace:*",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "svg-pathdata": "^9.0.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.2",
