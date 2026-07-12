@@ -1,0 +1,6 @@
+node_modules
+dist
+_temp-resource
+worktrees
+coverage
+pnpm-lock.yaml

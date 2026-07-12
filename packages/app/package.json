@@ -1,0 +1,43 @@
+{
+  "name": "@zpd/app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 15200",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview --port 15200",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource/archivo-black": "5.2.8",
+    "@fontsource/audiowide": "5.2.7",
+    "@fontsource/bebas-neue": "5.2.7",
+    "@fontsource/inter": "5.2.8",
+    "@fontsource/monoton": "5.2.7",
+    "@fontsource/orbitron": "5.2.8",
+    "@fontsource/oswald": "5.2.8",
+    "@fontsource/press-start-2p": "5.2.7",
+    "@fontsource/rajdhani": "5.2.7",
+    "@fontsource/share-tech-mono": "5.2.7",
+    "@image-tracer-ts/browser": "^1.0.3",
+    "@zpd/core": "workspace:*",
+    "@zpd/patterns": "workspace:*",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "svg-pathdata": "^9.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@tailwindcss/vite": "^4.3.2",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "jsdom": "^27.4.0",
+    "tailwindcss": "^4.3.2",
+    "vite": "^7.3.6"
+  }
+}

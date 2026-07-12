@@ -1,0 +1,10 @@
+packages:
+  - 'packages/*'
+allowBuilds:
+  esbuild: true
+  # sharp/workerd are wrangler's own transitive deps: sharp's install script
+  # fetches the libvips native binary, workerd's postinstall fetches the
+  # Workers runtime binary wrangler runs locally. Both required for wrangler
+  # to function; both official (Cloudflare/lovell), not third-party.
+  sharp: true
+  workerd: true

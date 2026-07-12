@@ -1,0 +1,16 @@
+node_modules/
+dist/
+worktrees/
+.wrangler/
+.playwright-cli/
+*.log
+.DS_Store
+_temp-resource/**/node_modules
+coverage/
+*.tsbuildinfo
+.env
+.env.local
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
