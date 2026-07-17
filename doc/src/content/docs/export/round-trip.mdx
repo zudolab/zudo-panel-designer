@@ -1,0 +1,71 @@
+---
+title: Round-Trip
+sidebar_position: 3
+---
+
+The editor's **Download panel config JSON** button (`packages/app/src/editor/download.ts`)
+is the only export path in the current stage-1 app — there is no in-app
+**Open File**/import UI yet. "Round-trip" here means: the downloaded JSON,
+fed back through `parsePanelConfig()`, reproduces the on-screen document.
+That guarantee is what makes the file trustworthy as an order artifact and
+as an interchange format for future tooling.
+
+## The download step
+
+`downloadPanelConfig(doc)` calls `serializePanelConfig(doc)`, pretty-prints
+it (`JSON.stringify(config, null, 2)`), and triggers a browser download
+named `zpd-panel-<hp>hp.json`. The pure serialization step —
+`panelConfigJson(doc)` — is factored out separately from the DOM/Blob
+mechanics so the exact JSON string is unit-testable without a real download.
+
+## What is preserved exactly
+
+`packages/core/src/serialize.test.ts` and `packages/app/src/editor/download.test.ts`
+both assert full round-trip fidelity for a document covering all 5 layer
+types:
+
+```
+doc → serializePanelConfig → JSON.stringify → JSON.parse → parsePanelConfig → doc
+```
+
+`parsePanelConfig(JSON.parse(JSON.stringify(serializePanelConfig(doc))))`
+deep-equals the original `doc` for a fixture exercising:
+
+- every layer type (`shape`, `pattern`, `path`, `text`, `image`)
+- a hidden layer (`hidden: true`)
+- a `path` layer with bezier handles (`hin`/`hout`) on some points but not
+  others
+- a `path` layer's `extraSubpaths` (multiple closed subpaths from image
+  tracing)
+- `rotation` present on some layers and absent on others
+
+All of the above survives the round trip unchanged.
+
+## What is intentionally NOT preserved
+
+- **Unknown/extra fields** — anything not in the `PanelConfig` shape (stray
+  top-level keys, extra per-layer properties) is dropped on import. See
+  [Defensive Parsing](./defensive-parsing.mdx).
+- **`panel.widthMm` / `panel.heightMm`** — always recomputed from `hp` on
+  the way back in, even if the file was hand-edited to disagree. These are
+  advisory output, not authoritative input. See
+  [PanelConfig Format](./panel-config-format.mdx#envelope-shape).
+- **Invalid values** — an out-of-range `color`, a non-finite coordinate, a
+  malformed `hp`, etc. get clamped or defaulted rather than reproduced
+  verbatim (by definition — the input was invalid). See
+  [Defensive Parsing](./defensive-parsing.mdx#layers-per-field-fallbacks-by-layer-type).
+- **`patternType` validity** — an unrecognized `patternType` string round-trips
+  as opaque data (it is preserved verbatim), but nothing about the pattern's
+  *rendering* is guaranteed — core has no dependency on the patterns registry,
+  so only the app/patterns layer knows whether a given `patternType` renders
+  to anything.
+
+## Verified at the browser level too
+
+The Playwright `@smoke` suite exercises the real download in a browser, not
+just the pure functions: it clicks the download button, reads the produced
+file off disk, and asserts `parsePanelConfig(downloaded)` equals
+`parsePanelConfig(onScreen)`, where `onScreen` comes from the live document
+via the `window.__zpdTest` test bridge. See
+[Testing](../development/testing.mdx#e2e-with-playwright) for how that
+suite is structured.

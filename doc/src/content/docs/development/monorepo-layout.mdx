@@ -1,0 +1,31 @@
+---
+title: Monorepo Layout
+sidebar_position: 1
+---
+
+zudo-panel-designer is a pnpm workspace with three published-in-place
+packages plus this documentation sub-project.
+
+## Packages
+
+| Path | Package name | What belongs here |
+|---|---|---|
+| `packages/core` | `@zpd/core` | The document model: `DocState`, `Layer` types, geometry, layer ops, undo/redo history, the `PanelConfig` serializer/parser. No UI, no DOM. |
+| `packages/patterns` | `@zpd/patterns` | Panel pattern definitions (e.g. dot-grid, diagonal stripes) consumed by the app's pattern picker. |
+| `packages/app` | `@zpd/app` (private) | The Vite + React one-page editor app: canvas rendering, tools, dialogs, the `window.__zpdTest` e2e bridge. |
+| `doc/` | — (isolated sub-project) | This documentation site. Not part of the root pnpm workspace — it has its own `pnpm-workspace.yaml` and `pnpm-lock.yaml` so its dependency resolution never reaches the repo root. |
+
+`packages/app` depends on `@zpd/core` and `@zpd/patterns` as `workspace:*`
+dependencies. `@zpd/core` has no dependency on `@zpd/patterns` or the app —
+notably, `PanelConfig`'s `patternType` field is kept as opaque string data
+in core rather than validated against the patterns registry, precisely to
+avoid that dependency direction (see
+[PanelConfig Format](../export/panel-config-format.mdx#layer-fields-pattern)).
+
+## Root-level configuration
+
+Root config files (`eslint.config.js`, `.prettierignore`, `vitest.config.ts`,
+`tsconfig` references) apply to `packages/*` only. `doc/` is deliberately
+excluded from all of them — it lints, formats, type-checks, and tests
+itself independently, and root `pnpm -r` scripts (which iterate the pnpm
+workspace) never touch it since it isn't a member of the root workspace.

@@ -1,0 +1,135 @@
+---
+title: PanelConfig Format
+sidebar_position: 1
+---
+
+`PanelConfig` is the versioned JSON envelope the editor downloads as the panel
+order artifact. It is produced by `serializePanelConfig()` and consumed by
+`parsePanelConfig()`, both exported from `@zpd/core` (source:
+`packages/core/src/serialize.ts`).
+
+## Envelope shape
+
+```json
+{
+  "version": 1,
+  "app": "zpd",
+  "panel": { "hp": 12, "widthMm": 60.6, "heightMm": 128.5 },
+  "palette": ["black", "gold", "white"],
+  "layers": []
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `version` | `1` | `PANEL_CONFIG_VERSION`. See [Versioning](#versioning) below. |
+| `app` | `"zpd"` | Fixed literal identifying the producing app. |
+| `panel.hp` | `number` | Panel width in Eurorack HP, from the live document (`doc.panelHp`). |
+| `panel.widthMm` | `number` | Derived from `hp` via `panelWidthMm()` — **advisory output**, not re-trusted on import (see below). |
+| `panel.heightMm` | `number` | `PANEL_HEIGHT_MM`, the fixed 3U Eurorack panel height (128.5mm). |
+| `palette` | `string[]` | The three fixed color names, in index order: `["black", "gold", "white"]`. |
+| `layers` | `Layer[]` | The document's layer stack, bottom to top. See [Layer fields](#layer-fields). |
+
+:::note
+`panel.widthMm`, `panel.heightMm`, and `palette` are **derived/advisory
+output for the human or order-system reader** — they exist so a person or a
+downstream fab tool can read the file without recomputing dimensions from
+`hp`. On the way back in, `parsePanelConfig` recomputes them from `hp` rather
+than trusting hand-edited values. `panel.hp` and `layers` are the
+authoritative source data.
+:::
+
+## Layer fields
+
+All five layer types share a base shape plus type-specific fields.
+
+### Common to every layer
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `string` | Stable layer id. Minted via `mintId('layer')` if missing on import. |
+| `name` | `string` | Display name. Defaults to `""` if missing. |
+| `hidden` | `boolean` (optional) | Omitted while a layer has never been hidden. Once its visibility is toggled, the field is written explicitly — including `false` after an even number of toggles — since the toggle op flips whatever value is already there. |
+| `type` | `'shape' \| 'pattern' \| 'path' \| 'text' \| 'image'` | Discriminates the fields below. |
+
+### `shape`
+
+| Field | Type | Notes |
+|---|---|---|
+| `shape` | `'rect' \| 'ellipse'` | |
+| `x`, `y`, `width`, `height` | `number` | Millimeters, document space. |
+| `rotation` | `number` (optional) | Degrees clockwise around the bbox center. Omitted when unset. |
+| `color` | `0 \| 1 \| 2` | See [ColorIndex](#colorindex-palette). |
+
+### `pattern`
+
+| Field | Type | Notes |
+|---|---|---|
+| `patternType` | `string` | Free-form identifier (e.g. `"dot-grid"`). Kept verbatim even if unrecognized — core has no dependency on the patterns registry that would validate it. |
+| `params` | `Record<string, number>` | Pattern-specific numeric parameters (e.g. `pitch`, `radius`). |
+| `color` | `0 \| 1 \| 2` | |
+
+### `path`
+
+| Field | Type | Notes |
+|---|---|---|
+| `points` | `PathPoint[]` | Primary subpath — the one the pen tool edits. See [PathPoint](#layer-fields-path-pathpoint). |
+| `extraSubpaths` | `PathPoint[][]` (optional) | Additional closed subpaths, e.g. holes/islands produced by image tracing. Presence/absence (even an empty array) is preserved exactly for round-tripping. |
+| `closed` | `boolean` | |
+| `fill` | `0 \| 1 \| 2 \| null` | `null` means no fill. |
+| `stroke` | `0 \| 1 \| 2 \| null` | `null` means no stroke. |
+| `strokeWidth` | `number` | Millimeters. |
+
+#### PathPoint
+
+| Field | Type | Notes |
+|---|---|---|
+| `x`, `y` | `number` | Anchor point, millimeters. |
+| `hin` | `{ x: number, y: number }` (optional) | Absolute bezier handle-in coordinates. |
+| `hout` | `{ x: number, y: number }` (optional) | Absolute bezier handle-out coordinates. |
+
+### `text`
+
+| Field | Type | Notes |
+|---|---|---|
+| `content` | `string` | May contain newlines. |
+| `fontFamily` | `string` | |
+| `sizeMm` | `number` | Font size in millimeters (canvas font px equals mm in document space). |
+| `x`, `y` | `number` | Bounding-box top-left, millimeters. |
+| `rotation` | `number` (optional) | Degrees clockwise. Omitted when unset. |
+| `color` | `0 \| 1 \| 2` | |
+
+### `image`
+
+| Field | Type | Notes |
+|---|---|---|
+| `src` | `string` | A data URL. Design-time reference only — a raster cannot be manufactured; the final panel uses the vector layers traced from it. |
+| `x`, `y`, `width`, `height` | `number` | Millimeters. |
+
+## ColorIndex + palette
+
+Every layer's `color` (and a `path` layer's `fill`/`stroke`) is a
+`ColorIndex`: `0`, `1`, or `2`. The index maps to a fixed 3-color panel
+finish, defined once in `packages/core/src/palette.ts`:
+
+| Index | Name | Meaning |
+|---|---|---|
+| `0` | `black` | Soldermask |
+| `1` | `gold` | Exposed copper (ENIG-plated) |
+| `2` | `white` | Silkscreen |
+
+The `palette` array in the envelope (`["black", "gold", "white"]`) is these
+names in index order — it exists so a reader of the JSON doesn't need to
+know the index-to-name mapping by heart. The palette is fixed; it is not
+user-configurable per document.
+
+## Versioning
+
+`PANEL_CONFIG_VERSION` is currently `1`, and the `PanelConfig` TypeScript
+type pins `version: 1` — there is only one format generation so far. The
+field exists so a future format change has somewhere to signal itself:
+a later parser could branch on `version` to handle older files, or reject/
+migrate a file whose version it doesn't recognize. Today, `parsePanelConfig`
+does not actually read or validate the incoming `version` field — see
+[Defensive Parsing](./defensive-parsing.mdx) for why the parser is lenient
+by design rather than strict about the envelope shape.
