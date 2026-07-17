@@ -22,12 +22,14 @@ test('@smoke marquee drag selects 2 of 3 layers via getSelectedIds()', async ({ 
   await openEditor(page);
 
   // Demo doc geometry (demo-doc.ts): demo-rect spans x 8..32 / y 14..30,
-  // demo-ellipse spans x 30..52 / y 40..62, demo-path's bbox starts at y 62.
-  // A marquee from (4,10) to (56,58) INTERSECTS rect and ellipse (the ellipse
-  // only partially — intersection semantics, not containment) and stops above
-  // the path, so exactly 2 of those 3 layers select. The dot-grid pattern
-  // layer underneath is panel-wide but must not join the selection.
-  await marqueeDrag(page, { x: 4, y: 10 }, { x: 56, y: 58 });
+  // demo-ellipse spans x 30..52 / y 40..62, demo-path's bbox starts at y 54 —
+  // pathBbox includes bezier CONTROL points, and the path's hout sits at
+  // (38,54), above its first anchor's y 62. A marquee from (4,10) to (56,50)
+  // INTERSECTS rect and ellipse (the ellipse only partially — intersection
+  // semantics, not containment) and stops above the path's bbox, so exactly
+  // 2 of those 3 layers select. The dot-grid pattern layer underneath is
+  // panel-wide but must not join the selection.
+  await marqueeDrag(page, { x: 4, y: 10 }, { x: 56, y: 50 });
 
   expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
 });

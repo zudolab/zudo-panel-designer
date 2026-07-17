@@ -403,6 +403,23 @@ describe('hover', () => {
     expect(spy2.calls).toEqual([]);
   });
 
+  it('clears the hover outline when the pointer leaves the canvas', () => {
+    const h = makeHarness(doc());
+    select.onPointerMove?.(h.ptr({ x: 15, y: 15 }, { buttons: 0 }), h.ctx);
+    expect(h.getRepaintCalls()).toBe(1);
+
+    select.onPointerLeave?.(h.ptr({ x: -5, y: 15 }, { buttons: 0 }), h.ctx);
+    expect(h.getRepaintCalls()).toBe(2); // outline erased
+
+    const spy = makeDraftSpy();
+    select.renderDraft?.(spy.draft, h.ctx);
+    expect(spy.calls).toEqual([]);
+
+    // leaving with nothing hovered stays repaint-free
+    select.onPointerLeave?.(h.ptr({ x: -5, y: 15 }, { buttons: 0 }), h.ctx);
+    expect(h.getRepaintCalls()).toBe(2);
+  });
+
   it('clears the hover outline on pointerdown so nothing draws mid-drag', () => {
     const h = makeHarness(doc());
     select.onPointerMove?.(h.ptr({ x: 15, y: 15 }, { buttons: 0 }), h.ctx);

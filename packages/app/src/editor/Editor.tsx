@@ -391,6 +391,9 @@ export function Editor() {
   const onPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     getTool(effectiveToolId)?.onPointerUp?.(toPointer(e), ctx);
   };
+  const onPointerLeave = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    getTool(effectiveToolId)?.onPointerLeave?.(toPointer(e), ctx);
+  };
   const onDoubleClick = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     getTool(effectiveToolId)?.onDoubleClick?.(toPointer(e), ctx);
   };
@@ -427,6 +430,7 @@ export function Editor() {
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
+            onPointerLeave={onPointerLeave}
             onDoubleClick={onDoubleClick}
           />
         </div>

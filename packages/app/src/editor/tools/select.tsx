@@ -327,6 +327,16 @@ registerTool({
     gestureOpen = false;
     downScreen = null;
   },
+  onPointerLeave(_e: ToolPointerEvent, ctx: ToolContext) {
+    // No further pointermove will arrive to clear the hover outline — a
+    // hovered layer would otherwise keep its chrome after the cursor leaves
+    // the canvas. Drags/marquees keep going (pointer capture still routes
+    // move/up to the canvas), so only hover state is dropped here.
+    if (hoveredId !== null) {
+      hoveredId = null;
+      ctx.requestRepaint();
+    }
+  },
   onDeactivate() {
     marquee = null;
     hoveredId = null;

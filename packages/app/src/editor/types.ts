@@ -110,6 +110,10 @@ export interface ToolModule {
   onPointerDown?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onPointerMove?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onPointerUp?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
+  // Pointer left the canvas element (#47): transient chrome keyed to the
+  // cursor position (hover outlines, …) must clear here — no further
+  // onPointerMove will arrive to do it.
+  onPointerLeave?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onDoubleClick?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onKeyDown?(e: ToolKeyEvent, ctx: ToolContext): ToolEventResult;
   renderDraft?(draft: DraftRenderContext, ctx: ToolContext): void;
