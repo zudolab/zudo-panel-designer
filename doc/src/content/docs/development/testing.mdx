@@ -1,0 +1,133 @@
+---
+title: Testing
+sidebar_position: 3
+---
+
+The project runs two independent test layers: Vitest unit tests co-located
+with source across all three packages, and a Playwright end-to-end smoke
+suite that drives a real browser against a production build of the app.
+
+## Unit tests with Vitest
+
+A single root `vitest.config.ts` covers all three packages at once — there
+is no per-package Vitest config:
+
+```ts
+export default defineConfig({
+  test: {
+    include: ['packages/*/src/**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['**/node_modules/**', '**/dist/**', '_temp-resource/**', 'worktrees/**'],
+    environment: 'node',
+    passWithNoTests: true,
+  },
+});
+```
+
+Tests are **co-located with the code they test** — a `foo.ts` module has its
+tests in a sibling `foo.test.ts`, inside the same `packages/*/src/` tree, not
+in a separate top-level `test/` directory. For example:
+
+- `packages/core/src/serialize.test.ts` — the `PanelConfig` round-trip and
+  defensive-parsing tests (see [Export](../export/index.mdx)).
+- `packages/core/src/history.test.ts`, `packages/core/src/layer-ops.test.ts`,
+  `packages/core/src/hit-test.test.ts` — document-model behavior.
+- `packages/patterns/src/patterns.test.ts` — pattern definitions.
+- `packages/app/src/editor/download.test.ts` — the download button's pure
+  serialization path.
+- `packages/app/src/editor/tools/pen.test.ts`,
+  `packages/app/src/editor/tools/select.test.ts` — editor tool logic.
+
+Run the whole suite from the repo root:
+
+```bash
+pnpm test
+```
+
+This runs `vitest run` once against every matching file across all three
+packages in a single process — there is no need to `cd` into a package or
+run per-package test commands.
+
+## E2E with Playwright
+
+The Playwright suite lives at `packages/app/e2e/` and is configured by
+`packages/app/playwright.config.ts`. Run it with:
+
+```bash
+pnpm test:e2e
+```
+
+(from the repo root — this forwards to `pnpm -F @zpd/app test:e2e`, i.e.
+`playwright test` inside `packages/app`).
+
+### Runs against a production build, not `vite dev`
+
+`playwright.config.ts`'s `webServer` does **not** start the Vite dev
+server. It runs `pnpm build && pnpm exec vite preview --port 15300 --strictPort`
+— a production build served via `vite preview` — so the suite exercises
+what actually ships, not a dev-mode approximation. Port **15300** is used
+specifically to avoid colliding with a developer's already-running `pnpm dev`
+(15200) or docs dev server (15210).
+
+### The `window.__zpdTest` bridge
+
+Canvas output is pixels — a Playwright test cannot ask "did the rectangle
+move?" by inspecting the DOM. Instead, `packages/app/src/editor/test-bridge.ts`
+exposes a small, **read-only** bridge on `window.__zpdTest`:
+
+```ts
+export interface ZpdTestBridge {
+  getDoc(): DocState;
+  getLayers(): ZpdTestLayerSummary[];
+  getLayerCount(): number;
+  getPanelHp(): number;
+  getSelectedId(): string | null;
+  getCamera(): Camera | null;
+  serialize(): PanelConfig;
+}
+```
+
+Tests observe state through this bridge; they never mutate through it —
+every state change in a test still goes through the real UI (real
+`page.mouse` / `page.keyboard` clicks, drags, and key presses, not synthetic
+`dispatchEvent`s, which are unreliable against React's event delegation).
+
+The bridge is gated to test contexts so it is a no-op on a normal production
+visit:
+
+- `import.meta.env.DEV` — true under `vite dev`.
+- A real `?e2e=1` query flag — true when the Playwright suite loads the
+  production build. `helpers.ts`'s `openEditor()` navigates to `/?e2e=1` to
+  activate it. The check uses `URLSearchParams(...).has('e2e')`, not a
+  substring match, so a URL that merely contains "e2e" (e.g.
+  `?ref=free2eat`) does not accidentally activate the bridge.
+
+### `@smoke` tagging
+
+Every e2e test title is prefixed `@smoke`, e.g.:
+
+```ts
+test('@smoke app loads clean and boots the default document', async ({ page }) => {
+  /* ... */
+});
+```
+
+Spec files under `packages/app/e2e/`:
+
+| File | Covers |
+|---|---|
+| `editor-core.spec.ts` | App boot with no console errors, add + drag + undo, panel resize, and the download-JSON round trip through `parsePanelConfig`. |
+| `editor-draw-tools.spec.ts` | The pen tool (closed path) and the text tool (including a real webfont load check). |
+| `editor-dialogs.spec.ts` | Image import + trace-to-vector, and the pattern picker dialog. |
+
+Shared plumbing lives in `helpers.ts` (`openEditor()`, `bridge()`, and
+`toScreenPoint()` — the mm-to-viewport-pixel conversion that mirrors the
+app's own camera math) and `fixtures/` (test assets, e.g. a tiny PNG for the
+image-import test).
+
+### CI
+
+`.github/workflows/pr-checks.yml` runs both layers on every pull request:
+a `checks` job (`pnpm install`, `pnpm typecheck`, `pnpm lint`, `pnpm test`)
+and a separate `e2e` job that installs the Playwright Chromium browser and
+runs `pnpm -F @zpd/app test:e2e`, uploading the HTML report as a build
+artifact on failure.

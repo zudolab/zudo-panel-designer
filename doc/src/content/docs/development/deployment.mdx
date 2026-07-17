@@ -1,0 +1,122 @@
+---
+title: Deployment + CI
+sidebar_position: 4
+---
+
+Both the app and this documentation site deploy as **Cloudflare Workers
+static assets** (not Cloudflare Pages) — the same model as the
+takazudomodular.com main site. Each has its own `wrangler.toml` (root for
+the app, `doc/wrangler.toml` for the docs) and its own pair of Cloudflare
+Workers: one for production, one for PR previews.
+
+## The four workers
+
+| Worker name | Source config | Environment | Serves |
+|---|---|---|---|
+| `zudo-panel-designer-production` | root `wrangler.toml`, `[env.production]` | production | https://zudo-panel-designer.takazudomodular.com/ |
+| `zudo-panel-designer-preview` | root `wrangler.toml`, `[env.preview]` | preview | PR preview builds of the app |
+| `doc-zudo-panel-designer-production` | `doc/wrangler.toml`, `[env.production]` | production | https://doc-zudo-panel-designer.takazudomodular.com/ |
+| `doc-zudo-panel-designer-preview` | `doc/wrangler.toml`, `[env.preview]` | preview | PR preview builds of the docs site |
+
+Wrangler derives each named environment's worker name as `<name>-<env>` from
+the base `name` in `wrangler.toml` — `zudo-panel-designer` for the app,
+`doc-zudo-panel-designer` for the docs — so the `production`/`preview`
+environments in each config yield exactly the four workers above. Both
+`wrangler.toml` files set `workers_dev = false` and `preview_urls = false`
+explicitly at the top level and re-state them per environment, since
+`preview_urls` silently defaults to match `workers_dev` otherwise.
+
+The production route on each config uses `custom_domain = true`, which lets
+Cloudflare provision the DNS record and TLS certificate automatically on
+first deploy — no manual DNS setup:
+
+```toml
+[[env.production.routes]]
+pattern = "zudo-panel-designer.takazudomodular.com"
+custom_domain = true
+```
+
+(and the equivalent `doc-zudo-panel-designer.takazudomodular.com` pattern
+in `doc/wrangler.toml`).
+
+## Production URLs
+
+- App: **https://zudo-panel-designer.takazudomodular.com/**
+- Docs (this site): **https://doc-zudo-panel-designer.takazudomodular.com/**
+
+## Production deploy — on push to `main`
+
+`.github/workflows/production-deploy.yml` triggers on `push` to `main` (and
+supports manual re-runs via `workflow_dispatch`). It runs two independent
+parallel jobs — `deploy-app` and `deploy-doc` — with no `needs:` dependency
+between them, so a failure in one does not block the other. `concurrency:
+production-deploy` with `cancel-in-progress: false` ensures deploys queue
+rather than race or get cancelled mid-flight.
+
+Both jobs:
+
+1. Build (`pnpm build` at the repo root for the app; `pnpm install
+   --frozen-lockfile && pnpm build` inside `doc/` for the docs site).
+2. Deploy with `wrangler deploy --env production`, wrapped in a
+   pipefail-safe retry loop (up to 3 attempts, since `wrangler | tee`
+   without `set -o pipefail` would otherwise mask a wrangler failure behind
+   `tee`'s own exit code).
+3. Run smoke checks against the live production URL(s) after deploying,
+   retrying for up to a few minutes — the very first deploy has to wait for
+   Cloudflare to provision DNS and TLS for the custom domain. The app's
+   smoke check also verifies a non-root SPA route resolves via the
+   single-page-application fallback; the docs site's smoke check verifies
+   an English and a Japanese doc route.
+
+Both jobs authenticate with the same `CLOUDFLARE_API_TOKEN` /
+`CLOUDFLARE_ACCOUNT_ID` repository secrets.
+
+## PR previews
+
+`.github/workflows/pr-checks.yml` adds a `preview` job, decoupled from the
+`checks` and `e2e` jobs (no `needs:`), so a preview URL lands on the PR
+quickly regardless of whether tests have finished or passed.
+
+Every deploy/comment step in this job is gated with:
+
+```yaml
+if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+```
+
+Fork PRs and Dependabot PRs don't receive repository secrets, so their runs
+**skip** the deploy/comment steps rather than failing.
+
+For both the app and the docs site, the job builds and then runs:
+
+```bash
+pnpm exec wrangler versions upload --env preview --preview-alias "pr-${PR_NUMBER}"
+```
+
+— a **Worker Versions** upload (not a full `wrangler deploy`), aliased to
+the PR number, targeting the `preview` environment of each `wrangler.toml`
+(the environment with `preview_urls = true`). The resulting preview URL is
+never hand-constructed — it is parsed directly out of wrangler's own stdout
+(the `Version Preview Alias URL: https://...` line), since Cloudflare
+generates it. If the preview worker doesn't exist yet (first-ever upload
+for a fresh worker), the step bootstraps it once with a plain `wrangler
+deploy --env preview` and retries.
+
+The job then upserts a single **sticky comment** on the PR (found via a
+`<!-- preview-deploy-marker -->` marker as the first line of the body, so
+repeated pushes update the same comment instead of piling up new ones)
+listing:
+
+- the app preview URL
+- the docs preview URL
+- the commit SHA that produced them
+
+## PR checks (non-deploy)
+
+Also in `pr-checks.yml`, independent of the preview job:
+
+- `checks` — install, typecheck, lint, unit tests (`pnpm test`).
+- `e2e` — the Playwright `@smoke` suite (see
+  [Testing](./testing.mdx#e2e-with-playwright)).
+- `wrangler-dry-run` — `wrangler deploy --dry-run --env production`, which
+  needs no Cloudflare credentials and catches `wrangler.toml` mistakes on
+  every PR, including from forks.
