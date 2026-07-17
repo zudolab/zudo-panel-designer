@@ -4,6 +4,7 @@
 // from scrolling when the list bottoms out.
 import { PALETTE, PANEL_HEIGHT_MM, PANEL_SIZES, type Layer } from '@zpd/core';
 import type { ToolContext } from '../types';
+import { CollapsibleSection } from './collapsible-section';
 import { InspectorHost } from './inspector-host';
 import { LayerList } from './layer-list';
 
@@ -13,19 +14,10 @@ export interface SidebarProps {
   selectedLayer: Layer | null;
 }
 
-function SectionTitle({ children }: { children: string }) {
-  return (
-    <h2 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
-      {children}
-    </h2>
-  );
-}
-
 export function Sidebar({ ctx, selectedId, selectedLayer }: SidebarProps) {
   return (
-    <aside className="flex w-72 flex-col gap-5 overflow-y-auto overscroll-contain border-l border-neutral-800 bg-neutral-900 p-3">
-      <section>
-        <SectionTitle>Panel</SectionTitle>
+    <aside className="flex w-72 flex-col gap-3 overflow-y-auto overscroll-contain border-l border-neutral-800 bg-neutral-900 p-3">
+      <CollapsibleSection title="Panel">
         <label className="flex items-center justify-between gap-2 text-xs">
           <span className="text-neutral-400">Size</span>
           <select
@@ -40,10 +32,9 @@ export function Sidebar({ ctx, selectedId, selectedLayer }: SidebarProps) {
             ))}
           </select>
         </label>
-      </section>
+      </CollapsibleSection>
 
-      <section>
-        <SectionTitle>Palette (fixed)</SectionTitle>
+      <CollapsibleSection title="Palette (fixed)">
         <ul className="flex flex-col gap-1.5">
           {PALETTE.map((entry) => (
             <li key={entry.name} className="flex items-center gap-2 text-xs">
@@ -56,17 +47,15 @@ export function Sidebar({ ctx, selectedId, selectedLayer }: SidebarProps) {
             </li>
           ))}
         </ul>
-      </section>
+      </CollapsibleSection>
 
-      <section>
-        <SectionTitle>Layers</SectionTitle>
+      <CollapsibleSection title="Layers">
         <LayerList ctx={ctx} selectedId={selectedId} />
-      </section>
+      </CollapsibleSection>
 
-      <section>
-        <SectionTitle>{selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}</SectionTitle>
+      <CollapsibleSection title={selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}>
         <InspectorHost ctx={ctx} layer={selectedLayer} />
-      </section>
+      </CollapsibleSection>
     </aside>
   );
 }
