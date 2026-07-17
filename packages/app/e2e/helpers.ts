@@ -29,6 +29,7 @@ export function bridge(page: Page) {
     getLayerCount: () => page.evaluate(() => window.__zpdTest!.getLayerCount()),
     getPanelHp: () => page.evaluate(() => window.__zpdTest!.getPanelHp()),
     getSelectedId: () => page.evaluate(() => window.__zpdTest!.getSelectedId()),
+    getSelectedIds: () => page.evaluate(() => window.__zpdTest!.getSelectedIds()),
     getCamera: () => page.evaluate(() => window.__zpdTest!.getCamera()),
     serialize: () => page.evaluate(() => window.__zpdTest!.serialize()),
   };

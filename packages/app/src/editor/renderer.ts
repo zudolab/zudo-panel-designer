@@ -28,7 +28,9 @@ const HANDLE_SIZE = 8;
 const OUTSIDE_GHOST_ALPHA = 0.35;
 
 export interface RenderExtras {
-  selectedId: string | null;
+  // Multi-select contract (#44): the full (normalized) selection. The chrome
+  // pass below still renders only the exactly-one case — N-layer chrome is #45.
+  selectedIds: readonly string[];
   images: Map<string, HTMLImageElement>;
   showNodes: boolean; // draw path anchors/handles for the selected path layer
   showOutsidePanel: boolean; // ghost-paint off-panel layer content (issue #43)
@@ -360,7 +362,9 @@ function drawSelectionChrome(
   cam: Camera,
   extras: RenderExtras,
 ): void {
-  const selected = layers.find((l) => l.id === extras.selectedId);
+  // Single-selection chrome only in this wave (#44) — #45 draws N-layer chrome.
+  const selectedId = extras.selectedIds.length === 1 ? extras.selectedIds[0] : null;
+  const selected = layers.find((l) => l.id === selectedId);
   if (!selected) return;
   if (selected.hidden) return; // the layer pass skips hidden layers — chrome must too
   const rawBbox = layerBbox(selected, panel);

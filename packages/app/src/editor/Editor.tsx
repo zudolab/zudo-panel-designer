@@ -27,6 +27,7 @@ import { renderScene } from './renderer';
 import { getTool, toolByShortcut } from './registry';
 import { closeDialog, openDialog } from './registry/dialogs';
 import { createDemoDoc } from './demo-doc';
+import { normalizeSelectedIds } from './selection';
 import { installTestBridge } from './test-bridge';
 import { useDocHistory } from './use-doc-history';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from './types';
@@ -50,7 +51,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function Editor() {
   const { doc, canUndo, canRedo, commit, replace, beginGesture, undo, redo } =
     useDocHistory(createDemoDoc());
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Selection state (#44): the stored ids are RAW (exactly what select() /
+  // selectIds() was given); every read derives the normalized view (de-duped,
+  // doc-order, stale ids dropped) via normalizeSelectedIds. Lazy on purpose —
+  // see selection.ts for why eager filtering would break select-after-commit.
+  const [rawSelectedIds, setRawSelectedIds] = useState<readonly string[]>([]);
   const [activeToolId, setActiveToolId] = useState('select');
   const [camera, setCameraState] = useState<Camera | null>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
@@ -71,6 +76,11 @@ export function Editor() {
     () => ({ widthMm: panelWidthMm(doc.panelHp), heightMm: PANEL_HEIGHT_MM }),
     [doc.panelHp],
   );
+  const selectedIds = useMemo(
+    () => normalizeSelectedIds(rawSelectedIds, doc.layers),
+    [rawSelectedIds, doc.layers],
+  );
+  const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const selectedLayer = useMemo(
     () => doc.layers.find((l) => l.id === selectedId) ?? null,
     [doc.layers, selectedId],
@@ -82,24 +92,36 @@ export function Editor() {
   // the next event the refs are current.
   const docRef = useRef(doc);
   const cameraRef = useRef(camera);
-  const selectedIdRef = useRef(selectedId);
+  const rawSelectedIdsRef = useRef(rawSelectedIds);
   const panelRef = useRef(panel);
   useEffect(() => {
     docRef.current = doc;
     cameraRef.current = camera;
-    selectedIdRef.current = selectedId;
+    rawSelectedIdsRef.current = rawSelectedIds;
     panelRef.current = panel;
   });
+
+  // The normalized live view of the selection — what ctx and the test bridge
+  // read. Single-selection views derive from it (non-null iff exactly one).
+  const readSelectedIds = useCallback(
+    () => normalizeSelectedIds(rawSelectedIdsRef.current, docRef.current.layers),
+    [],
+  );
+  const readSelectedId = useCallback(() => {
+    const ids = readSelectedIds();
+    return ids.length === 1 ? ids[0] : null;
+  }, [readSelectedIds]);
 
   // e2e test bridge (Wave 6, #13) — reads through the same live refs as ctx,
   // so it never lags a commit. See test-bridge.ts for the prod/dev gating.
   useEffect(() => {
     installTestBridge({
       getDoc: () => docRef.current,
-      getSelectedId: () => selectedIdRef.current,
+      getSelectedId: () => readSelectedId(),
+      getSelectedIds: () => readSelectedIds(),
       getCamera: () => cameraRef.current,
     });
-  }, []);
+  }, [readSelectedId, readSelectedIds]);
 
   // Built once — all mutators are stable, all reads go through refs.
   const ctx = useMemo<ToolContext>(
@@ -113,11 +135,14 @@ export function Editor() {
       get panel() {
         return panelRef.current;
       },
+      get selectedIds() {
+        return readSelectedIds();
+      },
       get selectedId() {
-        return selectedIdRef.current;
+        return readSelectedId();
       },
       get selectedLayer() {
-        const id = selectedIdRef.current;
+        const id = readSelectedId();
         return docRef.current.layers.find((l) => l.id === id) ?? null;
       },
       toMm: (screenPt) => (cameraRef.current ? unproject(cameraRef.current, screenPt) : { x: 0, y: 0 }),
@@ -127,7 +152,8 @@ export function Editor() {
       beginGesture,
       undo,
       redo,
-      select: setSelectedId,
+      select: (id) => setRawSelectedIds(id === null ? [] : [id]),
+      selectIds: (ids) => setRawSelectedIds(ids),
       setCamera: (next) =>
         setCameraState((prev) =>
           typeof next === 'function' ? (prev ? next(prev) : prev) : next,
@@ -137,7 +163,7 @@ export function Editor() {
       openDialog,
       closeDialog,
     }),
-    [commit, replace, beginGesture, undo, redo],
+    [commit, replace, beginGesture, undo, redo, readSelectedId, readSelectedIds],
   );
 
   // --- container measurement + fit ---------------------------------------
@@ -201,7 +227,7 @@ export function Editor() {
     canvas.style.height = `${canvasSize.h}px`;
     const activeTool = getTool(activeToolId);
     renderScene(canvas, doc, panel, camera, {
-      selectedId,
+      selectedIds,
       images: imagesRef.current,
       showNodes: activeToolId === 'select' && selectedLayer?.type === 'path',
       showOutsidePanel,
@@ -228,10 +254,13 @@ export function Editor() {
   // --- keyboard: active tool first, then app-level fallbacks -------------
   useEffect(() => {
     const deleteSelected = () => {
-      const id = selectedIdRef.current;
-      if (!id) return;
-      commit({ ...docRef.current, layers: docRef.current.layers.filter((l) => l.id !== id) });
-      setSelectedId(null);
+      // Multi-capable (#44) but behaviour-identical today: only 0 or 1 ids can
+      // be selected until #45 adds the multi-select interactions.
+      const ids = readSelectedIds();
+      if (ids.length === 0) return;
+      const doomed = new Set(ids);
+      commit({ ...docRef.current, layers: docRef.current.layers.filter((l) => !doomed.has(l.id)) });
+      setRawSelectedIds([]);
     };
     const nudge = (dx: number, dy: number) => {
       const layer = ctx.selectedLayer;
@@ -280,7 +309,7 @@ export function Editor() {
       }
       switch (e.key) {
         case 'Escape':
-          setSelectedId(null);
+          setRawSelectedIds([]);
           break;
         case 'Delete':
         case 'Backspace':
@@ -310,7 +339,7 @@ export function Editor() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [activeToolId, ctx, commit, undo, redo]);
+  }, [activeToolId, ctx, commit, undo, redo, readSelectedIds]);
 
   // --- pointer routing to the active (or Space-override pan) tool ---------
   const effectiveToolId = spaceDown ? 'pan' : activeToolId;
@@ -392,7 +421,7 @@ export function Editor() {
         </div>
         <Sidebar
           ctx={ctx}
-          selectedId={selectedId}
+          selectedIds={selectedIds}
           selectedLayer={selectedLayer}
           activeToolId={activeToolId}
           showOutsidePanel={showOutsidePanel}

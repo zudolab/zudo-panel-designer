@@ -65,6 +65,22 @@ export function rotatedRectAABB(rect: Rect, rotationDeg?: number): Rect {
   return boundsOfPoints(corners);
 }
 
+// AABB overlap test. Inclusive: rects that merely touch along an edge or at a
+// corner DO intersect — a marquee that grazes a layer's edge should pick it up.
+// Tolerates negative width/height (in-progress resize drags produce them) by
+// normalizing each axis to min/max first.
+export function rectsIntersect(a: Rect, b: Rect): boolean {
+  const aMinX = Math.min(a.x, a.x + a.width);
+  const aMaxX = Math.max(a.x, a.x + a.width);
+  const aMinY = Math.min(a.y, a.y + a.height);
+  const aMaxY = Math.max(a.y, a.y + a.height);
+  const bMinX = Math.min(b.x, b.x + b.width);
+  const bMaxX = Math.max(b.x, b.x + b.width);
+  const bMinY = Math.min(b.y, b.y + b.height);
+  const bMaxY = Math.max(b.y, b.y + b.height);
+  return aMinX <= bMaxX && bMinX <= aMaxX && aMinY <= bMaxY && bMinY <= aMaxY;
+}
+
 export function unionBbox(a: Rect, b: Rect): Rect {
   const minX = Math.min(a.x, b.x);
   const minY = Math.min(a.y, b.y);
