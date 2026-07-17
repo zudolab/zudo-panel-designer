@@ -1,0 +1,29 @@
+---
+title: Panel finishes & sizing
+description: The three fixed PCB finishes and the fixed panel dimensions zpd designs against.
+sidebar_position: 2
+---
+
+## Three fixed finishes
+
+A zpd panel is a real PCB, and its visual "colors" are actual fabrication layers, not arbitrary UI colors. Every panel uses the same three finishes:
+
+| Finish | PCB fab layer |
+| --- | --- |
+| Black | Soldermask |
+| Gold | Exposed copper, ENIG-plated |
+| White | Silkscreen |
+
+This palette is fixed — there is no fourth color and no custom-color mode. See [The 3-color palette](../document-model/palette.mdx) for the exact color indexes and hex values used in the editor.
+
+## Panel width: HP
+
+Panel width is specified in **HP**, the Eurorack-style horizontal-pitch unit. zpd does not compute width as a simple `HP * 5.08mm` multiple — real Takazudo Modular panels are undersized against that nominal pitch for mounting clearance, so each supported HP has its own measured width. See [Panel sizing](../document-model/panel-sizing.mdx) for the full width table.
+
+## Panel height: fixed at 3U
+
+Panel height is not configurable — every panel is **128.5 mm**, the fixed 3U Eurorack panel height. There is no height field in the editor because there is nothing to choose.
+
+<Info>
+  Width (via HP) and height (fixed) together define the panel's fabrication bounding box. Layers are free-form within that box, but the box itself is never a design choice — it is Takazudo Modular's product spec.
+</Info>

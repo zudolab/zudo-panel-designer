@@ -1,0 +1,95 @@
+---
+title: Geometry & editing contracts
+description: bbox math, hit-testing rules, layer-list ops, path geometry, resize gating, and grid snapping.
+sidebar_position: 10
+---
+
+## Bbox math
+
+`packages/core/src/bbox.ts` holds the rect/bbox math shared across the other geometry modules. Document space is millimeters; rotation is always **degrees clockwise about the rect's own center** — the same convention used throughout `@zpd/core`.
+
+| Function | Purpose |
+| --- | --- |
+| `rectCenter(rect)` | Center point of a rect. |
+| `rectCorners(rect)` | The 4 corners as `[Pt, Pt, Pt, Pt]`. |
+| `boundsOfPoints(points)` | Axis-aligned bounds enclosing a set of points. |
+| `rotatedRectAABB(rect, rotationDeg)` | Rotates the rect's 4 corners about its own center, then takes the min/max — the rotated bounding box. `rotationDeg` of `0`/`undefined` is a fast no-op; the result is always a fresh copy, never the input rect by reference. |
+| `unionBbox(a, b)` | The smallest rect containing both `a` and `b`. |
+| `mergeBboxes(rects)` | `unionBbox` reduced over a list — the enclosing bbox of a whole selection. |
+
+## Hit-testing
+
+`packages/core/src/hit-test.ts` implements canvas hit-testing in mm space. `hitTestDoc(doc, mmX, mmY)` walks layers **topmost-first** (highest index down to `0`), skipping hidden layers, and returns the first layer whose per-type test matches — or `null`.
+
+| Layer type | Hit test |
+| --- | --- |
+| `shape` | Point-in-rotated-rect, with an ellipse branch (normalized ellipse equation) when `shape === 'ellipse'`. |
+| `image` | Point-in-rotated-rect (rectangle only, no ellipse branch). |
+| `text` | Point-in-rotated-rect against an *estimated* bbox — `@zpd/core` has no canvas/DOM font metrics, so `estimateTextBbox` uses a rough monospace-ish estimate (`TEXT_CHAR_WIDTH_FACTOR = 0.6`, `TEXT_LINE_HEIGHT_FACTOR = 1.2`) rather than real glyph measurement. Good enough for click-to-select; not a layout authority. |
+| `path` | Even-odd point-in-polygon against the flattened fill (only when `closed`), plus a stroke distance test with a generous grab-zone floor: `Math.max(layer.strokeWidth, 1.5) / 2` (`MIN_STROKE_GRAB_MM = 1.5`), so thin strokes stay easy to click. |
+| `pattern` | Always `false`. |
+
+<Warning title="Pattern layers are never canvas-hit-testable">
+  `hitTestLayer` returns `false` unconditionally for `type === 'pattern'`. A pattern layer covers the whole panel, so clicking the canvas can never target it — it is selectable only from the layer list, never by clicking the canvas. This is intentional, not a missing feature.
+</Warning>
+
+Because there's no browser `Path2D` in plain Node/Vitest, path hit-testing doesn't use `isPointInPath`/`isPointInStroke` — it flattens beziers to polylines (see below) and does its own even-odd ray casting and point-to-segment distance, keeping `@zpd/core` dependency-free and testable outside a browser.
+
+## Layer-list operations
+
+`packages/core/src/layer-ops.ts` operates on the flat, bottom-to-top layer array. Every function is pure and immutable — it returns a **new** array rather than mutating its input, so callers can diff/undo cheaply against the [history](./history.mdx) reducer.
+
+| Function | Effect |
+| --- | --- |
+| `addLayer(layers, layer, index?)` | Inserts at `index` (clamped to the array bounds), or appends when `index` is omitted. |
+| `removeLayer(layers, id)` | Filters out the layer with the given `id`. |
+| `duplicateLayer(layers, id, newId, nameSuffix = ' copy')` | Inserts a copy directly above the source layer, with `id: newId` and `name` suffixed. |
+| `reorderLayer(layers, fromIndex, toIndex)` | Moves a layer via splice; a no-op for out-of-range or equal indices. |
+| `toggleLayerHidden(layers, id)` | Flips `hidden` on the matching layer. |
+| `renameLayer(layers, id, name)` | Sets `name` on the matching layer. |
+
+Every function takes a **caller-supplied** `id` (for `duplicateLayer`, a caller-supplied `newId`) rather than minting one itself — id generation is the document model's concern (`mintId`, see [Document state &amp; layers](./document-state-and-layers.mdx)), which keeps these ops pure functions of their inputs.
+
+## Path geometry
+
+`packages/core/src/path-geometry.ts` holds bezier path helpers, all pure TypeScript with no runtime browser dependency.
+
+- **`PathPointLike`** — an anchor (`x`, `y`) with optional absolute handle coordinates `hin`/`hout`, mm.
+- **`flattenSubpath(points, closed, segments = 24)`** — walks each anchor-to-anchor bezier segment and samples it into a polyline (`DEFAULT_FLATTEN_SEGMENTS = 24` points per segment). This is what powers hit-testing and bbox math outside a browser.
+- **`flattenPath(points, closed, extraSubpaths?)`** — flattens the primary subpath plus any `extraSubpaths`, which are always treated as closed.
+- **`pathBbox(points, extraSubpaths?)`** — an approximation over the raw anchors + handles, *not* the flattened curve. Cheap, and good enough for selection chrome/bbox display, but not pixel-exact against the rendered curve.
+- **`buildPath2D(...)`** — builds a real browser `Path2D`, for app/render use only; returns `null` in Node (no global `Path2D`). Core's own hit-test/bbox logic and tests use `flattenPath` instead, which works everywhere.
+- **`translatePoints` / `translatePathLayer`** — shift a subpath (and its handles) by `dx`/`dy`.
+- **`movePathAnchor(points, index, x, y)`** — moves one anchor and carries its handles along with it, preserving their offset from the anchor.
+- **`movePathHandle(points, index, which, x, y, mirror)`** — moves one handle; with `mirror: true`, reflects the opposite handle about the anchor so the curve stays smooth (standard bezier-editor behavior).
+
+## Resize gating
+
+`packages/core/src/resize.ts` implements axis-aligned, 8-handle resize math (`'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'`).
+
+```ts
+function isResizable(rotation: number | undefined): boolean {
+  return !rotation;
+}
+```
+
+<Note title="Rotated layers are not resizable in stage 1">
+  Resize is only offered for unrotated layers — a rotated bbox's handles don't align with its visual edges, so `isResizable` is the one-line guard the app UI checks before showing resize handles at all.
+</Note>
+
+`resizeRect(rect, handle, dx, dy, minSize = DEFAULT_MIN_SIZE_MM)` applies the drag delta along the handle's axes, clamped so the rect can never shrink past `minSize` (`DEFAULT_MIN_SIZE_MM = 1` mm) or invert. Each handle keeps the *opposite* edge fixed — e.g. dragging `'e'` keeps the west edge in place while dragging `'w'` keeps the east edge in place.
+
+## Grid snapping
+
+`packages/core/src/snap.ts` snaps mm coordinates to a grid:
+
+```ts
+const DEFAULT_SNAP_MM = 0.1;
+
+function snapToGrid(value: number, gridMm: number = DEFAULT_SNAP_MM): number {
+  const snapped = Math.round(value / gridMm) * gridMm;
+  return Number(snapped.toFixed(6));
+}
+```
+
+The default grid is `0.1` mm. The round-trip through a fixed decimal string (`toFixed(6)`) is deliberate — it avoids float noise like `0.1 + 0.2 !== 0.3` leaking into snapped mm coordinates. `snapPoint(pt, gridMm)` applies `snapToGrid` to both `x` and `y` of a point.

@@ -1,0 +1,58 @@
+---
+title: Undo / redo history
+description: The snapshot-based history reducer, gesture batching, and the 50-entry cap, from history.ts.
+sidebar_position: 4
+---
+
+## A snapshot-based reducer
+
+Undo/redo is a plain, React-free reducer over full-state snapshots of the document — not a diff/patch log:
+
+```ts
+interface HistoryState<T> {
+  past: T[];
+  present: T;
+  future: T[];
+}
+```
+
+`createHistory(initial)` starts with an empty `past`/`future` and `present = initial`. Because the reducer is plain functions with no React dependency, `@zpd/core` can be tested and used standalone; the app wave wires these into whatever state container it uses.
+
+## `commit` vs. `replace`
+
+| Function | Effect |
+| --- | --- |
+| `commit(state, next)` | Pushes the current `present` onto `past` as a new undo entry, sets `next` as the new `present`, and **discards any redo branch** (`future` is cleared). |
+| `replace(state, next)` | Updates `present` in place — **no new undo entry is created**. |
+
+`replace` exists for coalescing continuous, in-flight updates — e.g. every `pointermove` of a drag — into whichever entry the most recent `commit`/`beginGesture` opened, instead of creating an undo step per pixel of movement.
+
+## Gesture batching
+
+```ts
+function beginGesture<T>(state: HistoryState<T>): HistoryState<T> {
+  // Same as committing the current present onto itself
+  return commit(state, state.present);
+}
+```
+
+`beginGesture` opens a new undo entry without changing `present` yet. The calling pattern is: call `beginGesture` once when a drag/resize/node-edit interaction starts, then call `replace` on every intermediate update for the rest of that gesture. The net effect is that one entire gesture — however many pointer events it produces — collapses into **exactly one** undo entry.
+
+## The 50-entry cap
+
+```ts
+const MAX_HISTORY = 50;
+```
+
+`commit` (and therefore `beginGesture`, which is implemented via `commit`) slices `past` to its last 50 entries on every push: `past: [...state.past, state.present].slice(-MAX_HISTORY)`. History depth is bounded — undo does not grow without limit over a long editing session.
+
+## Undo, redo, and the can-* guards
+
+| Function | Effect |
+| --- | --- |
+| `undo(state)` | Moves the last `past` entry into `present`, and pushes the previous `present` onto the front of `future`. No-op if `past` is empty. |
+| `redo(state)` | Moves the first `future` entry into `present`, and pushes the previous `present` onto `past`. No-op if `future` is empty. |
+| `canUndo(state)` | `true` when `past.length > 0`. |
+| `canRedo(state)` | `true` when `future.length > 0`. |
+
+Because `commit` always clears `future`, redo is only available immediately after an undo — any new edit after an undo discards the abandoned redo branch, which is standard undo/redo semantics.
