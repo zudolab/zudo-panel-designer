@@ -131,6 +131,16 @@ describe('DropImport', () => {
     expect(importDroppedFile).not.toHaveBeenCalled();
   });
 
+  it('leaves a non-file drop alone (does not preventDefault or dispatch), so native text drops keep working', () => {
+    render(<DropImport ctx={stubCtx()} />);
+
+    const dropEvent = makeDragEvent('drop', { noFiles: true });
+    dispatch(dropEvent);
+
+    expect(dropEvent.defaultPrevented).toBe(false);
+    expect(importDroppedFile).not.toHaveBeenCalled();
+  });
+
   it('resets the enter counter on drop so a later drag starts clean', () => {
     render(<DropImport ctx={stubCtx()} />);
 

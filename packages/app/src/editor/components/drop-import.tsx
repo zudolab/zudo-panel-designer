@@ -68,6 +68,12 @@ export function DropImport({ ctx }: { ctx: ToolContext }) {
     };
 
     const handleDrop = (e: DragEvent) => {
+      // Same file-drag guard as the other handlers: an unguarded
+      // preventDefault() here would cancel every native drop that bubbles to
+      // `document`, including dragging selected text into an in-app text
+      // field (e.g. the text inspector or a layer-name input) — codex review
+      // caught this as a user-visible regression.
+      if (!hasFileDrag(e)) return;
       e.preventDefault();
       enterCountRef.current = 0;
       setIsDragging(false);
