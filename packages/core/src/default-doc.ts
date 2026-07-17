@@ -18,5 +18,6 @@ export function createDefaultDoc(hp: number = DEFAULT_PANEL_HP): DocState {
         params: { pitch: 5, radius: 1 },
       },
     ],
+    guides: [],
   };
 }

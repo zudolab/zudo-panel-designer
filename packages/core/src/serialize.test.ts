@@ -85,6 +85,10 @@ function fullFixtureDoc(): DocState {
         height: 15,
       },
     ],
+    guides: [
+      { id: 'guide-h1', orientation: 'horizontal', position: 12.5 },
+      { id: 'guide-v1', orientation: 'vertical', position: 4, hidden: true },
+    ],
   };
 }
 
@@ -105,7 +109,7 @@ describe('serializePanelConfig / parsePanelConfig round trip', () => {
   it('emits derived panel size + palette names as advisory output', () => {
     const doc = fullFixtureDoc();
     const config = serializePanelConfig(doc);
-    expect(config.version).toBe(1);
+    expect(config.version).toBe(2);
     expect(config.app).toBe('zpd');
     expect(config.panel).toEqual({
       hp: 12,
@@ -116,17 +120,69 @@ describe('serializePanelConfig / parsePanelConfig round trip', () => {
   });
 });
 
+describe('serialize v2 — guides migration', () => {
+  it('emits version 2 with the guides array', () => {
+    const doc = fullFixtureDoc();
+    const config = serializePanelConfig(doc);
+    expect(config.version).toBe(2);
+    expect(config.guides).toEqual(doc.guides);
+  });
+
+  it('v2 round-trip preserves guides (including a hidden one)', () => {
+    const doc = fullFixtureDoc();
+    const roundTripped = parsePanelConfig(JSON.parse(JSON.stringify(serializePanelConfig(doc))));
+    expect(roundTripped.guides).toEqual(doc.guides);
+  });
+
+  it('a v1 / missing-guides config parses to guides: []', () => {
+    // shape of an old v1 export: version 1, no `guides` key at all
+    const v1 = {
+      version: 1,
+      app: 'zpd',
+      panel: { hp: 12, widthMm: 60.96, heightMm: 128.5 },
+      palette: ['black', 'gold', 'white'],
+      layers: [],
+    };
+    expect(parsePanelConfig(v1).guides).toEqual([]);
+  });
+
+  it('defaults a non-array guides field to []', () => {
+    expect(parsePanelConfig({ guides: 'nope' }).guides).toEqual([]);
+    expect(parsePanelConfig({ guides: 42 }).guides).toEqual([]);
+    expect(parsePanelConfig({ guides: { position: 5 } }).guides).toEqual([]);
+  });
+
+  it('drops malformed guide entries safely', () => {
+    const doc = parsePanelConfig({
+      guides: [
+        null,
+        42,
+        'nope',
+        {}, // no orientation
+        { orientation: 'diagonal', position: 5 }, // bad orientation
+        { orientation: 'horizontal' }, // no position
+        { orientation: 'horizontal', position: 'x' }, // non-numeric position
+        { orientation: 'vertical', position: Infinity }, // non-finite position
+        { orientation: 'horizontal', position: 7 }, // the one good entry
+      ],
+    });
+    expect(doc.guides).toHaveLength(1);
+    expect(doc.guides[0]).toMatchObject({ orientation: 'horizontal', position: 7 });
+    expect(typeof doc.guides[0].id).toBe('string');
+    expect(doc.guides[0].id.length).toBeGreaterThan(0);
+  });
+
+  it('id-stamps a guide that is missing an id and preserves hidden', () => {
+    const doc = parsePanelConfig({
+      guides: [{ orientation: 'vertical', position: 3, hidden: true }],
+    });
+    expect(doc.guides[0].hidden).toBe(true);
+    expect(doc.guides[0].id.length).toBeGreaterThan(0);
+  });
+});
+
 describe('parsePanelConfig — never throws on bad input', () => {
-  const garbageInputs: unknown[] = [
-    null,
-    undefined,
-    42,
-    'not json',
-    true,
-    [],
-    [1, 2, 3],
-    () => {},
-  ];
+  const garbageInputs: unknown[] = [null, undefined, 42, 'not json', true, [], [1, 2, 3], () => {}];
 
   it.each(garbageInputs)('falls back to the default document for garbage input %#', (input) => {
     expect(() => parsePanelConfig(input)).not.toThrow();
@@ -186,9 +242,7 @@ describe('parsePanelConfig — never throws on bad input', () => {
 
   it('keeps an unrecognized patternType as opaque data (patterns registry is not a core dependency)', () => {
     const doc = parsePanelConfig({
-      layers: [
-        { type: 'pattern', patternType: 'totally-unknown-xyz', color: 1, params: { a: 1 } },
-      ],
+      layers: [{ type: 'pattern', patternType: 'totally-unknown-xyz', color: 1, params: { a: 1 } }],
     });
     expect(doc.layers).toHaveLength(1);
     const [layer] = doc.layers;

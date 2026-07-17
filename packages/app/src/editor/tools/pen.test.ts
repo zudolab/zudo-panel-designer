@@ -36,7 +36,7 @@ const CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 }; // identity: scre
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
 function makeHarness() {
-  let history: HistoryState<DocState> = createHistory({ panelHp: 12, layers: [] });
+  let history: HistoryState<DocState> = createHistory({ panelHp: 12, guides: [], layers: [] });
   let selectedIds: readonly string[] = [];
   let activeToolId = 'pen';
   let repaintCalls = 0;

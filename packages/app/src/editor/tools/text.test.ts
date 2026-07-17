@@ -57,7 +57,7 @@ const text = getTool('text')!;
 
 describe('text tool — click to place', () => {
   it('inserts a TextLayer at the click point, commits once, then selects it and switches to select', () => {
-    const doc: DocState = { panelHp: 12, layers: [] };
+    const doc: DocState = { panelHp: 12, guides: [], layers: [] };
     const ctx = stubCtx(doc);
 
     text.onPointerDown?.(ptr({ x: 12, y: 34 }), ctx);
@@ -91,7 +91,7 @@ describe('text tool — click to place', () => {
       y: 0,
       color: 2,
     };
-    const doc: DocState = { panelHp: 12, layers: [existing] };
+    const doc: DocState = { panelHp: 12, guides: [], layers: [existing] };
     const ctx = stubCtx(doc);
 
     text.onPointerDown?.(ptr({ x: 5, y: 5 }), ctx);
