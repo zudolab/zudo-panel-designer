@@ -38,6 +38,7 @@ deep-equals the original `doc` for a fixture exercising:
 - a `path` layer's `extraSubpaths` (multiple closed subpaths from image
   tracing)
 - `rotation` present on some layers and absent on others
+- the document's ruler `guides`, including a hidden one (a dedicated serialize-v2 test asserts `roundTripped.guides` deep-equals the original)
 
 All of the above survives the round trip unchanged.
 

@@ -9,7 +9,7 @@ Tools are the modules that interpret pointer and keyboard input on the canvas. E
 
 | Tool | Shortcut | Cursor | Summary |
 |---|---|---|---|
-| Select | `V` | default | Move, resize (8 handles), and edit path anchors/handles of the selected layer. |
+| Select | `V` | default | The full multi-selection tool: click/marquee-select, move, rotate, resize, and edit path anchors/handles. |
 | Pen | `P` | crosshair | Draw bezier paths anchor by anchor; close into a filled shape or finish as an open stroke. |
 | Text | `T` | text | Click the canvas to drop a new text layer, then hand off to Select. |
 | Pan | `H` | grab | Drag to pan the camera. Also reached transiently by holding Space in any other tool. |
@@ -17,13 +17,38 @@ Tools are the modules that interpret pointer and keyboard input on the canvas. E
 
 ### Select (`V`)
 
-`tools/select.tsx` is the reference tool — it exercises every part of the tool contract and is the file to copy when building a new one. On pointer down it, in order:
+`tools/select.tsx` is the reference tool — it exercises every part of the tool contract and is the file to copy when building a new one. It is a full **multi-selection vector-editing** tool: selecting, moving, rotating, resizing, and path-anchor editing all live in this one file. Its Help-panel `description` is the short version; this is the full vocabulary. Which gestures apply to which layer type is governed by the [layer eligibility matrix](#layer-eligibility-matrix) below.
 
-1. If a layer is already selected, tries to grab a path node/bezier handle on it (`tryGrabNode`) — within 7px for anchors, 6px for handles.
-2. Otherwise tries to grab one of the 8 resize handles on the selection's bounding box (`tryGrabResizeHandle`) — only offered for `shape`/`image` layers that aren't rotated (a rotated bbox isn't axis-resizable).
-3. Otherwise hit-tests the whole document top-down (`topmostHit`) and selects whatever it hits, or deselects if it hits nothing.
+**On pointer down** it resolves grabs in a fixed precedence, each winning over the next: a path node/bezier handle on the current selection (`tryGrabNode` — within 7px for anchors, 6px for handles) → the rotate knob (`tryGrabRotateHandle`) → one of the 8 resize handles (`tryGrabResizeHandle`) → a corner handle of a multi-selection's combined box (`tryGrabMultiResizeHandle`) → otherwise a top-down hit-test (`topmostHit`) that selects, toggles, or — on empty space — starts a marquee.
 
-Dragging streams the change via `ctx.replace()` and only opens an undo entry (`ctx.beginGesture()`) once the drag has moved past the 0.1mm snap grid — a pure click, or a sub-snap jitter that nets zero effective change, leaves history untouched. `pointerUp`/`onDeactivate` both clear the drag state so a tool switch mid-drag can never leave a stale gesture open.
+#### Selecting
+
+- **Click** a layer to select it (and begin a move); **click empty space** to deselect.
+- **Drag on empty canvas** rubber-bands a **marquee**. Its semantics are **intersection**, not containment: any layer whose (rotation-aware) bounding box *overlaps* the rectangle is selected. Bounds come from the renderer's canonical `layerBbox`, so the marquee and the on-screen chrome agree to the pixel. The marquee only materializes once the pointer passes the 4px drag threshold, so a plain click never flashes one.
+- **Shift-click** adds a layer to (or removes it from) the selection; **Meta/Ctrl-click** toggles exactly one layer. A modifier held while marqueeing **unions** the marquee hits with the down-time selection.
+- **Hover** outlines the layer under the cursor with a subtle solid outline — weaker than the dashed selection chrome, so it reads as "would select". It clears when the pointer leaves the canvas.
+- **Patterns are never marquee- or canvas-selectable** — panel-wide, they are reachable only from the layer list (see [Layer eligibility](#layer-eligibility-matrix)).
+
+#### Moving
+
+- **Drag** a selected layer to move it; dragging **any member of a multi-selection** moves the whole selection as one gesture. Movement grid-snaps to 0.1mm and snaps to [guides](./guides.mdx) when a same-axis guide is within range.
+- **Alt-drag** duplicates instead of moving: the clone is sampled the instant the drag crosses the threshold, the originals stay put, and the selection follows the clones. An Alt-*click* that never crosses clones nothing.
+- **Shift** while dragging constrains movement to the dominant axis, re-evaluated live so the drag can flip axes without releasing.
+- **Arrow keys** nudge the selection (see [the keyboard fallbacks](#the-pointer-keyboard-event-contract-keyboard-events)).
+
+#### Resizing & rotating
+
+- **Single resize** — with one `shape` or `image` selected, drag its 8 handles. A **rotated** `shape` resizes too (the only type that both rotates and resizes): the handles ride the rotated corners and the drag resolves in the layer's local frame via `resizeRotatedRect` (`@zpd/core`). Axis-aligned resizes grid- and guide-snap; a rotated resize keeps float hygiene only, because independently snapping a rotated rect's edges would visibly detach the anchored corner.
+- **Rotate** — a `shape` or `text` layer wears a round knob on a stem above its top edge; drag it to rotate about the bbox center. **Shift** snaps to 45° steps, measured from where the gesture began.
+- **Multi-resize** — with more than one layer selected, the combined box wears **corner handles only**. Dragging one scales the whole selection **uniformly** about the opposite corner; **Alt** re-anchors the scale to the center. The scale is uniform by construction, so **Shift is a deliberate no-op** here (patterns in the selection stay put).
+
+#### Editing path anchors
+
+With a single `path` selected, drag its anchors to move them (grid/guide-snapped) or its bezier handles to reshape the curve; holding **Alt** while dragging a handle breaks the mirror so the two sides move independently. This is why `path` has no box-resize — you reshape it by its anchors instead.
+
+#### Gestures & history
+
+Dragging streams the change via `ctx.replace()` and opens an undo entry (`ctx.beginGesture()`) **lazily** — only once the change is actually non-zero. A pure click, or a sub-snap jitter that nets zero effective change, leaves history untouched; an Alt-duplicate opens the entry immediately, since inserting the clone is itself a real change. `pointerUp`/`onDeactivate` both clear all drag state, so a tool switch mid-drag can never leave a stale gesture open.
 
 ### Pen (`P`)
 
@@ -48,6 +73,23 @@ The whole multi-click gesture never touches `ctx.doc` until the path is finished
 ### Zoom (`Z`)
 
 `tools/zoom.tsx` zooms by a fixed factor (1.5× in, 1/1.5× out) anchored at the click point via `camera.zoomAt` — the mm point under the pointer stays stationary. Alt-click zooms out instead of in.
+
+## Layer eligibility matrix
+
+The Select tool's gestures are defined against zpd's actual document model, which is narrower than a general-purpose vector editor's — not every gesture applies to every layer type:
+
+| Layer type | Canvas marquee | Move / nudge | Single resize | Rotate | Multi-resize (uniform) |
+|---|---|---|---|---|---|
+| `shape` | yes | yes | yes (**incl. rotated** — the only such type) | **yes** | yes |
+| `text` | yes | yes | no (no independent width/height) | **yes** | yes (scales `sizeMm`) |
+| `path` | yes | yes | no (edit anchors instead) | no (no `rotation` field) | yes (scales points + handles) |
+| `image` | yes | yes | yes (never rotated) | no (no `rotation` field) | yes |
+| `pattern` | **no** | **no** (panel-wide, no x/y) | no | no | **no** |
+
+- **Patterns are excluded from the canvas entirely.** They are panel-wide and selectable only from the layer list — an existing invariant (`hit-test.ts`: a pattern is never canvas-hit-testable), not a new call. A panel-wide dot grid would otherwise join essentially every marquee. In a multi-selection a pattern stays selected but is unaffected by a move or scale.
+- **Rotation is single-selection, `shape`/`text` only.** Only those two types carry a `rotation` field, so the rotate knob is offered only for them; `path`/`image` have no rotation to set and the chrome must not invent one. Rotating a whole multi-selection isn't representable for `path`/`image` either, so there is no group rotate.
+- **Multi-resize is uniform scale, corner handles only, Shift a no-op.** Non-uniform scaling of a *rotated* rect isn't representable in the `x`/`y`/`width`/`height`/`rotation` model (it would need a shear), and `text` has no independent width/height (only `sizeMm`) — so a group scale can only be uniform. This is a scope reduction forced by the model, not by taste.
+- **`shape` is the only type that both rotates and single-resizes.** `ImageLayer` has no `rotation` field at all, and `text` has no independent width/height — so rotation-aware resize math has exactly one real consumer: a rotated `shape`.
 
 ## Discoverability: tooltips & the Help panel
 
@@ -77,8 +119,8 @@ When the tool does not return `true`, the shell runs its fallbacks in this order
 1. `⌘/Ctrl+Z` (undo) / `⌘/Ctrl+Shift+Z` (redo).
 2. A single-key tool shortcut (`V`/`P`/`T`/`H`/`Z`, case-insensitive) — matched only when no modifier key is held, so it never fires ahead of the undo/redo check.
 3. `Esc` — deselect.
-4. `Delete`/`Backspace` — delete the selected layer.
-5. Arrow keys — nudge the selected layer by 0.1mm, or 1mm with Shift held. Pattern layers (which cover the whole panel) are not nudgeable; path layers translate their whole point set.
+4. `Delete`/`Backspace` — delete the current selection (every selected layer, as one undo entry).
+5. Arrow keys — nudge the selection by 0.1mm, or 1mm with Shift held. Every movable member takes the same delta so the selection translates as a rigid unit; pattern layers (which cover the whole panel) are pinned and don't move, and path layers translate their whole point set. A pattern-only selection writes no undo entry.
 
 Keyboard input is ignored globally while an `<input>`/`<textarea>`/`<select>` is focused (e.g. the layer-rename field, an inspector's number field), so typing "V" into a text box never switches tools.
 

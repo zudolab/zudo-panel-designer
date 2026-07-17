@@ -63,12 +63,27 @@ registerTool({
 
 ### `ctx`（`ToolContext`）の要点
 
-- `ctx.doc`、`ctx.camera`、`ctx.selectedId`、`ctx.selectedLayer` — LIVE な読み取り（古いレンダークロージャを参照することはありません）。
+- `ctx.doc`、`ctx.camera`、`ctx.selectedIds`、`ctx.selectedId`、`ctx.selectedLayer` — LIVE な読み取り（古いレンダークロージャを参照することはありません）。[選択の契約](#選択の契約)を参照してください。
 - `ctx.toMm(screen)` / `ctx.toScreen(mm)` — 座標変換。
 - `ctx.commit(next)` — 1 つのアトミックな変更 = 1 つの undo エントリ。
 - `ctx.beginGesture()` に続けてストリーミングする `ctx.replace(next)` — ドラッグ全体 = 1 つの undo エントリ。
-- `ctx.select(id)`、`ctx.setActiveTool(id)`、`ctx.setCamera(next)`。
+- `ctx.select(id)` / `ctx.selectIds(ids)`、`ctx.setActiveTool(id)`、`ctx.setCamera(next)`。
 - `ctx.openDialog(id, props)` / `ctx.closeDialog()`。
+
+## 選択の契約
+
+`ToolContext.selectedIds` は、何が選択されているかについての **単一の信頼できる情報源** です。これは常に正規化された `readonly string[]` です（`selection.ts`）。重複を除去し、現在のドキュメントに実在する id だけに絞り込み（削除/undo の後に残った古い id は落ちます）、**ドキュメント順**（クリックした順ではなく、レイヤー配列の順）に並べます。そのため、クロムとインスペクタは常に安定した有効なリストを走査できます。
+
+単一選択のツールとインスペクタがそのままコンパイルでき、挙動も変わらないよう、2 つの **派生した単一選択ビュー** が保たれています。
+
+- `ctx.selectedId` / `ctx.selectedLayer` — **ちょうど 1 つ** のレイヤーが選択されているときにのみ非 null です。複数選択では、どちらも `null` になります。
+
+そして 2 つのセッターがあります。
+
+- `ctx.selectIds(ids)` — 複数選択のセッター。
+- `ctx.select(id)` — `selectIds(id === null ? [] : [id])` の糖衣構文です。これにより、旧来の単一選択 API に対して書かれたツールがそのまま動き続けます。複数選択への移行が純粋に **追加的** であったのはこのためです。`selectedId`/`select` は、これまでとまったく同じ意味を持ち続けます。
+
+正規化は、`selectIds()` の内部ではなく、**読み取り時に遅延して**（`ctx` のゲッター内で）適用されます。ツールは、同じイベントハンドラ内でコミットしたばかりのレイヤーを選択することがよくあり、それは Editor のライブな doc ref が同期する前です。ですから、先に絞り込んでしまうと、その新しい id を誤って落としてしまいます。これは、ほかのライブ ref ゲッター（`ctx.doc`、`ctx.selectedLayer`）がすでに従っているのと同じ、古さに関するルールを踏襲しています。
 
 ## ツールの説明文
 

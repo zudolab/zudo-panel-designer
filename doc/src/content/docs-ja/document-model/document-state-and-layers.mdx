@@ -14,11 +14,13 @@ sidebar_position: 1
 interface DocState {
   panelHp: number;
   layers: Layer[]; // bottom -> top (index 0 renders first)
+  guides: Guide[]; // ルーラーガイド — レイヤーではなく表示用の付帯物
 }
 ```
 
 - `panelHp` — HP で表したパネルの幅（[パネルサイズ](./panel-sizing.mdx)を参照）。
 - `layers` — フラットで順序付けされた配列。インデックス `0` がスタックの**最下層**で最初にレンダリングされ、後ろの要素ほど前の要素の上に重ねて描画されます。
+- `guides` — ドキュメントのルーラーガイド。**必須**の配列です（[ガイド](#ガイド)を参照）。
 
 ## `Layer` ユニオン型
 
@@ -121,23 +123,41 @@ interface ImageLayer extends LayerBase {
 
 `src` は設計時のソースにすぎません——ラスターはパネル上に製造できません。最終的なパネルは、このレイヤーではなく、そこからトレースされたベクターレイヤーを使用します。
 
+## ガイド
+
+ガイドは、レイヤーを揃えやすくするためにエディタが描く、まっすぐな基準線です。ガイドは **レイヤーではなく表示用の付帯物** です。`DocState.guides` に置かれ、`layers` には決して入りません。ですから色を持たず、製造されることもありません。
+
+```ts
+interface Guide {
+  id: string;
+  orientation: 'horizontal' | 'vertical';
+  position: number; // mm
+  hidden?: boolean;
+}
+```
+
+`horizontal` ガイドは直線 `y = position`（パネルの幅いっぱい）、`vertical` ガイドは `x = position`（高さいっぱい）です。`guides` が任意ではなく必須なのは、読み取り側が `doc.guides ?? []` を必要としないようにするためで、後方互換はシリアライズの境界が担います（`guides` を持たない古い設定は `[]` として読み込まれます。後述を参照）。エディタ側の挙動——ルーラーからのガイドの引き出し、スナップ、「Show guides」トグル——は[エディタ → ガイド](../editor/guides.mdx)で扱います。
+
 ## `PanelConfig` へのシリアライズ
 
 `DocState` はメモリ上の作業ドキュメントです。`PanelConfig` は、ユーザーがダウンロードして製造に引き渡す、バージョン付きのエクスポート形式です。
 
 ```ts
-const PANEL_CONFIG_VERSION = 1;
+const PANEL_CONFIG_VERSION = 2;
 
 interface PanelConfig {
-  version: 1;
+  version: 2;
   app: 'zpd';
   panel: { hp: number; widthMm: number; heightMm: number };
   palette: string[];
   layers: Layer[];
+  guides: Guide[];
 }
 ```
 
-`hp` と `layers` は正式なデータであり、ラウンドトリップします。`panel.widthMm`、`panel.heightMm`、`palette` は、人間や注文の読み手のための**派生的で参考用の出力**であり、エクスポート時に `hp` と固定パレットから計算されます。ファイルを読み込み直す際には、これらの値が再び信頼されることはありません。
+`hp`、`layers`、`guides` は正式なデータであり、ラウンドトリップします。`panel.widthMm`、`panel.heightMm`、`palette` は、人間や注文の読み手のための**派生的で参考用の出力**であり、エクスポート時に `hp` と固定パレットから計算されます。ファイルを読み込み直す際には、これらの値が再び信頼されることはありません。
+
+**v2** でトップレベルの `guides` 配列が追加されました。v1 の設定（あるいは `guides` を持たない任意の設定）も、`guides` が `[]` にデフォルト化されて問題なく読み込まれます。`parsePanelConfig` は `version` で分岐しません——各フィールドが自分自身を防御します——ので、古いファイルに専用のマイグレーション経路は不要です。[PanelConfig フォーマット → バージョニング](../export/panel-config-format.mdx#バージョニング)を参照してください。
 
 <Warning title="parsePanelConfig は決して例外を投げない">
   `parsePanelConfig` には、ユーザーが手で編集した JSON、古いエクスポート、あるいは別のツールが生成した JSON など、あらゆるものが渡されます。そのため、1 つの不正なフィールドがドキュメント全体を失敗させないよう、各フィールドは個別に防御されます。`hp` が不正または欠落している場合はデフォルトのパネルサイズにフォールバックし、不正な `color` インデックスは `0`（黒）にクランプされ、認識できない `type` を持つレイヤーは黙って破棄されます。壊れた入力やオブジェクトでない入力は、デフォルトのドキュメントになります。
