@@ -27,6 +27,7 @@ export function CanvasViewport({
     <div ref={containerRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden" style={{ cursor }}>
       <canvas
         ref={canvasRef}
+        data-testid="editor-canvas"
         className="block touch-none"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}

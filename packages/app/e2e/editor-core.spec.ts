@@ -17,7 +17,7 @@ test('@smoke app loads clean and boots the default document', async ({ page }) =
   page.on('pageerror', (err) => errors.push(err.message));
 
   await openEditor(page);
-  await expect(page.locator('canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
 
   // wait-ok: asserting ABSENCE of console errors past first paint — no
   // positive event to poll for, so hold a bounded settle window.
