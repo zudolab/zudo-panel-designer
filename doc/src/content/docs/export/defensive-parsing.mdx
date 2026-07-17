@@ -22,6 +22,8 @@ entire import.
 | Not a plain object (`null`, a primitive, an array, a function, …) | Falls back to `createDefaultDoc()` entirely. |
 | A plain object missing `layers` | `layers` becomes `[]`. |
 | `layers` present but not an array | Treated as `[]`. |
+| A plain object missing `guides` | `guides` becomes `[]` (a v1 or guide-less config). |
+| `guides` present but not an array | Treated as `[]`. |
 | Unrecognized top-level keys | Silently ignored — they do not appear on the parsed `DocState`. |
 
 ## `panelHp`
@@ -71,6 +73,17 @@ Each entry in the `layers` array is parsed independently by `parseLayer()`:
 | `path` | `fill` / `stroke` | `null` stays `null`; anything else runs through the `color` clamp above. |
 | `text` | `content` / `fontFamily` | Non-string values default to `""`. |
 | `image` | `src` | Non-string values default to `""`. |
+
+## Guides
+
+Each entry in the `guides` array is parsed independently by `parseGuide()`, mirroring the layer policy — a malformed entry is **dropped** rather than defaulted, so it can't silently plant a bogus 0mm line:
+
+- **`orientation`** — kept only if it is exactly `'horizontal'` or `'vertical'`; any other value drops the whole guide (a guide with no valid axis can't define a line).
+- **`position`** — kept only if it is a finite number; a missing or non-finite `position` drops the guide (it is *not* defaulted to `0`).
+- **`id`** — kept if a non-empty string; otherwise a fresh id is minted via `mintId('guide')`, the same policy as layers.
+- **`hidden`** — kept only if a boolean; otherwise omitted entirely.
+
+A missing or non-array `guides` field (a v1 or hand-edited config) yields `[]`, and malformed entries inside the array are dropped individually — one bad guide never sinks the rest, exactly as for layers. This is the whole of the v1→v2 migration: no version branch, just per-field defense (see [PanelConfig Format → Versioning](./panel-config-format.mdx#versioning)).
 
 ## Why this matters
 

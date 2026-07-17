@@ -1,0 +1,69 @@
+---
+title: Guides
+sidebar_position: 9
+---
+
+Guides are the editor's alignment furniture: thin, infinite reference lines you drag out of the rulers to line layers up against. They are **view furniture, not layers** — they live in `DocState.guides`, never in `doc.layers`, so they never appear in the layer list, never carry a color, and are never fabricated. They exist only to help you place the things that *are*.
+
+## The guide model
+
+A guide is a single straight line in document space, defined in `@zpd/core`:
+
+```ts
+type GuideOrientation = 'horizontal' | 'vertical';
+
+interface Guide {
+  id: string;
+  orientation: GuideOrientation;
+  position: number; // mm
+  hidden?: boolean;
+}
+```
+
+- A **horizontal** guide is the line `y = position`; it spans the panel width.
+- A **vertical** guide is the line `x = position`; it spans the panel height.
+- `position` is in millimeters, the same document space as everything else (see [Document state &amp; layers](../document-model/document-state-and-layers.mdx)).
+- `hidden` guides render faintly and never participate in snapping or grabbing — see [Snapping](#snapping) and [The "Show guides" toggle](#the-show-guides-toggle).
+
+`DocState.guides` is a **required** array (never optional): read sites stay clean — no `doc.guides ?? []` — and the serialization boundary owns backward-compat instead (an old config with no `guides` loads as `[]`; see [Persistence](#persistence)).
+
+## Creating, moving, and deleting from the rulers
+
+All three interactions start on the [ruler frame](./interface.mdx#canvas-viewport-rulers) or the canvas and are pure `@zpd/core`/`guides.ts` mutations, each committed as **one undo entry**:
+
+- **Create** — drag out of a ruler strip onto the canvas. The orientation is fixed by which strip you grabbed: the **top** strip makes a horizontal guide, the **left** strip a vertical one. Drop over the canvas to add it; drop back off the canvas (release before you reach it) to cancel — nothing is committed.
+- **Move** — grab an existing guide on the canvas (within a 5px screen tolerance) and drag it. This grab is checked **before** tool routing and swallows the event, so the active tool never sees it and a guide always wins over selecting a layer beneath it. A move only writes history if the position actually changed.
+- **Delete** — drag a guide off the canvas and onto a ruler; releasing there removes it.
+
+While dragging, a live preview line follows the pointer. A delete drag (a guide dragged off the canvas) switches the preview to a red dashed "will delete on drop" line so the outcome is unambiguous before you release.
+
+### Why a window-level drag controller
+
+A guide drag legitimately **crosses element boundaries**: a create drag starts on a ruler strip and moves onto the canvas; a delete drag starts on the canvas and moves back over a ruler. Those are sibling elements in a CSS grid, so per-element pointer handlers can't follow the gesture. `use-guide-drag.ts` therefore installs `pointermove`/`pointerup` listeners on **`window`** and resolves everything by geometry against the live canvas rect — window listeners receive every move regardless of which element the pointer is over.
+
+This is deliberately *not* `setPointerCapture`: capture binds all events to one element, which would mask the very thing this drag needs to know — that the pointer is now over a *different* element (a ruler, to delete). Canvas **tool** drags still use pointer capture in `Editor.tsx`, because they never leave the canvas; guides are the boundary-crossing exception. A `pointercancel` or window `blur` ends the gesture **without** committing — the OS took the pointer, so no drop was ever made.
+
+## Rendering
+
+`renderer.ts` paints guides in the repaint loop **above the layer content and below the selection chrome** (see [Rendering &amp; camera → The repaint loop](./rendering-and-camera.mdx#the-repaint-loop)). Each guide is a thin line spanning the whole viewport in a distinct **cyan**, chosen so guides never read as selection chrome (blue) or the panel outline (white). Lines are snapped to the device-pixel grid (`round(coord) + 0.5`) so they stay crisp at any `devicePixelRatio`. A **hidden** guide draws faint and dashed rather than not at all. The guide currently being dragged is painted from the live draft instead of its committed position, so it tracks the pointer without a stale duplicate underneath.
+
+## Snapping
+
+Guides give the [Select tool](./tools.mdx#built-in-tools-select-v) something to snap against. Snapping is a **two-stage** model (`@zpd/core`'s `snap.ts`): the grid always catches — every coordinate is within half a 0.1mm cell of a grid line — and then an explicit guide within tolerance **overrides** that grid result. Guides win ties, so a coordinate equidistant from a grid line and a guide lands on the guide.
+
+- It applies to the gestures that move a layer's *absolute* position: **moving** the selection and **axis-aligned resizing** of a single `shape`/`image`. A rotated resize keeps float hygiene only (guide positions are absolute mm, meaningless applied to a rotated edge), and a multi-resize scale does not guide-snap.
+- The select tool passes a **zoom-scaled** tolerance (`GUIDE_SNAP_PX / pxPerMm`) so a guide feels equally easy to catch whether you're zoomed in or out; `@zpd/core` itself stays purely in mm and has no notion of zoom.
+- **Hidden guides never snap** and are never grabbable — a guide's own `hidden` flag removes it from both, so snapping is governed per-guide by `hidden`, independently of the master view toggle below.
+
+## The "Show guides" toggle
+
+The sidebar's [**View** section](./interface.mdx#right-sidebar) has a **Show guides** checkbox (default **on**). It is the master view control and governs two things:
+
+- **Rendering** — when off, the renderer is handed an empty guide list, so no guide lines (or drag previews) are painted.
+- **Ruler interaction** — when off, dragging out of a ruler creates nothing and existing guides can't be grabbed on the canvas (the drag controller's `isEnabled` gate short-circuits).
+
+It is pure view state: toggling it neither adds nor removes any guide, and — like every View option — it never touches the document or the exported JSON.
+
+## Persistence
+
+Guides round-trip through the exported `PanelConfig`. Serialization was bumped to **v2** to carry the new top-level `guides` array; a v1 (or any guide-less) config still loads cleanly, with `guides` defaulting to `[]`. The field-by-field rules — a guide needs a valid `orientation` and a finite `position` or it is dropped, a missing `id` is stamped, `hidden` is preserved — are covered in [PanelConfig Format → Versioning](../export/panel-config-format.mdx#versioning) and [Defensive Parsing → Guides](../export/defensive-parsing.mdx#guides).

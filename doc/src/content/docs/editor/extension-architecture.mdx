@@ -63,12 +63,27 @@ Keep any cross-event gesture state (a pen draft, a drag origin) in **module scop
 
 ### `ctx` (`ToolContext`) essentials
 
-- `ctx.doc`, `ctx.camera`, `ctx.selectedId`, `ctx.selectedLayer` — LIVE reads (never a stale render closure).
+- `ctx.doc`, `ctx.camera`, `ctx.selectedIds`, `ctx.selectedId`, `ctx.selectedLayer` — LIVE reads (never a stale render closure). See [the selection contract](#the-selection-contract-selectedids).
 - `ctx.toMm(screen)` / `ctx.toScreen(mm)` — coordinate conversion.
 - `ctx.commit(next)` — one atomic change = one undo entry.
 - `ctx.beginGesture()` then streamed `ctx.replace(next)` — a whole drag = one undo entry.
-- `ctx.select(id)`, `ctx.setActiveTool(id)`, `ctx.setCamera(next)`.
+- `ctx.select(id)` / `ctx.selectIds(ids)`, `ctx.setActiveTool(id)`, `ctx.setCamera(next)`.
 - `ctx.openDialog(id, props)` / `ctx.closeDialog()`.
+
+## The selection contract (`selectedIds`)
+
+`ToolContext.selectedIds` is the **single source of truth** for what's selected — a `readonly string[]` that is always normalized (`selection.ts`): de-duplicated, filtered to ids that still exist in the current document (a stale id after a delete/undo drops out), and in **document order** — the layers-array order, not the order the ids were clicked. So chrome and inspectors always iterate a stable, valid list.
+
+Two **derived single-selection views** are kept so single-selection tools and inspectors compile and behave unchanged:
+
+- `ctx.selectedId` / `ctx.selectedLayer` — non-null **only when exactly one** layer is selected. A multi-selection reads both as `null`.
+
+And two setters:
+
+- `ctx.selectIds(ids)` — the multi-selection setter.
+- `ctx.select(id)` — sugar for `selectIds(id === null ? [] : [id])`, so tools written against the old single-select API keep working unchanged. This is why the migration to multi-select was purely **additive**: `selectedId`/`select` still mean exactly what they did.
+
+Normalization is applied **lazily at read time** (inside the `ctx` getters), not inside `selectIds()`: a tool often selects a layer it just committed within the same event handler, before the Editor's live doc ref has synced, so filtering eagerly would wrongly drop the fresh id. This mirrors the same staleness rule the other live-ref getters (`ctx.doc`, `ctx.selectedLayer`) already follow.
 
 ## Tool descriptions
 
