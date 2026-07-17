@@ -1,21 +1,41 @@
+import { createDefaultDoc } from '@zpd/core';
 import { downloadPanelConfig } from '../download';
+import { replaceDoc } from '../replace-doc';
 import type { ToolContext } from '../types';
+import type { SaveStatus } from '../use-autosave';
 import { ChromeButton } from './chrome';
+import { confirmDialog } from './confirm-dialog';
+import { SaveStatusChip } from './save-status';
 
 export interface HeaderProps {
   ctx: ToolContext;
   zoomPercent: number;
   canUndo: boolean;
   canRedo: boolean;
+  saveStatus: SaveStatus;
   onFit(): void;
   onZoomStep(factor: number): void;
 }
 
-export function Header({ ctx, zoomPercent, canUndo, canRedo, onFit, onZoomStep }: HeaderProps) {
+export function Header({ ctx, zoomPercent, canUndo, canRedo, saveStatus, onFit, onZoomStep }: HeaderProps) {
+  const handleNewPanel = async () => {
+    const confirmed = await confirmDialog({
+      title: 'Start a new panel?',
+      // createDefaultDoc() ships one starter pattern layer (dot grid), not an
+      // empty document — the copy must not claim "blank" (codex review).
+      message: 'This replaces the current panel with the default starter panel. This cannot be undone.',
+      confirmLabel: 'New panel',
+      danger: true,
+    });
+    if (!confirmed) return;
+    replaceDoc(createDefaultDoc(), ctx);
+  };
+
   return (
     <header className="flex items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-4 py-2">
       <h1 className="text-sm font-semibold text-amber-400">zpd</h1>
       <span className="text-xs text-neutral-500">Zudo Panel Designer</span>
+      <SaveStatusChip status={saveStatus} />
 
       <div className="ml-auto flex items-center gap-1.5">
         <ChromeButton title="Zoom out" onClick={() => onZoomStep(1 / 1.25)}>
@@ -49,6 +69,12 @@ export function Header({ ctx, zoomPercent, canUndo, canRedo, onFit, onZoomStep }
           onClick={() => downloadPanelConfig(ctx.doc)}
         >
           ⬇ JSON
+        </ChromeButton>
+
+        <span className="mx-1 h-5 w-px bg-neutral-700" />
+
+        <ChromeButton title="Start a new panel" onClick={handleNewPanel}>
+          New panel
         </ChromeButton>
       </div>
     </header>
