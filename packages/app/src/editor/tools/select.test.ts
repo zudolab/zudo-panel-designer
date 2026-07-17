@@ -17,6 +17,7 @@ import {
   replace as coreReplace,
   undo as coreUndo,
   type DocState,
+  type Guide,
   type HistoryState,
   type Layer,
   type PathLayer,
@@ -1011,5 +1012,242 @@ describe('select tool — multi-resize via the combined bbox (#52)', () => {
     expect(getHistory().past).toHaveLength(0);
     expect(layerById('s1')).toMatchObject({ x: 10, y: 10, width: 20, height: 10 });
     expect(layerById('s2')).toMatchObject({ x: 40, y: 30, width: 20, height: 10 });
+  });
+});
+
+// Guide snapping (#55): wires #53's layered snap (grid first, guides win
+// ties) into move/resize. The identity CAMERA (pxPerMm: 1) makes the
+// select-tool's zoom-scaled catch radius (GUIDE_SNAP_PX / pxPerMm) exactly
+// 8mm here — every guide below is placed within that radius of the candidate
+// it's meant to catch, and every "grid wins" case places the guide well
+// outside it.
+describe('select tool — guide snapping (#55)', () => {
+  const vGuide = (position: number, hidden = false): Guide => ({
+    id: `g-${position}`,
+    orientation: 'vertical',
+    position,
+    hidden,
+  });
+  const hGuide = (position: number, hidden = false): Guide => ({
+    id: `h-${position}`,
+    orientation: 'horizontal',
+    position,
+    hidden,
+  });
+
+  it('move: a guide within range overrides the grid — guides win ties', () => {
+    // Left edge (x=10) moves to 15 on the raw drag; the grid would leave it
+    // there (already a 0.1 multiple), but a guide at 15.05 is in range and
+    // wins the tie, so the layer lands on the guide instead of the grid line.
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [vGuide(15.05)],
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    // dx=5 (clears the 4px drag threshold) -> grid alone would give x=15
+    select.onPointerMove?.(ptr({ x: 20, y: 15 }), ctx);
+    select.onPointerUp?.(ptr({ x: 20, y: 15 }), ctx);
+
+    expect(layerById('s1')).toMatchObject({ x: 15.05, y: 10 });
+  });
+
+  it('move: a guide outside the catch radius is ignored — falls back to the grid', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [vGuide(50)], // 35mm+ away from every candidate — well outside the 8mm radius
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 20.02, y: 15 }), ctx); // dx=5.02 -> grid gives 5.0
+    select.onPointerUp?.(ptr({ x: 20.02, y: 15 }), ctx);
+
+    expect(layerById('s1')).toMatchObject({ x: 15, y: 10 });
+  });
+
+  it('move: a hidden guide never snaps', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [vGuide(15.05, true)],
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 20, y: 15 }), ctx); // dx=5 -> would catch 15.05 if visible
+    select.onPointerUp?.(ptr({ x: 20, y: 15 }), ctx);
+
+    expect(layerById('s1')).toMatchObject({ x: 15, y: 10 }); // grid only
+  });
+
+  it('move: a drag that nets zero effective change after guide-snap leaves history untouched', () => {
+    // Guide sits exactly at the layer's current left edge (x=10). The raw
+    // drag (dx=5, clearing the 4px threshold) would open a real
+    // grid-snapped entry on its own, but the guide pulls the edge straight
+    // back to the pointerdown position, so the NET change is zero and no
+    // undo entry may open.
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [vGuide(10)],
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 20, y: 15 }), ctx); // dx=5 -> grid alone would give x=15
+    select.onPointerUp?.(ptr({ x: 20, y: 15 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(0);
+    expect(getHistory().past).toHaveLength(0);
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 10 });
+  });
+
+  it('move: Shift axis-lock keeps a guide on the locked axis from injecting movement', () => {
+    // dx dominates so Shift pins y to 0; a horizontal guide sitting right
+    // where the (unmoved) top edge already is must NOT be allowed to nudge y.
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [hGuide(10.3)],
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 25, y: 15.2 }, { shiftKey: true }), ctx); // dx=10 dy=0.2 -> x dominates
+    select.onPointerUp?.(ptr({ x: 25, y: 15.2 }, { shiftKey: true }), ctx);
+
+    expect(layerById('s1')).toMatchObject({ x: 20, y: 10 }); // y pinned, guide ignored
+  });
+
+  it('multi-move: a caught guide still applies ONE shared delta to every member', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [vGuide(44.8)],
+      layers: [rectAt('s1', 10, 10), rectAt('s2', 50, 40)],
+    });
+    ctx.selectIds(['s1', 's2']);
+
+    // combined bbox is (10,10,60,40): edges 10/70, centre 40. Raw dx=5
+    // (clears the 4px threshold) moves the centre to 45, 0.2mm from the
+    // guide — caught, delta -0.2.
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx); // inside s1
+    select.onPointerMove?.(ptr({ x: 20, y: 15 }), ctx);
+    select.onPointerUp?.(ptr({ x: 20, y: 15 }), ctx);
+
+    expect(layerById('s1')).toMatchObject({ x: 14.8, y: 10 });
+    expect(layerById('s2')).toMatchObject({ x: 54.8, y: 40 });
+  });
+
+  it('resize: the "se" free edges snap to guides; the nw anchor stays exact', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [vGuide(42.3)],
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    // 'se' handle at (30, 20); dragging to (42, 25) puts the raw right edge
+    // at 42, 0.3mm from the guide.
+    select.onPointerDown?.(ptr({ x: 30, y: 20 }), ctx);
+    select.onPointerMove?.(ptr({ x: 42, y: 25 }), ctx);
+    select.onPointerUp?.(ptr({ x: 42, y: 25 }), ctx);
+
+    const resized = layerById('s1') as ShapeLayer;
+    expect(resized.x).toBe(10); // anchor (nw) untouched
+    expect(resized.y).toBe(10);
+    expect(resized.width).toBeCloseTo(32.3, 6); // right edge lands on the guide (42.3)
+    expect(resized.height).toBe(15);
+  });
+
+  it('resize: an off-grid origin with NO guide in range is untouched — bit-identical to the pre-#55 baseline', () => {
+    // Regression for a review finding: computing the free edge's size from
+    // the RAW (unsnapped) anchor while returning the INDEPENDENTLY-rounded
+    // anchor would make x + width land short of the intended edge whenever
+    // the origin isn't already grid-aligned (numeric inspectors allow one).
+    // With no guide in range, resizeSnapPatch must not touch x/width at all.
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [],
+      layers: [rectAt('s1', 10.03, 10)],
+    });
+    ctx.select('s1');
+
+    // 'se' handle at (30.03, 20); dx=5 clears the 4px threshold.
+    select.onPointerDown?.(ptr({ x: 30.03, y: 20 }), ctx);
+    select.onPointerMove?.(ptr({ x: 35.03, y: 20 }), ctx);
+    select.onPointerUp?.(ptr({ x: 35.03, y: 20 }), ctx);
+
+    const resized = layerById('s1') as ShapeLayer;
+    expect(resized.x).toBe(10); // snap(10.03), same as before #55
+    expect(resized.width).toBe(25); // snap(25) — untouched, NOT 24.97
+    expect(resized.x + resized.width).toBe(35); // edges add up
+  });
+
+  it('resize: an off-grid origin with a guide in range still lands the edge exactly on the guide', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [vGuide(42.3)],
+      layers: [rectAt('s1', 10.03, 10)],
+    });
+    ctx.select('s1');
+
+    // 'se' handle at (30.03, 20); dx=12 puts the raw right edge at 42.03,
+    // 0.27mm from the guide.
+    select.onPointerDown?.(ptr({ x: 30.03, y: 20 }), ctx);
+    select.onPointerMove?.(ptr({ x: 42.03, y: 20 }), ctx);
+    select.onPointerUp?.(ptr({ x: 42.03, y: 20 }), ctx);
+
+    const resized = layerById('s1') as ShapeLayer;
+    // width must be derived from the SAME (rounded) x that's returned, so
+    // the actual right edge lands exactly on the guide, not 0.03mm short.
+    expect(resized.x + resized.width).toBeCloseTo(42.3, 6);
+  });
+
+  it('resize: the "nw" free edges snap to guides; the se anchor stays exact', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [vGuide(7.2)],
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    // 'nw' handle at (10, 10); dragging to (5, 10) — clearing the 4px
+    // threshold — puts the raw left edge at 5, 2.2mm from the guide (within
+    // the 8mm radius). The se corner (30, 20) must stay exactly put.
+    select.onPointerDown?.(ptr({ x: 10, y: 10 }), ctx);
+    select.onPointerMove?.(ptr({ x: 5, y: 10 }), ctx);
+    select.onPointerUp?.(ptr({ x: 5, y: 10 }), ctx);
+
+    const resized = layerById('s1') as ShapeLayer;
+    expect(resized.x).toBeCloseTo(7.2, 6); // left edge lands on the guide
+    expect(resized.width).toBeCloseTo(22.8, 6);
+    expect(resized.x + resized.width).toBeCloseTo(30, 6); // se anchor unmoved
+    expect(resized.y).toBe(10);
+    expect(resized.height).toBe(10);
+  });
+
+  it('resize: a drag that nets zero effective change after guide-snap leaves history untouched', () => {
+    // Guide sits exactly at the layer's current right edge (x=30). Dragging
+    // the se handle out a little would open a real grid-snapped entry on its
+    // own, but the guide pulls the edge straight back to 30 — net zero.
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [vGuide(30)],
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 30, y: 20 }), ctx);
+    // dx=5 (clears the 4px threshold) -> grid alone would give width 25
+    select.onPointerMove?.(ptr({ x: 35, y: 20 }), ctx);
+    select.onPointerUp?.(ptr({ x: 35, y: 20 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(0);
+    expect(getHistory().past).toHaveLength(0);
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 10, width: 20, height: 10 });
   });
 });
