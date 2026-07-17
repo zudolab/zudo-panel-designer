@@ -188,14 +188,30 @@ export function cornerHandleRects(bbox: Rect, cam: Camera): HandleRect[] {
   return resizeHandleRects(bbox, cam).filter((h) => CORNER_HANDLE_IDS.includes(h.id));
 }
 
+// Whether core's scaleLayer can change this layer at all (#52): patterns are
+// panel-wide and pass through unchanged (the epic's eligibility matrix), and
+// a path with no points anywhere (the parser accepts them; pathBbox gives it
+// a 0×0 box, not null) has no coordinates to scale.
+function layerCanScale(layer: Layer): boolean {
+  switch (layer.type) {
+    case 'pattern':
+      return false;
+    case 'path':
+      return (
+        layer.points.length > 0 || (layer.extraSubpaths?.some((s) => s.length > 0) ?? false)
+      );
+    default:
+      return true;
+  }
+}
+
 // The combined bbox that offers multi-resize corner handles, or null when the
 // selection doesn't qualify (#52). Gates BOTH the chrome pass and the select
 // tool's handle grab — the one source of eligibility, so what is drawn is
 // exactly what is grabbable. Qualification: >1 visible selection bboxes (the
 // same set the combined-bbox chrome unions over) AND at least one visible
-// scalable member — patterns are panel-wide and pass through scaleLayer
-// unchanged (the epic's eligibility matrix), so a pattern-only multi-selection
-// has nothing to scale and gets no handles.
+// member scaleLayer can actually change — otherwise the handles would promise
+// a gesture that cannot affect the doc (and would write a phantom undo entry).
 export function multiResizeBbox(
   layers: readonly Layer[],
   selectedIds: readonly string[],
@@ -205,7 +221,7 @@ export function multiResizeBbox(
   const boxes = selectionBboxes(layers, selectedIds, panel);
   if (boxes.length < 2) return null;
   const scalable = layers.some(
-    (l) => selectedIds.includes(l.id) && !l.hidden && l.type !== 'pattern',
+    (l) => selectedIds.includes(l.id) && !l.hidden && layerCanScale(l),
   );
   return scalable ? mergeBboxes(boxes) : null;
 }

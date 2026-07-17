@@ -308,7 +308,11 @@ function groupFactorFloor(targets: readonly MoveTarget[], bbox: Rect): number {
   }
   consider(bbox.width);
   consider(bbox.height);
-  return floor;
+  // Never above identity: geometry that already sits below the min-size floor
+  // (e.g. a hair-thin path-only group, bbox 0.1mm wide) would otherwise get a
+  // floor > 1 and be forcibly ENLARGED by any drag — including a shrink
+  // attempt. Capping at 1 just means such a group cannot shrink further.
+  return Math.min(floor, 1);
 }
 
 // Multi-resize grab (#52): corner handles on the combined bbox start a uniform

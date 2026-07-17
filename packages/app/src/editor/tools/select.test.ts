@@ -905,6 +905,46 @@ describe('select tool — multi-resize via the combined bbox (#52)', () => {
     expect(s2.y).toBeCloseTo(11); // 10 + 20·0.05
   });
 
+  it('a group already thinner than the min-size floor cannot be ENLARGED by a shrink drag', () => {
+    // Two 10mm vertical line paths 0.1mm apart: the combined bbox is 0.1×10,
+    // so the raw width floor would be MIN_RESIZE_MM/0.1 = 5 — without the
+    // identity cap, ANY drag (including this shrink attempt) would blow the
+    // group up 5×. Capped at 1 the shrink is simply refused: no change, no
+    // history entry.
+    const line = (id: string, x: number): PathLayer => ({
+      id,
+      name: id,
+      type: 'path',
+      points: [{ x, y: 10 }, { x, y: 20 }],
+      closed: false,
+      fill: null,
+      stroke: 1,
+      strokeWidth: 1,
+    });
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [line('p1', 10), line('p2', 10.1)],
+    });
+    ctx.selectIds(['p1', 'p2']);
+
+    // se corner of the combined bbox is (10.1, 20); drag toward the anchor
+    select.onPointerDown?.(ptr({ x: 10.1, y: 20 }), ctx);
+    select.onPointerMove?.(ptr({ x: 6, y: 15 }), ctx);
+    select.onPointerUp?.(ptr({ x: 6, y: 15 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(0);
+    expect(getHistory().past).toHaveLength(0);
+    expect((layerById('p1') as PathLayer).points).toEqual([{ x: 10, y: 10 }, { x: 10, y: 20 }]);
+    expect((layerById('p2') as PathLayer).points).toEqual([{ x: 10.1, y: 10 }, { x: 10.1, y: 20 }]);
+
+    // growing is still allowed — the cap only forbids shrinking below the floor
+    select.onPointerDown?.(ptr({ x: 10.1, y: 20 }), ctx);
+    select.onPointerMove?.(ptr({ x: 14.1, y: 25 }), ctx);
+    select.onPointerUp?.(ptr({ x: 14.1, y: 25 }), ctx);
+    expect(getBeginGestureCalls()).toBe(1);
+    expect((layerById('p1') as PathLayer).points[1].y).toBeGreaterThan(20);
+  });
+
   it('a sub-threshold press or a perpendicular drag writes NO history (lazy undo)', () => {
     const { ctx, getHistory, getBeginGestureCalls, layerById } = twoRects();
     ctx.selectIds(['s1', 's2']);

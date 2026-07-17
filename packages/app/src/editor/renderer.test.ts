@@ -186,6 +186,23 @@ describe('multiResizeBbox (#52 eligibility gate)', () => {
     expect(multiResizeBbox(layers, ['g1', 'g2'], PANEL)).toBeNull();
   });
 
+  it('is null for a pattern plus an EMPTY path — scaleLayer cannot change either', () => {
+    // pathBbox([]) yields a 0×0 box (not null), so the empty path DOES
+    // contribute a second bbox — eligibility must still reject the pair or the
+    // handles would promise a gesture that writes a phantom undo entry.
+    const emptyPath: Layer = {
+      id: 'p0',
+      name: 'p0',
+      type: 'path',
+      points: [],
+      closed: false,
+      fill: null,
+      stroke: 1,
+      strokeWidth: 1,
+    };
+    expect(multiResizeBbox([pattern('g1'), emptyPath], ['g1', 'p0'], PANEL)).toBeNull();
+  });
+
   it('a pattern plus a shape still qualifies (the shape is scalable)', () => {
     const layers: Layer[] = [pattern('g1'), shape('a', 10, 10)];
     // the pattern's bbox is panel-wide, so the union is the panel rect
