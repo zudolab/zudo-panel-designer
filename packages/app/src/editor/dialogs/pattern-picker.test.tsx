@@ -202,26 +202,5 @@ describe('pattern-picker dialog — thumbnails', () => {
   });
 });
 
-describe('pattern-picker dialog — a11y', () => {
-  it('Escape closes the dialog', () => {
-    const close = vi.fn();
-    const PatternPickerDialog = getPatternPickerDialog();
-    render(<PatternPickerDialog props={{}} close={close} ctx={stubCtx()} />);
-
-    fireEvent.keyDown(document, { key: 'Escape' });
-    expect(close).toHaveBeenCalledTimes(1);
-  });
-
-  it('restores focus to the invoking element on unmount', () => {
-    const invoker = document.createElement('button');
-    document.body.appendChild(invoker);
-    invoker.focus();
-    expect(document.activeElement).toBe(invoker);
-
-    const PatternPickerDialog = getPatternPickerDialog();
-    const { unmount } = render(<PatternPickerDialog props={{}} close={vi.fn()} ctx={stubCtx()} />);
-    unmount();
-    expect(document.activeElement).toBe(invoker);
-    invoker.remove();
-  });
-});
+// Escape-to-close and focus restoration are now host-owned (dialog-host.tsx)
+// rather than duplicated per-dialog — see components/dialog-host.test.tsx.
