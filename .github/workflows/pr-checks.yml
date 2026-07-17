@@ -103,3 +103,138 @@ jobs:
 
       - name: Validate wrangler config
         run: pnpm exec wrangler deploy --dry-run --env production
+
+  preview:
+    name: PR preview deploy (app + doc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            doc/pnpm-lock.yaml
+
+      - name: Install app dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app
+        run: pnpm build
+
+      - name: Deploy app preview
+        id: app-preview
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          log=/tmp/wrangler-app.log
+          url=""
+          for attempt in 1 2 3; do
+            if pnpm exec wrangler versions upload --env preview \
+              --preview-alias "pr-${PR_NUMBER}" 2>&1 | tee "$log"; then
+              url=$(grep 'Version Preview Alias URL:' "$log" | tail -n1 | sed 's/^.*Version Preview Alias URL: *//')
+              break
+            fi
+            echo "wrangler versions upload attempt ${attempt} failed" >&2
+            if [ "$attempt" -eq 1 ]; then
+              # First-ever upload can fail because the preview worker does not
+              # exist yet; bootstrap it once with a plain deploy, then retry.
+              echo "Bootstrapping preview environment before retrying"
+              pnpm exec wrangler deploy --env preview 2>&1 | tee -a "$log" || true
+            fi
+            [ "$attempt" -lt 3 ] && sleep 30
+          done
+          if [ -z "$url" ]; then
+            echo "Failed to obtain app preview URL after 3 attempts" >&2
+            exit 1
+          fi
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      - name: Install doc dependencies
+        working-directory: doc
+        run: pnpm install --frozen-lockfile
+
+      - name: Build doc
+        working-directory: doc
+        run: pnpm build
+
+      - name: Write doc assets ignore file
+        working-directory: doc
+        run: |
+          printf '%s\n' '_worker.js' '_zfb_inner.mjs' > dist/.assetsignore
+
+      - name: Deploy doc preview
+        id: doc-preview
+        working-directory: doc
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          log=/tmp/wrangler-doc.log
+          url=""
+          for attempt in 1 2 3; do
+            if pnpm exec wrangler versions upload --env preview \
+              --preview-alias "pr-${PR_NUMBER}" 2>&1 | tee "$log"; then
+              url=$(grep 'Version Preview Alias URL:' "$log" | tail -n1 | sed 's/^.*Version Preview Alias URL: *//')
+              break
+            fi
+            echo "wrangler versions upload attempt ${attempt} failed" >&2
+            if [ "$attempt" -eq 1 ]; then
+              # First-ever upload can fail because the preview worker does not
+              # exist yet; bootstrap it once with a plain deploy, then retry.
+              echo "Bootstrapping preview environment before retrying"
+              pnpm exec wrangler deploy --env preview 2>&1 | tee -a "$log" || true
+            fi
+            [ "$attempt" -lt 3 ] && sleep 30
+          done
+          if [ -z "$url" ]; then
+            echo "Failed to obtain doc preview URL after 3 attempts" >&2
+            exit 1
+          fi
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      - name: Upsert preview comment
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_URL: ${{ steps.app-preview.outputs.url }}
+          DOC_URL: ${{ steps.doc-preview.outputs.url }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          body_file=/tmp/preview-comment-body.md
+          {
+            printf '%s\n' '<!-- preview-deploy-marker -->'
+            printf '%s\n' '### Preview deploy'
+            printf '\n'
+            printf -- '- App preview: %s\n' "$APP_URL"
+            printf -- '- Doc preview: %s\n' "$DOC_URL"
+            printf -- '- Commit: %s\n' "$PR_HEAD_SHA"
+          } > "$body_file"
+
+          existing_id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --paginate --jq '.[] | select(.body | startswith("<!-- preview-deploy-marker -->")) | .id' | tail -n1)
+
+          if [ -n "$existing_id" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_id}" -F body=@"$body_file"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@"$body_file"
+          fi
