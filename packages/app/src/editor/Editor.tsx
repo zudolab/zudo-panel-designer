@@ -263,6 +263,7 @@ export function Editor() {
       guides: showGuides ? doc.guides : [],
       guideDraft: showGuides ? guideDrag.draft : null,
       renderDraft: activeTool?.renderDraft ? (d) => activeTool.renderDraft?.(d, ctx) : undefined,
+      requestRepaint: ctx.requestRepaint,
     });
   });
 

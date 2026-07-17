@@ -34,6 +34,6 @@ registerTool({
     ctx.commit({ ...ctx.doc, layers: [...ctx.doc.layers, layer] });
     ctx.setActiveTool('select');
     ctx.select(layer.id);
-    ensureFont(layer.fontFamily).then(() => ctx.requestRepaint());
+    ensureFont(layer.fontFamily, layer.content).then(() => ctx.requestRepaint());
   },
 });

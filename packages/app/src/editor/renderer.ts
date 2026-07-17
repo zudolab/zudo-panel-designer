@@ -20,7 +20,7 @@ import {
 } from '@zpd/core';
 import { patternByName } from '@zpd/patterns';
 import type { Camera } from './camera';
-import { ensureFont } from './fonts';
+import { ensureFont, isFontLoaded, isFontLoading } from './fonts';
 import { guideScreenCoord, type GuideDraft } from './guides';
 import { outsidePanelRegion } from './outside-panel-region';
 import type { DraftRenderContext, PanelDims } from './types';
@@ -32,6 +32,9 @@ const HANDLE_SIZE = 8;
 // physically cut off in fabrication, so dimming encodes "this will not be
 // manufactured" — don't "correct" this into full opacity later (issue #43).
 const OUTSIDE_GHOST_ALPHA = 0.35;
+// A text layer whose Google Font is still in flight paints at reduced
+// opacity so the immediate fallback-face glyphs read as provisional (#67).
+const LOADING_FONT_ALPHA = 0.3;
 
 export interface RenderExtras {
   // Multi-select contract (#44): the full (normalized) selection. The chrome
@@ -49,6 +52,9 @@ export interface RenderExtras {
   // The active tool's draft preview hook (pen path, marquee, …). Drawn last,
   // unclipped, on top of the selection chrome.
   renderDraft?: (draft: DraftRenderContext) => void;
+  // Fired once a text layer's still-loading font resolves, so the fallback
+  // face drawn this frame gets replaced by the real glyphs on repaint (#67).
+  requestRepaint: () => void;
 }
 
 let measureCtx: CanvasRenderingContext2D | null = null;
@@ -257,6 +263,7 @@ function drawLayer(
   layer: Layer,
   panel: PanelDims,
   images: Map<string, HTMLImageElement>,
+  requestRepaint: () => void,
 ): void {
   ctx.save();
   const rotation = layerRotation(layer);
@@ -321,12 +328,28 @@ function drawLayer(
       break;
     }
     case 'text': {
-      ensureFont(layer.fontFamily); // fire-and-forget: kicks off the load so
-      // the next repaint (tool/inspector both request one once it resolves)
-      // has a shot at the real face instead of the fallback drawn right now
+      // fire-and-forget, guarded so an already-settled (family, content)
+      // pair doesn't re-arm a repaint every single frame (that would loop
+      // forever, since this runs on every paint): kicks off the load once
+      // per pair, then repaints once it resolves so the fallback face drawn
+      // right now gets replaced by the real glyphs (#67). Keyed on content
+      // too (not just fontFamily) so a second text layer sharing a Google
+      // Font but needing different glyphs (e.g. a CJK subset) still gets
+      // its own load attempt instead of being skipped as "already loaded".
+      if (!isFontLoaded(layer.fontFamily, layer.content)) {
+        ensureFont(layer.fontFamily, layer.content).then(() => requestRepaint());
+      }
       ctx.fillStyle = PALETTE[layer.color].hex;
       ctx.font = `${layer.sizeMm}px "${layer.fontFamily}"`;
       ctx.textBaseline = 'top';
+      // Multiply into the CALLER's alpha (1 for the normal in-panel pass,
+      // OUTSIDE_GHOST_ALPHA for the off-panel ghost pass) rather than
+      // overwriting it — otherwise a loading/loaded google font would blow
+      // away the ghost dim and always paint at 1 or 0.3 regardless of it.
+      const inheritedAlpha = ctx.globalAlpha;
+      ctx.globalAlpha = isFontLoading(layer.fontFamily, layer.content)
+        ? inheritedAlpha * LOADING_FONT_ALPHA
+        : inheritedAlpha;
       const lineHeight = layer.sizeMm * 1.25;
       layer.content.split('\n').forEach((line, i) => {
         ctx.fillText(line, layer.x, layer.y + i * lineHeight);
@@ -440,7 +463,7 @@ export function renderScene(
     ctx.translate(cam.offsetX, cam.offsetY);
     ctx.scale(cam.pxPerMm, cam.pxPerMm);
     for (const layer of outsideRegion.ghostLayers) {
-      drawLayer(ctx, layer, panel, extras.images);
+      drawLayer(ctx, layer, panel, extras.images, extras.requestRepaint);
     }
     ctx.restore();
   }
@@ -454,7 +477,7 @@ export function renderScene(
   ctx.scale(cam.pxPerMm, cam.pxPerMm);
   for (const layer of doc.layers) {
     if (layer.hidden) continue;
-    drawLayer(ctx, layer, panel, extras.images);
+    drawLayer(ctx, layer, panel, extras.images, extras.requestRepaint);
   }
   ctx.restore();
 

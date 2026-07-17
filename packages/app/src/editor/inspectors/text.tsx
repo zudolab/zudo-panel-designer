@@ -9,7 +9,7 @@ function TextInspector({ layer, onChange, ctx }: InspectorProps<TextLayer>) {
     onChange({ fontFamily }, { commit: true });
     // repaint once the actual face is loaded, not just the fallback face the
     // canvas draws immediately with
-    ensureFont(fontFamily).then(() => ctx.requestRepaint());
+    ensureFont(fontFamily, layer.content).then(() => ctx.requestRepaint());
   }
 
   return (
