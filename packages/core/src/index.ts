@@ -24,8 +24,8 @@ export { PALETTE, paletteEntry } from './palette';
 export type { PanelSize } from './panel-sizes';
 export { PANEL_HEIGHT_MM, PANEL_SIZES, panelWidthMm } from './panel-sizes';
 
-export type { PanelConfig } from './serialize';
-export { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig } from './serialize';
+export type { PanelConfig, TryParsePanelConfigResult } from './serialize';
+export { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig, tryParsePanelConfig } from './serialize';
 
 export { createDefaultDoc, DEFAULT_PANEL_HP } from './default-doc';
 
@@ -38,4 +38,6 @@ export * from './resize';
 export * from './scale';
 export * from './snap';
 export * from './layer-ops';
+export * from './clone';
+export * from './align';
 export * from './history';

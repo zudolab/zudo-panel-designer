@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultDoc } from './default-doc';
 import { PALETTE } from './palette';
 import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
-import { parsePanelConfig, serializePanelConfig } from './serialize';
+import { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig, tryParsePanelConfig } from './serialize';
 import type { DocState } from './types';
 
 function fullFixtureDoc(): DocState {
@@ -302,5 +302,72 @@ describe('parsePanelConfig — never throws on bad input', () => {
     expect(layer.type).toBe('pattern');
     if (layer.type !== 'pattern') throw new Error('unreachable');
     expect(layer.params).toEqual({ pitch: 5 });
+  });
+});
+
+describe('tryParsePanelConfig — strict envelope validator', () => {
+  it('accepts a real serializePanelConfig round-trip', () => {
+    const doc = fullFixtureDoc();
+    const result = tryParsePanelConfig(JSON.parse(JSON.stringify(serializePanelConfig(doc))));
+    expect(result).toEqual({ ok: true, doc });
+  });
+
+  it('rejects an empty object (missing app/version/layers)', () => {
+    const result = tryParsePanelConfig({});
+    expect(result.ok).toBe(false);
+  });
+
+  it.each([null, undefined, 42, 'not json', true, [], () => {}])(
+    'rejects non-object input %#',
+    (input) => {
+      expect(tryParsePanelConfig(input)).toEqual({ ok: false, reason: expect.any(String) });
+    },
+  );
+
+  it('rejects a wrong `app` field', () => {
+    const result = tryParsePanelConfig({ app: 'some-other-app', version: PANEL_CONFIG_VERSION, layers: [] });
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining('app') });
+  });
+
+  it('rejects a missing `layers` array even with a valid envelope', () => {
+    const result = tryParsePanelConfig({ app: 'zpd', version: PANEL_CONFIG_VERSION });
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining('layers') });
+  });
+
+  it('rejects a non-array `layers`', () => {
+    const result = tryParsePanelConfig({ app: 'zpd', version: PANEL_CONFIG_VERSION, layers: 'nope' });
+    expect(result.ok).toBe(false);
+  });
+
+  it.each([0, -1, 999, 1.5, NaN, Infinity, '2', null, undefined])(
+    'rejects an out-of-range, fractional, or non-numeric version (%s)',
+    (version) => {
+      const result = tryParsePanelConfig({ app: 'zpd', version, layers: [] });
+      expect(result).toEqual({ ok: false, reason: expect.any(String) });
+    },
+  );
+
+  it('accepts a v1 envelope (predates the guides field)', () => {
+    const result = tryParsePanelConfig({
+      version: 1,
+      app: 'zpd',
+      panel: { hp: 12, widthMm: 60.96, heightMm: 128.5 },
+      palette: ['black', 'gold', 'white'],
+      layers: [],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.doc.guides).toEqual([]);
+  });
+
+  it('on success, delegates field-level defense to parsePanelConfig (garbage layer entries are dropped, not rejected)', () => {
+    const result = tryParsePanelConfig({
+      app: 'zpd',
+      version: PANEL_CONFIG_VERSION,
+      layers: [null, { type: 'sticker' }, { type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color: 0 }],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.doc.layers).toHaveLength(1);
   });
 });
