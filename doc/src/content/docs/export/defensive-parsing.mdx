@@ -1,0 +1,95 @@
+---
+title: Defensive Parsing
+sidebar_position: 2
+---
+
+`parsePanelConfig()` (`packages/core/src/serialize.ts`) turns arbitrary JSON
+back into a `DocState` the editor can load. It is written to **never throw**,
+because its input is whatever JSON a user hand-edited, an old export, or a
+foreign tool produced — not necessarily a well-formed `PanelConfig`.
+
+:::note
+Every field is defended **individually** — clamped, defaulted, or dropped —
+rather than validating the document as a whole and rejecting it on the first
+bad value. One malformed field degrades gracefully instead of sinking the
+entire import.
+:::
+
+## Top-level input
+
+| Input | Result |
+|---|---|
+| Not a plain object (`null`, a primitive, an array, a function, …) | Falls back to `createDefaultDoc()` entirely. |
+| A plain object missing `layers` | `layers` becomes `[]`. |
+| `layers` present but not an array | Treated as `[]`. |
+| Unrecognized top-level keys | Silently ignored — they do not appear on the parsed `DocState`. |
+
+## `panelHp`
+
+`parseHp()` reads `input.hp`, falling back to `input.panel.hp` when the
+top-level `hp` is absent. A value is accepted only if it is a finite number
+greater than `0`; anything else — missing, non-numeric, `NaN`, `Infinity`,
+a string, zero, or negative — falls back to `DEFAULT_PANEL_HP` (the same
+default used for a brand-new document), rather than propagating a
+nonsensical panel dimension.
+
+A hand-edited `panel.widthMm` / `panel.heightMm` that disagrees with `hp` is
+ignored on import — those fields are advisory output only (see
+[PanelConfig Format](./panel-config-format.mdx#envelope-shape)); they are
+always recomputed from `hp` when the document is re-serialized.
+
+## Layers
+
+Each entry in the `layers` array is parsed independently by `parseLayer()`:
+
+- **Non-object entries** (`null`, numbers, strings, …) inside the array are
+  dropped.
+- **Unrecognized `type`** — a value outside `shape` / `pattern` / `path` /
+  `text` / `image` — is dropped rather than guessed at.
+- **`id`** — kept if it is a non-empty string; otherwise a fresh id is
+  minted via `mintId('layer')`.
+- **`name`** — kept if a string; otherwise defaults to `""`.
+- **`hidden`** — kept only if a boolean; otherwise the field is omitted
+  entirely from the parsed layer (not set to `false`).
+- **Extra/unknown per-layer fields** are dropped — they do not survive onto
+  the parsed layer object.
+
+### Per-field fallbacks by layer type
+
+| Layer type | Field | Bad-input behavior |
+|---|---|---|
+| all | `color` / `fill` / `stroke` | Any value other than exactly `0`, `1`, or `2` clamps to `0` (black). |
+| all numeric fields (`x`, `y`, `width`, `height`, `sizeMm`, `strokeWidth`, …) | — | Non-number or non-finite values default to `0`. |
+| all | `rotation` | Kept only if a finite number; otherwise the field is omitted (no default rotation is written). |
+| `shape` | `shape` | Anything other than `"ellipse"` defaults to `"rect"`. |
+| `pattern` | `patternType` | Kept **verbatim** even if unrecognized — core has no dependency on the patterns registry that would validate it (see [Round-Trip](./round-trip.mdx)). Non-string values default to `"unknown"`. |
+| `pattern` | `params` | Not a plain object → `{}`. Otherwise, only numeric, finite values survive per key; non-numeric entries (including nested objects) are dropped. |
+| `path` | `points` | Not an array → `[]`. Each point that isn't a plain object is dropped from the array (rather than failing the whole path). |
+| `path` | `points[].hin` / `hout` | Kept only if both `x` and `y` are finite numbers; otherwise the handle is omitted. |
+| `path` | `extraSubpaths` | Only set if the input is an array (each subpath parsed the same way as `points`); presence/absence — even an empty array — is preserved exactly, rather than normalized away, so round-tripping stays exact. |
+| `path` | `closed` | `true` only if the input is exactly `true`; anything else becomes `false`. |
+| `path` | `fill` / `stroke` | `null` stays `null`; anything else runs through the `color` clamp above. |
+| `text` | `content` / `fontFamily` | Non-string values default to `""`. |
+| `image` | `src` | Non-string values default to `""`. |
+
+## Why this matters
+
+Because parsing never throws, the editor (and anything that reuses
+`@zpd/core`) can treat "load this JSON" as a total function: worst case it
+degrades to a safe document, never an unhandled exception. The exact
+fallback depends on the shape of the input:
+
+- **Non-object garbage** (`null`, a primitive, an array, a function, …)
+  falls back to `createDefaultDoc()` in full — the same document a
+  brand-new session starts with, dot-grid layer and all.
+- **A plain object with missing or invalid fields** — including the empty
+  object `{}` — is repaired field by field: `panelHp` becomes
+  `DEFAULT_PANEL_HP` and `layers` becomes `[]`. This is **not** the
+  new-session document: it has the default panel size but an empty layer
+  list, with no dot-grid layer.
+
+This is exercised directly in `packages/core/src/serialize.test.ts`, which
+feeds `parsePanelConfig` inputs like `null`, `42`, `'not json'`, `true`,
+`[]`, and a bare function — asserting each never throws and equals
+`createDefaultDoc()` — and separately checks that `parsePanelConfig({})`
+yields a positive `panelHp` with an empty `layers` array.

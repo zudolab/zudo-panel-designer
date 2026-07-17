@@ -13,6 +13,9 @@ export default tseslint.config(
       '_temp-resource/**',
       'worktrees/**',
       '**/coverage/**',
+      // Isolated zudo-doc sub-project: own pnpm-workspace.yaml + tooling,
+      // not part of the root workspace (see doc/CLAUDE.md).
+      'doc/**',
     ],
   },
   js.configs.recommended,

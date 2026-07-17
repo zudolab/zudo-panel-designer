@@ -1,0 +1,51 @@
+---
+title: Panel sizing
+description: The fixed HP width table and fixed 3U panel height, quoted from panel-sizes.ts.
+sidebar_position: 2
+---
+
+## Fixed height
+
+```ts
+export const PANEL_HEIGHT_MM = 128.5; // 3U Eurorack panel height
+```
+
+Every panel is **128.5 mm** tall. There is no per-panel height field anywhere in the document model — height is a product constant, not a layout choice.
+
+## HP width table
+
+Panel width is looked up by HP (horizontal pitch) from a fixed spec table, not computed as a simple multiple of the nominal Eurorack pitch. These are the actual product widths from the Takazudo Modular blank-panel spec tables — real panels are undersized versus the nominal `HP * 5.08mm` for mounting clearance:
+
+| HP | Width (mm) |
+| --- | --- |
+| 1 | 5.0 |
+| 2 | 9.8 |
+| 3 | 14.9 |
+| 4 | 20.0 |
+| 5 | 25.0 |
+| 6 | 30.0 |
+| 8 | 40.3 |
+| 10 | 50.5 |
+| 12 | 60.6 |
+| 14 | 70.8 |
+| 16 | 80.9 |
+| 20 | 101.3 |
+
+`packages/core/src/panel-sizes.ts` exposes this as `PANEL_SIZES: readonly PanelSize[]`, where `PanelSize` is `{ hp: number; widthMm: number }`.
+
+## Looking up width: `panelWidthMm(hp)`
+
+```ts
+function panelWidthMm(hp: number): number {
+  const found = PANEL_SIZES.find((s) => s.hp === hp);
+  if (found) return found.widthMm;
+  return hp * NOMINAL_HP_PITCH_MM;
+}
+```
+
+- For an HP present in the table above, this returns the exact measured width.
+- For any other HP, it falls back to `hp * NOMINAL_HP_PITCH_MM` (`NOMINAL_HP_PITCH_MM = 5.08`), the nominal Eurorack module pitch.
+
+<Warning title="The fallback is an approximation, not an order-ready dimension">
+  The table values are undersized on purpose for mounting clearance, so the `5.08mm`-per-HP fallback is *wider* than a real spec width would be. It exists only so `panelWidthMm` has a sane answer for HP values with no measured entry — treat any fallback-derived width as a rough approximation, not a fabrication-ready number.
+</Warning>

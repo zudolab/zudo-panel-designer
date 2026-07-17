@@ -1,0 +1,35 @@
+---
+title: クイックスタート
+description: zpd をローカルで動かすための要件・開発コマンド・ポート。
+sidebar_position: 10
+---
+
+## 要件
+
+- Node.js >= 22
+- pnpm — バージョンはルートの `package.json` の `packageManager` フィールドで固定されています。個別にインストールした pnpm ではなく、`corepack` 経由で実行してください。
+
+## 開発コマンド
+
+特に断りがない限り、すべてのコマンドはリポジトリのルートで実行し、ワークスペース全体を対象に動作します。
+
+| Command | 内容 |
+| --- | --- |
+| `pnpm install` | ワークスペースの全依存関係をインストールします。 |
+| `pnpm dev` | アプリの開発サーバーを **http://localhost:15200** で起動します。 |
+| `pnpm build` | 全パッケージをビルドします（`pnpm -r build`）。 |
+| `pnpm typecheck` | 全パッケージの型チェックを行います（`pnpm -r typecheck`）。 |
+| `pnpm lint` | ESLint でリポジトリ全体を Lint します。 |
+| `pnpm format` | Prettier でリポジトリ全体をフォーマットします。 |
+| `pnpm test` | Vitest でユニットテストスイートを実行します。 |
+| `pnpm test:e2e` | アプリの Playwright e2e スイートを実行します。 |
+| `pnpm deploy` | `packages/app/dist` を静的アセットとして Cloudflare Workers にデプロイします。事前にビルドが存在している必要があります。 |
+| `pnpm deploy:dry` | デプロイせずに `wrangler.toml` を検証します。Cloudflare の認証情報は不要です。 |
+
+<Tip>
+  `pnpm dev` が起動するのはエディタアプリ（`@zpd/app`、ポート 15200）だけです。`@zpd/core` と `@zpd/patterns` は独自の開発サーバーを持ちません——これらはアプリから利用されるライブラリであり、`pnpm typecheck` と `pnpm test` で検証します。
+</Tip>
+
+## デプロイ
+
+アプリは（Cloudflare Pages ではなく）Cloudflare Workers の静的アセットとしてデプロイされます。`.github/workflows/production-deploy.yml` は `main` への push ごとにビルドしてデプロイし、`.github/workflows/pr-checks.yml` は PR ごとに認証情報不要の `pnpm deploy:dry` を実行します。

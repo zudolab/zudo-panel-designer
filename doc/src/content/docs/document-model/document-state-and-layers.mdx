@@ -1,0 +1,146 @@
+---
+title: Document state & layers
+description: DocState, the Layer union, the mm coordinate space, and how a document serializes to PanelConfig.
+sidebar_position: 1
+---
+
+## Coordinate space: millimeters, origin top-left
+
+Every geometric value in the document model — layer `x`/`y`, `width`/`height`, path anchors and bezier handles, stroke widths — is stored in **millimeters**, with the origin at the panel's **top-left** corner. This is deliberate: PCB fabrication data is mm-based, so mm is the single storage space throughout `@zpd/core`. Pixels only exist at the render boundary, where the app's camera converts mm to screen px for display. Nothing in the document model itself is pixel-based.
+
+## `DocState`
+
+```ts
+interface DocState {
+  panelHp: number;
+  layers: Layer[]; // bottom -> top (index 0 renders first)
+}
+```
+
+- `panelHp` — the panel's width, expressed in HP (see [Panel sizing](./panel-sizing.mdx)).
+- `layers` — a flat, ordered array. Index `0` is the **bottom** of the stack and renders first; later entries render on top of earlier ones.
+
+## The `Layer` union
+
+A layer is one of five variants, discriminated by `type`. All variants share `LayerBase`:
+
+```ts
+interface LayerBase {
+  id: string;
+  name: string;
+  hidden?: boolean;
+}
+```
+
+| Type | Manufacturable? | Summary |
+| --- | --- | --- |
+| `shape` | Yes | Rectangle or ellipse, filled with one palette color. |
+| `pattern` | Yes | A named, parameterized pattern from `@zpd/patterns` (opaque to core). |
+| `path` | Yes | A bezier path — filled, stroked, or both — from the pen tool or an image trace. |
+| `text` | Yes | Rendered text in a fixed font/size, filled with one palette color. |
+| `image` | No (design-time only) | A raster reference image; the panel is fabricated from vector layers traced from it, not the raster itself. |
+
+### Shape layer
+
+```ts
+interface ShapeLayer extends LayerBase {
+  type: 'shape';
+  shape: 'rect' | 'ellipse';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number; // deg clockwise around bbox center
+  color: ColorIndex;
+}
+```
+
+### Pattern layer
+
+```ts
+interface PatternLayer extends LayerBase {
+  type: 'pattern';
+  patternType: string;
+  params: Record<string, number>;
+  color: ColorIndex;
+}
+```
+
+`patternType` and `params` are kept as opaque data even when `@zpd/core` doesn't recognize the pattern — the patterns registry is an app-level concern, not a core dependency. This is also why pattern layers get special hit-testing treatment; see [Geometry &amp; editing contracts](./geometry-and-editing.mdx).
+
+### Path layer
+
+```ts
+interface PathPoint {
+  x: number; // anchor, mm
+  y: number;
+  hin?: { x: number; y: number }; // absolute bezier handle coords, mm
+  hout?: { x: number; y: number };
+}
+
+interface PathLayer extends LayerBase {
+  type: 'path';
+  points: PathPoint[]; // primary subpath (pen tool edits this one)
+  extraSubpaths?: PathPoint[][];
+  closed: boolean;
+  fill: ColorIndex | null;
+  stroke: ColorIndex | null;
+  strokeWidth: number; // mm
+}
+```
+
+`extraSubpaths` holds additional closed subpaths produced by image tracing — the holes/islands of one color region. They render together with the primary subpath using even-odd fill, so holes stay holes.
+
+### Text layer
+
+```ts
+interface TextLayer extends LayerBase {
+  type: 'text';
+  content: string; // may contain newlines
+  fontFamily: string;
+  sizeMm: number; // font size in mm (canvas font px == mm in doc space)
+  x: number; // bbox top-left, mm
+  y: number;
+  rotation?: number;
+  color: ColorIndex;
+}
+```
+
+### Image layer
+
+```ts
+interface ImageLayer extends LayerBase {
+  type: 'image';
+  src: string; // dataURL
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+```
+
+`src` is a design-time source only — a raster cannot be manufactured on the panel. The final panel uses the vector layers traced from it, not this layer.
+
+## Serializing to `PanelConfig`
+
+`DocState` is the in-memory working document. `PanelConfig` is the versioned, exported shape a user downloads and hands off for fabrication:
+
+```ts
+const PANEL_CONFIG_VERSION = 1;
+
+interface PanelConfig {
+  version: 1;
+  app: 'zpd';
+  panel: { hp: number; widthMm: number; heightMm: number };
+  palette: string[];
+  layers: Layer[];
+}
+```
+
+`hp` and `layers` are authoritative and round-trip. `panel.widthMm`, `panel.heightMm`, and `palette` are **derived, advisory output** for a human/order reader — computed at export time from `hp` and the fixed palette — and are not re-trusted when the file is loaded back in.
+
+<Warning title="parsePanelConfig never throws">
+  `parsePanelConfig` is fed whatever JSON a user hand-edited or an old/foreign tool produced, so every field is defended individually rather than letting one bad field fail the whole document: an invalid or missing `hp` falls back to the default panel size, an invalid `color` index clamps to `0` (black), and any layer with an unrecognized `type` is silently dropped. Garbage or non-object input yields the default document.
+</Warning>
+
+See the full source in `packages/core/src/serialize.ts` for the field-by-field parsing rules.

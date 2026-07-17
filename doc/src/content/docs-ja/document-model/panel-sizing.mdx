@@ -1,0 +1,51 @@
+---
+title: パネルサイズ
+description: 固定の HP 幅テーブルと固定の 3U パネル高さ（panel-sizes.ts より引用）。
+sidebar_position: 2
+---
+
+## 固定の高さ
+
+```ts
+export const PANEL_HEIGHT_MM = 128.5; // 3U Eurorack panel height
+```
+
+すべてのパネルは高さ **128.5 mm** です。ドキュメントモデルのどこにも、パネルごとの高さフィールドは存在しません——高さはレイアウトで選ぶものではなく、製品の定数です。
+
+## HP 幅テーブル
+
+パネル幅は、公称の Eurorack ピッチの単純な倍数として計算されるのではなく、HP（水平ピッチ）をキーに固定の仕様テーブルから引かれます。これらは Takazudo Modular のブランクパネル仕様テーブルにある実際の製品幅です——実際のパネルは、取り付けクリアランスのために公称の `HP * 5.08mm` よりも小さく作られています。
+
+| HP | 幅（mm） |
+| --- | --- |
+| 1 | 5.0 |
+| 2 | 9.8 |
+| 3 | 14.9 |
+| 4 | 20.0 |
+| 5 | 25.0 |
+| 6 | 30.0 |
+| 8 | 40.3 |
+| 10 | 50.5 |
+| 12 | 60.6 |
+| 14 | 70.8 |
+| 16 | 80.9 |
+| 20 | 101.3 |
+
+`packages/core/src/panel-sizes.ts` はこれを `PANEL_SIZES: readonly PanelSize[]` として公開しています。ここで `PanelSize` は `{ hp: number; widthMm: number }` です。
+
+## 幅の参照: `panelWidthMm(hp)`
+
+```ts
+function panelWidthMm(hp: number): number {
+  const found = PANEL_SIZES.find((s) => s.hp === hp);
+  if (found) return found.widthMm;
+  return hp * NOMINAL_HP_PITCH_MM;
+}
+```
+
+- 上のテーブルに存在する HP については、実測された正確な幅を返します。
+- それ以外の HP については、公称の Eurorack モジュールピッチである `hp * NOMINAL_HP_PITCH_MM`（`NOMINAL_HP_PITCH_MM = 5.08`）にフォールバックします。
+
+<Warning title="フォールバックは近似値であり、発注に使える寸法ではない">
+  テーブルの値は取り付けクリアランスのために意図的に小さく作られているため、HP あたり `5.08mm` のフォールバックは、実際の仕様上の幅よりも*広く*なります。これは、実測エントリのない HP 値に対して `panelWidthMm` がまともな答えを返せるようにするためだけに存在します——フォールバックから得られた幅は、製造にそのまま使える数値ではなく、おおまかな近似値として扱ってください。
+</Warning>

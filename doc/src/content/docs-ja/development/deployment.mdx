@@ -1,0 +1,120 @@
+---
+title: デプロイと CI
+sidebar_position: 4
+---
+
+アプリとこのドキュメントサイトはどちらも、（Cloudflare Pages ではなく）**Cloudflare Workers の
+静的アセット**としてデプロイされます——takazudomodular.com のメインサイトと同じモデルです。
+それぞれが独自の `wrangler.toml`（アプリはルート、ドキュメントは `doc/wrangler.toml`）と、
+独自の Cloudflare Workers のペア（本番用に 1 つ、PR プレビュー用に 1 つ）を持ちます。
+
+## 4 つの Worker
+
+| Worker name | Source config | Environment | 配信対象 |
+|---|---|---|---|
+| `zudo-panel-designer-production` | root `wrangler.toml`, `[env.production]` | production | https://zudo-panel-designer.takazudomodular.com/ |
+| `zudo-panel-designer-preview` | root `wrangler.toml`, `[env.preview]` | preview | アプリの PR プレビュービルド |
+| `doc-zudo-panel-designer-production` | `doc/wrangler.toml`, `[env.production]` | production | https://doc-zudo-panel-designer.takazudomodular.com/ |
+| `doc-zudo-panel-designer-preview` | `doc/wrangler.toml`, `[env.preview]` | preview | ドキュメントサイトの PR プレビュービルド |
+
+Wrangler は、名前付き環境それぞれの worker 名を、`wrangler.toml` のベースの `name`——アプリは
+`zudo-panel-designer`、ドキュメントは `doc-zudo-panel-designer`——から `<name>-<env>` として
+導出します。そのため、各設定の `production`／`preview` 環境は、ちょうど上記の 4 つの worker に
+なります。両方の `wrangler.toml` ファイルは、トップレベルで `workers_dev = false` と
+`preview_urls = false` を明示的に設定し、さらに環境ごとにもそれらを再指定しています。そう
+しないと、`preview_urls` は黙って `workers_dev` に合わせてデフォルト設定されてしまうためです。
+
+各設定の本番ルートは `custom_domain = true` を使います。これにより、初回デプロイ時に
+Cloudflare が DNS レコードと TLS 証明書を自動的にプロビジョニングします——手動での DNS 設定は
+不要です。
+
+```toml
+[[env.production.routes]]
+pattern = "zudo-panel-designer.takazudomodular.com"
+custom_domain = true
+```
+
+（そして `doc/wrangler.toml` 内の、これに相当する `doc-zudo-panel-designer.takazudomodular.com`
+パターン）。
+
+## 本番 URL
+
+- アプリ: **https://zudo-panel-designer.takazudomodular.com/**
+- ドキュメント（このサイト）: **https://doc-zudo-panel-designer.takazudomodular.com/**
+
+## 本番デプロイ — `main` への push 時
+
+`.github/workflows/production-deploy.yml` は `main` への `push` でトリガーされます（また
+`workflow_dispatch` による手動再実行にも対応します）。これは、互いに `needs:` の依存を持たない
+2 つの独立した並列ジョブ——`deploy-app` と `deploy-doc`——を実行するため、一方の失敗がもう
+一方を止めることはありません。`cancel-in-progress: false` を伴う `concurrency: production-deploy`
+により、デプロイは競合したり途中でキャンセルされたりするのではなく、キューに並びます。
+
+どちらのジョブも、次のガード条件を持ちます——
+`if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'`
+——そのため、手動の `workflow_dispatch` 実行は `main` からディスパッチされた場合にのみ
+デプロイを行います。それ以外のブランチやタグからディスパッチした場合は、デプロイせずに
+ジョブがスキップされます（`push` はもともと `main` でのみ発火するため、この条件が実質的に
+影響するのは `workflow_dispatch` の挙動のみです）。
+
+どちらのジョブも次を行います。
+
+1. ビルド（アプリはリポジトリルートで `pnpm build`、ドキュメントサイトは `doc/` 内で
+   `pnpm install --frozen-lockfile && pnpm build`）。
+2. `wrangler deploy --env production` でデプロイ。pipefail に対して安全なリトライループ
+   （最大 3 回）で包む（`set -o pipefail` なしの `wrangler | tee` では、wrangler の失敗が
+   `tee` 自身の終了コードの裏に隠れてしまうため）。
+3. デプロイ後、稼働中の本番 URL に対して smoke チェックを実行し、数分間まではリトライする——
+   ごく最初のデプロイは、Cloudflare がカスタムドメインの DNS と TLS をプロビジョニングするのを
+   待つ必要があるため。アプリの smoke チェックは、ルート以外の SPA ルートがシングルページ
+   アプリケーションのフォールバックによって解決されることも検証する。ドキュメントサイトの
+   smoke チェックは、英語と日本語のドキュメントルートを検証する。
+
+どちらのジョブも、同じ `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` のリポジトリ
+シークレットで認証します。
+
+## PR プレビュー
+
+`.github/workflows/pr-checks.yml` は `preview` ジョブを追加します。これは `checks` や `e2e`
+ジョブから切り離されている（`needs:` なし）ため、テストが完了したか・成功したかにかかわらず、
+プレビュー URL が素早く PR に投稿されます。
+
+このジョブのすべてのデプロイ／コメントのステップは、次の条件でゲートされています。
+
+```yaml
+if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+```
+
+フォークの PR や Dependabot の PR にはリポジトリシークレットが渡されないため、それらの実行は
+デプロイ／コメントのステップを失敗させるのではなく**スキップ**します。
+
+アプリとドキュメントサイトの両方について、ジョブはビルドしたうえで次を実行します。
+
+```bash
+pnpm exec wrangler versions upload --env preview --preview-alias "pr-${PR_NUMBER}"
+```
+
+——これは（完全な `wrangler deploy` ではなく）**Worker Versions** のアップロードであり、
+PR 番号にエイリアスされ、各 `wrangler.toml` の `preview` 環境（`preview_urls = true` の環境）を
+対象とします。得られるプレビュー URL は手作業で組み立てられることは決してありません——
+Cloudflare が生成するものであるため、wrangler 自身の標準出力（`Version Preview Alias URL:
+https://...` の行）から直接パースされます。プレビュー worker がまだ存在しない場合（新しい
+worker への初回アップロード）、このステップは素の `wrangler deploy --env preview` で一度
+ブートストラップしてからリトライします。
+
+続いてジョブは、PR に単一の**固定コメント**を upsert します（本文の先頭行にある
+`<!-- preview-deploy-marker -->` マーカーで見つけるため、push を繰り返しても新しいコメントが
+積み上がるのではなく、同じコメントが更新されます）。コメントには次を列挙します。
+
+- アプリのプレビュー URL
+- ドキュメントのプレビュー URL
+- それらを生成したコミット SHA
+
+## PR チェック（デプロイ以外）
+
+同じく `pr-checks.yml` 内にあり、preview ジョブとは独立しています。
+
+- `checks` — インストール、型チェック、Lint、ユニットテスト（`pnpm test`）。
+- `e2e` — Playwright の `@smoke` スイート（[テスト](./testing.mdx#playwright-による-e2e) を参照）。
+- `wrangler-dry-run` — `wrangler deploy --dry-run --env production`。Cloudflare の認証情報が
+  不要で、フォークからのものも含め、すべての PR で `wrangler.toml` の誤りを検出します。

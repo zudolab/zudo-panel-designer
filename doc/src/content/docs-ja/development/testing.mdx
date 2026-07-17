@@ -1,0 +1,127 @@
+---
+title: テスト
+sidebar_position: 3
+---
+
+このプロジェクトは、独立した 2 つのテストレイヤーを実行します。3 つのパッケージすべてに
+わたってソースと同じ場所に置かれた Vitest のユニットテストと、アプリの本番ビルドに対して
+実際のブラウザを動かす Playwright のエンドツーエンド smoke スイートです。
+
+## Vitest によるユニットテスト
+
+ルートにある単一の `vitest.config.ts` が 3 つのパッケージすべてを一度にカバーします——
+パッケージごとの Vitest 設定はありません。
+
+```ts
+export default defineConfig({
+  test: {
+    include: ['packages/*/src/**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['**/node_modules/**', '**/dist/**', '_temp-resource/**', 'worktrees/**'],
+    environment: 'node',
+    passWithNoTests: true,
+  },
+});
+```
+
+テストは**それがテストするコードと同じ場所に置かれます**——`foo.ts` モジュールのテストは、
+独立したトップレベルの `test/` ディレクトリではなく、同じ `packages/*/src/` ツリー内の
+隣接する `foo.test.ts` にあります。例えば次のとおりです。
+
+- `packages/core/src/serialize.test.ts` — `PanelConfig` のラウンドトリップと防御的パースの
+  テスト（[エクスポート](../export/index.mdx) を参照）。
+- `packages/core/src/history.test.ts`、`packages/core/src/layer-ops.test.ts`、
+  `packages/core/src/hit-test.test.ts` — ドキュメントモデルの挙動。
+- `packages/patterns/src/patterns.test.ts` — パターンの定義。
+- `packages/app/src/editor/download.test.ts` — ダウンロードボタンの純粋なシリアライズ経路。
+- `packages/app/src/editor/tools/pen.test.ts`、
+  `packages/app/src/editor/tools/select.test.ts` — エディタツールのロジック。
+
+スイート全体はリポジトリのルートから実行します。
+
+```bash
+pnpm test
+```
+
+これは、3 つのパッケージすべてにまたがるマッチしたすべてのファイルに対して、単一のプロセスで
+`vitest run` を一度だけ実行します——パッケージへ `cd` したり、パッケージごとのテストコマンドを
+実行したりする必要はありません。
+
+## Playwright による E2E
+
+Playwright スイートは `packages/app/e2e/` にあり、`packages/app/playwright.config.ts` で
+設定されています。次のように実行します。
+
+```bash
+pnpm test:e2e
+```
+
+（リポジトリのルートから——これは `pnpm -F @zpd/app test:e2e`、すなわち `packages/app` 内での
+`playwright test` に転送されます）。
+
+### `vite dev` ではなく本番ビルドに対して実行する
+
+`playwright.config.ts` の `webServer` は、Vite の開発サーバーを起動**しません**。代わりに
+`pnpm build && pnpm exec vite preview --port 15300 --strictPort` を実行します——`vite preview`
+で配信される本番ビルドです——これにより、スイートは開発モードの近似ではなく、実際に出荷される
+ものを検証します。ポート **15300** は、開発者がすでに起動している `pnpm dev`（15200）や
+ドキュメントの開発サーバー（15210）と衝突しないように、あえて使われています。
+
+### `window.__zpdTest` ブリッジ
+
+キャンバスの出力はピクセルです——Playwright のテストは、DOM を調べて「長方形は動いたか？」と
+問うことはできません。代わりに、`packages/app/src/editor/test-bridge.ts` が `window.__zpdTest`
+上に小さな**読み取り専用**のブリッジを公開します。
+
+```ts
+export interface ZpdTestBridge {
+  getDoc(): DocState;
+  getLayers(): ZpdTestLayerSummary[];
+  getLayerCount(): number;
+  getPanelHp(): number;
+  getSelectedId(): string | null;
+  getCamera(): Camera | null;
+  serialize(): PanelConfig;
+}
+```
+
+テストはこのブリッジを通じて状態を観察しますが、これを通じて状態を変更することは決して
+ありません——テスト内のすべての状態変更は、依然として実際の UI を経由します（合成の
+`dispatchEvent` ではなく、実際の `page.mouse` / `page.keyboard` によるクリック・ドラッグ・
+キー入力です。合成イベントは React のイベント委譲に対して信頼できないためです）。
+
+このブリッジはテストのコンテキストに限定されており、通常の本番アクセスでは no-op になります。
+
+- `import.meta.env.DEV` — `vite dev` では true。
+- 本物の `?e2e=1` クエリフラグ — Playwright スイートが本番ビルドを読み込むときに true になる。
+  `helpers.ts` の `openEditor()` は、これを有効化するために `/?e2e=1` へ遷移する。この
+  チェックは部分文字列の一致ではなく `URLSearchParams(...).has('e2e')` を使うため、単に
+  "e2e" を含むだけの URL（例: `?ref=free2eat`）で誤ってブリッジが有効になることはない。
+
+### `@smoke` タグ付け
+
+すべての e2e テストのタイトルには `@smoke` が接頭辞として付きます。例えば次のとおりです。
+
+```ts
+test('@smoke app loads clean and boots the default document', async ({ page }) => {
+  /* ... */
+});
+```
+
+`packages/app/e2e/` 以下の spec ファイルは次のとおりです。
+
+| File | カバー範囲 |
+|---|---|
+| `editor-core.spec.ts` | コンソールエラーなしでのアプリ起動、追加 + ドラッグ + アンドゥ、パネルのリサイズ、そして `parsePanelConfig` を通した JSON ダウンロードのラウンドトリップ。 |
+| `editor-draw-tools.spec.ts` | ペンツール（閉じたパス）とテキストツール（実際の Web フォント読み込みチェックを含む）。 |
+| `editor-dialogs.spec.ts` | 画像インポート + ベクターへのトレース、そしてパターンピッカーのダイアログ。 |
+
+共通の下回りは `helpers.ts`（`openEditor()`、`bridge()`、そして `toScreenPoint()`——アプリ
+自身のカメラ計算を反映した mm からビューポートピクセルへの変換）と `fixtures/`（テスト
+アセット。例えば画像インポートテスト用の小さな PNG）にあります。
+
+### CI
+
+`.github/workflows/pr-checks.yml` は、すべてのプルリクエストで両方のレイヤーを実行します。
+`checks` ジョブ（`pnpm install`、`pnpm typecheck`、`pnpm lint`、`pnpm test`）と、Playwright の
+Chromium ブラウザをインストールして `pnpm -F @zpd/app test:e2e` を実行する別個の `e2e` ジョブ
+です。後者は失敗時に HTML レポートをビルドアーティファクトとしてアップロードします。

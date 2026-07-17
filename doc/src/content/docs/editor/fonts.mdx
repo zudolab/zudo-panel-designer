@@ -1,0 +1,65 @@
+---
+title: Fonts
+sidebar_position: 9
+---
+
+Text layers are rendered as physical silkscreen printing, not a monitor — so the font list in the text inspector isn't "whatever's installed," it's a small **curated** set chosen for legibility at silkscreen sizes and printing tolerances. `fonts.ts` is the single source of that list.
+
+## Self-hosted, no CDN
+
+Every curated font is a pinned `@fontsource/*` package, statically imported at the top of `fonts.ts`:
+
+```ts
+import '@fontsource/inter';
+import '@fontsource/oswald';
+import '@fontsource/bebas-neue';
+import '@fontsource/orbitron';
+import '@fontsource/rajdhani';
+import '@fontsource/audiowide';
+import '@fontsource/share-tech-mono';
+import '@fontsource/archivo-black';
+import '@fontsource/monoton';
+import '@fontsource/press-start-2p';
+```
+
+These are OFL-licensed font files bundled into the app build — there is no runtime request to `fonts.googleapis.com` or any other font CDN. That matters both for offline use and because a panel design tool shouldn't depend on a third-party network call just to render text.
+
+## The curated list
+
+`CURATED_FONTS` is the array the text inspector's font `<select>` renders from:
+
+| Family | Character |
+|---|---|
+| Inter | Neutral, highly legible UI sans — the default general-purpose choice. |
+| Oswald | Condensed sans; **the default font** (`DEFAULT_FONT_FAMILY`) for new text layers. |
+| Bebas Neue | All-caps display condensed — bold panel labels. |
+| Orbitron | Geometric, technical/sci-fi character. |
+| Rajdhani | Geometric sans with a technical/industrial feel. |
+| Audiowide | Rounded, bold, futuristic display face. |
+| Share Tech Mono | Monospace — good for numeric/technical labeling. |
+| Archivo Black | Very heavy weight sans — maximum legibility at small silkscreen sizes. |
+| Monoton | Bold outline-style display face. |
+| Press Start 2P | Pixel/8-bit style display face. |
+
+The common thread is bold, geometric, or monospace faces that stay legible when printed small and thin by a silkscreen process — a delicate serif or a light-weight sans would blur or drop out entirely at typical panel label sizes.
+
+## Loading a face on demand
+
+Only the *definitions* (`@font-face` CSS) load eagerly with the module; the actual font file bytes load lazily, on first use, via `ensureFont(family)`:
+
+```ts
+export function ensureFont(family: string): Promise<void>
+```
+
+`ensureFont` is idempotent per family — it kicks off `document.fonts.load()` once, caches the in-flight promise, and resolves once the face is actually usable. It's called from two places:
+
+- The **text tool**, immediately after placing a new text layer.
+- The **text inspector**, whenever the user changes the selected layer's font.
+
+Both callers chain `.then(() => ctx.requestRepaint())`, so the canvas repaints with the real glyphs as soon as they're ready — until then, the renderer's `ctx.font = ...` draws with the browser's fallback face, which is a normal, harmless transient state rather than an error.
+
+`ensureFont` never throws or hangs a caller: if a family fails to load, or the runtime has no `FontFaceSet` API at all (e.g. `jsdom`'s default test environment), the promise still resolves — it's just never marked "ready," so the fallback face keeps rendering indefinitely instead of the call blocking anything.
+
+:::note
+A layer's `fontFamily` isn't validated against `CURATED_FONTS` — a hand-edited JSON import, or the demo document's generic `sans-serif`, is preserved and shown as a synthesized extra option in the inspector's `<select>` rather than being silently swapped out. See [Inspectors → Text](./inspectors.mdx#built-in-inspectors-text).
+:::

@@ -1,0 +1,41 @@
+---
+title: 3 色パレット
+description: 固定された 3 色パレットと、その物理的な PCB 上の意味（palette.ts より）。
+sidebar_position: 3
+---
+
+## 固定された 3 エントリのパレット
+
+zpd のドキュメント内のすべての色は、固定された 3 つのエントリのちょうどいずれかです——カスタムカラーモードはありません。これらは物理的な PCB パネルの仕上げによって決まるものであり、任意の UI カラーではありません。
+
+```ts
+type ColorIndex = 0 | 1 | 2;
+```
+
+| Index | Name | Hex | PCB 上の意味 |
+| --- | --- | --- | --- |
+| `0` | black | `#151515` | ソルダーマスク |
+| `1` | gold | `#d4af37` | 露出銅（ENIG メッキ） |
+| `2` | white | `#f2f0e9` | シルクスクリーン |
+
+```ts
+const PALETTE: readonly PaletteEntry[] = [
+  { index: 0, name: 'black', hex: '#151515', note: 'soldermask' },
+  { index: 1, name: 'gold', hex: '#d4af37', note: 'exposed copper (ENIG)' },
+  { index: 2, name: 'white', hex: '#f2f0e9', note: 'silkscreen' },
+];
+```
+
+<Note title="Hex は表示専用、契約は name のほう">
+  16 進数の値は、エディタ UI 向けの表示上の近似値です——画面上で正しく見えるように選ばれたものであり、正確なインク／メッキの色見本に一致させたものではありません。色の*名前*（`'black' | 'gold' | 'white'`）こそが、他のパッケージ（patterns、serialize、app）が依拠する実際の契約であり、エクスポートされた `PanelConfig` に書き込まれる `palette` フィールドもこれに含まれます。
+</Note>
+
+## ルックアップヘルパー
+
+```ts
+function paletteEntry(index: ColorIndex): PaletteEntry {
+  return PALETTE[index];
+}
+```
+
+色を持つすべてのレイヤーフィールド（`ShapeLayer.color`、`PatternLayer.color`、`TextLayer.color`、`PathLayer.fill` / `PathLayer.stroke`）は、16 進数の文字列や名前ではなく `ColorIndex` を保持します——インデックスを表示用の hex と物理レイヤーの注記へと解決するのは、`paletteEntry` ただ 1 か所です。

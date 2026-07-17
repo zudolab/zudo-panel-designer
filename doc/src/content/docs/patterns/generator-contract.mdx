@@ -1,0 +1,88 @@
+---
+title: Generator Contract
+sidebar_position: 2
+---
+
+`@zpd/patterns` is a self-contained package: a `PanelPatternGenerator` contract, a hand-listed registry of built-ins, and a thumbnail renderer. This page covers the contract every pattern — built-in or new — must implement.
+
+## `PanelPatternGenerator`
+
+```ts
+interface PatternParamDef {
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  defaultValue: number;
+}
+
+interface DrawOptions {
+  widthMm: number;   // blank panel dimensions in millimetres
+  heightMm: number;
+  color: string;     // a single palette hex the caller chose for this pattern
+  params: Record<string, number>; // keyed by PatternParamDef.key
+}
+
+interface PanelPatternGenerator {
+  name: string;           // stable kebab id, e.g. 'dot-grid'
+  displayName: string;    // human-facing label
+  paramDefs: PatternParamDef[];
+  draw(ctx: CanvasRenderingContext2D, opts: DrawOptions): void;
+}
+```
+
+## Draw in pre-scaled, pre-clipped mm space
+
+`draw(ctx, opts)` is called with a `CanvasRenderingContext2D` that the **caller** has already scaled so 1 canvas unit = 1mm, and already clipped to the panel rect `(0,0)`–`(widthMm, heightMm)`. A generator draws directly in panel-mm coordinates — `ctx.arc(x, y, radius, ...)` with `x`/`y`/`radius` all in mm, no unit conversion inside `draw()` at all.
+
+There is deliberately **no** larger-canvas / slice / viewport indirection here: a pattern computes only inside the panel it's given, using the panel's own `widthMm`/`heightMm`. This is the same transform the [renderer's mm-space layer pass](../editor/rendering-and-camera.mdx#the-repaint-loop) sets up for every layer, and the same 30mm pre-scaled window the [thumbnail renderer](./built-in-patterns.mdx#thumbnails) sets up for picker previews — a pattern's `draw()` never needs to know or care which of the two contexts is calling it.
+
+## Deterministic — no randomness, anywhere
+
+> Drawing is deterministic: identical inputs must reproduce identical pixels (no randomness anywhere), so an exported order JSON is faithfully replayable.
+
+This is a hard constraint, not a style preference: the exported order JSON stores a pattern layer's `patternType` and `params`, not a rasterized image. If a generator called `Math.random()`, replaying that same JSON later — or re-rendering the same document on a different machine — would produce a visually different panel. Every built-in achieves apparent organic variation (wave phase, ray angles, lattice tiling) with pure trigonometry keyed off the panel's own dimensions and the declared params, never a random seed.
+
+## Centered, overscanning lattices
+
+Most built-ins tile a repeating unit (a dot, a hex cell, a brick) across the panel. `patterns.ts`'s shared `centeredStart(span, pitch)` helper computes the lowest lattice coordinate to start iterating from so the tiling is **centered** on the panel — one tick always lands exactly on `span / 2` — and **overscans** past the edges in both directions (paired with a loop bound of `span + pitch`). Centering plus overscan is what makes every pattern read as intentionally designed at any panel width, rather than looking clipped or off-center on an odd HP size.
+
+## Param clamping
+
+Every `draw()` reads its params through `resolveParam(params, defs, key)`, never `params[key]` directly:
+
+```ts
+function resolveParam(params, defs, key) {
+  const raw = params[key];
+  const finiteRaw = typeof raw === 'number' && Number.isFinite(raw);
+  const def = defs.find((d) => d.key === key);
+  if (!def) return finiteRaw ? raw : Number.NaN; // no def to clamp against
+  const value = finiteRaw ? raw : def.defaultValue;
+  return Math.min(def.max, Math.max(def.min, value));
+}
+```
+
+`resolveParam` falls back to the def's `defaultValue` when the incoming value is missing or non-finite, then always clamps into `[min, max]`. This clamp is not cosmetic — it guarantees positive pitches/counts, which is what keeps every draw loop above finite even if a caller passes a stale, zero, or negative value (a zero-or-negative pitch would otherwise spin the `for` loop forever).
+
+## The registry
+
+`PATTERN_GENERATORS` in `patterns.ts` is a **hand-listed array**, not generated — there is no plugin/auto-discovery mechanism here the way there is for [editor tools/inspectors](../editor/extension-architecture.mdx). Adding a new built-in pattern means adding it to this array directly.
+
+```ts
+export const PATTERN_GENERATORS: PanelPatternGenerator[] = [
+  dotGrid, diagStripes, gridLines, concentricCircles, hexLattice, checker,
+  waveLines, crosshatch, radialBurst, brick, diamondLattice, scallops,
+];
+```
+
+:::warning
+`'dot-grid'` must stay first in this array, and keep that exact `name`. The core default document (the demo document new editor sessions start from) references it directly.
+:::
+
+Two small helpers sit on top of the registry:
+
+- `patternByName(name)` — finds a generator by its `name`, or `undefined`.
+- `defaultParams(name)` — returns `{ [key]: defaultValue }` for every param the named generator declares (an empty object if the name doesn't resolve). This is what a freshly added pattern layer, and every thumbnail render, initializes its `params` from.
+
+See [Built-in catalog](./built-in-patterns.mdx) for the full parameter table of every registered pattern.

@@ -1,0 +1,67 @@
+---
+title: Rendering & Camera
+sidebar_position: 8
+---
+
+The canvas is a plain Canvas2D **full-repaint** renderer: every frame redraws the entire scene from the current document, rather than diffing and patching. Coordinates live in one of two spaces — document millimeters and screen pixels — and the **camera** is the single mapping between them.
+
+## The camera model
+
+`camera.ts` defines the camera as three numbers:
+
+```ts
+interface Camera {
+  pxPerMm: number;   // zoom — also the mm→px scale factor
+  offsetX: number;   // screen px of document (0,0)
+  offsetY: number;
+}
+```
+
+`project`/`unproject` are an exact inverse pair:
+
+```ts
+project(cam, mm)     // { x: mm.x * cam.pxPerMm + cam.offsetX, y: mm.y * cam.pxPerMm + cam.offsetY }
+unproject(cam, screen) // { x: (screen.x - cam.offsetX) / cam.pxPerMm, y: (screen.y - cam.offsetY) / cam.pxPerMm }
+```
+
+Zoom is clamped to `[0.5, 100]` px/mm (`MIN_PX_PER_MM` / `MAX_PX_PER_MM`) — 0.5 still shows a whole 20HP panel comfortably; 100 is deep enough for 0.1mm node editing without the displayed numbers going silly.
+
+| Function | Behavior |
+|---|---|
+| `fit(panelWmm, panelHmm, viewport, margin=48)` | Centers the panel in the viewport at the largest zoom that leaves `margin` px of breathing room on every side. Called on first measure and whenever the panel size changes. |
+| `zoomAt(cam, screen, factor)` | Zooms by `factor` while keeping the mm point currently under `screen` stationary — the anchored-zoom behavior both the wheel handler and the [Zoom tool](./tools.mdx#built-in-tools-zoom-z) rely on. |
+| `panBy(cam, dxPx, dyPx)` | Translates the camera's screen offset — what the [Pan tool](./tools.mdx#built-in-tools-pan-h-space-drag) calls on every drag move. |
+
+Mouse-wheel zoom is wired directly in `Editor.tsx` as a non-passive `wheel` listener (`preventDefault()` to stop page scroll), anchored at the cursor via the same `zoomAt`.
+
+## The repaint loop
+
+`renderer.ts`'s `renderScene(canvas, doc, panel, cam, extras)` runs on every render of `Editor.tsx` (it's a plain effect with no dependency array — cheap enough at this scene scale to just always run) and does, per frame:
+
+1. Reset the transform and clear the whole backing store, then scale by `devicePixelRatio` — so 1 canvas unit equals 1 CSS px regardless of screen density.
+2. Fill the workspace background behind the panel.
+3. Draw a drop shadow + solid black fill for the panel rect, in screen space.
+4. **One `setTransform`-equivalent for the whole layer pass**: `ctx.save()`, clip to the panel rect, `ctx.translate(offsetX, offsetY)`, `ctx.scale(pxPerMm, pxPerMm)` — from this point until the matching `ctx.restore()`, **1 canvas unit = 1mm**, matching the pattern generators' own coordinate contract (see [Patterns → Generator contract](../patterns/generator-contract.mdx)). Every non-hidden layer is drawn once, in array order (later layers on top), inside this single transform.
+5. Restore, then stroke the panel outline in screen space.
+6. Draw **unclipped** selection chrome (dashed bbox, resize handles, path node anchors/handles) for the selected layer, if any and if it isn't hidden.
+7. Call the active tool's `renderDraft` hook, if it has one, so an in-progress gesture (the pen tool's draft path, for example) paints on top of everything else.
+
+### Per-layer-type drawing
+
+`drawLayer()` switches on `layer.type` inside the mm-space transform:
+
+- **shape** — `ctx.rect`/`ctx.ellipse` filled with the layer's palette color. Ellipse radii are `Math.abs()`'d because `ctx.ellipse` throws `IndexSizeError` on a negative radius, while a negative width/height is otherwise a valid (mirrored) rect the way the `rect` branch already handles it.
+- **pattern** — looked up by `patternType` in `PATTERN_GENERATORS` and delegated straight to that generator's `draw()`, over the full panel rect.
+- **path** — built into a `Path2D` (`buildPath2D`, from `@zpd/core`), filled with the `evenodd` rule when closed (so traced holes/islands stay holes — see [Image tracing](./image-tracing.mdx#pipeline-overview)), then stroked if a stroke color/width is set.
+- **text** — `ensureFont()` is called fire-and-forget on every draw; if the real face isn't loaded yet, the browser's fallback face is drawn immediately, and once the font resolves the next requested repaint (from the tool or inspector that changed it) picks up the real glyphs. Multi-line content is split on `\n` with a 1.25× line-height.
+- **image** — draws the cached `<img>` if it's loaded, otherwise a dashed placeholder outline (images are decoded/cached by `Editor.tsx`'s asset-loading effect, keyed by layer id).
+
+A rotated `shape`/`text` layer is rotated around its own bbox center via `ctx.translate`/`ctx.rotate`/`ctx.translate` before the type-specific draw runs; `path`/`pattern`/`image` layers have no rotation field.
+
+## mm↔px only exists at the transform boundary
+
+Because the layer pass runs entirely inside one `ctx.scale(pxPerMm, pxPerMm)`, every generator and every layer-drawing branch works purely in millimeters — none of them ever multiplies by `pxPerMm` themselves. The only code that thinks in screen pixels is: the camera module itself, hit-testing/handle math in the [Select tool](./tools.mdx#built-in-tools-select-v) (handle sizes are a fixed *screen* px regardless of zoom), and the selection-chrome pass, which is deliberately drawn **outside** the mm-space clip/transform so its stroke widths and handle sizes stay a constant screen size at any zoom.
+
+:::note
+`layerBbox()` and `resizeHandleRects()` — the geometry helpers behind hit-testing and the resize handles — live in `renderer.ts` alongside the paint code because they need the exact same per-type geometry rules the renderer uses to draw. Tools import them rather than recomputing bounding boxes independently.
+:::

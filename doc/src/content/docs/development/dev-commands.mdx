@@ -1,0 +1,43 @@
+---
+title: Dev Commands + Ports
+sidebar_position: 2
+---
+
+## App (repo root)
+
+Run these from the repo root — they operate on the `packages/*` workspace.
+
+| Command | What it does |
+|---|---|
+| `pnpm install` | Install all workspace dependencies. |
+| `pnpm dev` | Start the app dev server at **http://localhost:15200**. |
+| `pnpm build` | Build all packages (`pnpm -r build`). |
+| `pnpm typecheck` | Typecheck all packages (`pnpm -r typecheck`). |
+| `pnpm lint` | Lint the whole repo with ESLint. |
+| `pnpm format` | Format the whole repo with Prettier. |
+| `pnpm test` | Run the unit test suite with Vitest (see [Testing](./testing.mdx)). |
+| `pnpm test:e2e` | Run the Playwright `@smoke` e2e suite (see [Testing](./testing.mdx#e2e-with-playwright)). |
+| `pnpm deploy` | Deploy `packages/app/dist` to Cloudflare Workers (`wrangler deploy --env production`) — requires the build to already exist. |
+| `pnpm deploy:dry` | Validate the root `wrangler.toml` without deploying — needs no Cloudflare credentials. |
+
+## Docs (`doc/`)
+
+`doc/` is an isolated sub-project — run these from inside `doc/`, not the
+repo root.
+
+| Command | What it does |
+|---|---|
+| `pnpm install` | Install this sub-project's own dependencies (own lockfile). |
+| `pnpm dev` | Start the docs dev server at **http://localhost:15210**. |
+| `pnpm build` | Static export to `doc/dist/` (also emits the Cloudflare Workers entry, `dist/_worker.js`). |
+| `pnpm check` | TypeScript type checking. |
+| `pnpm preview` | Serve the built `doc/dist/`. |
+
+## Port convention
+
+The project reserves the `152xx` range for its own dev servers: **15200**
+for the app, **15210** for the docs site. This keeps both dev servers
+running side by side without collisions, and distinguishes them from other
+tooling (e.g. the Playwright suite's own preview server — see
+[Testing](./testing.mdx#e2e-with-playwright) — which deliberately runs on a
+different port so it doesn't collide with an already-running `pnpm dev`).

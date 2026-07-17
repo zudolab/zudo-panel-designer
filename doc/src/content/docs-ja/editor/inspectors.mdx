@@ -1,0 +1,70 @@
+---
+title: インスペクタ
+sidebar_position: 4
+---
+
+インスペクタは、現在選択中のレイヤーに対して、サイドバーの **Properties** セクションに表示されるプロパティパネルです。各レイヤーの `type` にはちょうど 1 つのインスペクタコンポーネントが登録され、`packages/app/src/editor/inspectors/` から検出されます（[拡張アーキテクチャ](./extension-architecture.mdx)を参照）。このページでは、インスペクタの契約と、レイヤーの型ごとに 1 つずつある組み込みの 5 つのインスペクタを解説します。
+
+## インスペクタの契約
+
+`components/inspector-host.tsx` は、選択中のレイヤーの `type` に登録されたインスペクタを探し、次の props でレンダリングします。
+
+```ts
+interface InspectorProps<L extends Layer = Layer> {
+  layer: L;
+  onChange(patch: Partial<L>, options?: { commit?: boolean }): void;
+  ctx: ToolContext;
+}
+```
+
+`onChange` はレイヤーにパッチを当て、その結果をドキュメント履歴へ流し込みます。
+
+- `commit: true`（**デフォルト**） — 個別の編集がそれ自体で 1 つの undo エントリになります。数値フィールドの blur/Enter、色の選択、チェックボックスの切り替えなどに使います。
+- `commit: false` — 変更はコミットではなく *ストリーミング* されます（`ctx.replace`）。スライダーのドラッグのような連続的な入力向けです。呼び出し側は事前に `ctx.beginGesture()` で 1 つの undo エントリを開いておくことが前提で、以降の `commit: false` の呼び出しはすべて、ジェスチャーが終わるまで同じエントリにまとめられます。
+
+レイヤーの型にインスペクタが登録されていない場合、`InspectorHost` はクラッシュせず、単純に「No inspector registered」というメッセージを表示します。これにより、拡張を段階的に追加している途中の状態でも描画が壊れません。
+
+## 共有の構成要素
+
+組み込みの 5 つのインスペクタはすべて、`components/inspector-ui.tsx` から組み立てられています。
+
+- `Field` / `Row` — ラベル付きの行（`<label>` か、単なる `<div>` か。コントロールがボタンのときは、`<label>` だとボタンのアクセシブルネームを奪ってしまうため `Row` を使います）。
+- `NumberField` — 個別の編集（blur、Enter、または矢印キー 1 回のステップ）ごとにちょうど 1 つの undo エントリをコミットする数値入力。フォーカス中はローカルのドラフト文字列を保持するため、"250" と入力しても 0 / 2 / 25 とコミットしながら崩れていくことはなく、空や `NaN` のドラフトは 0 をコミットするのではなく直前の有効な値に戻ります。
+- `ColorPicker` — `PALETTE` の各エントリ（黒/金/白）ごとに 1 つのスウォッチボタン。加えて、`allowNone` が指定されているときは「none」（`∅`）スウォッチが付きます（パスインスペクタの塗り/ストロークで使われ、それぞれ null になり得ます）。
+- `ActionButton` — インスペクタの「ダイアログを開く」操作のための全幅ボタン（例: パターンの Browse…、画像の Convert to vector…）。
+
+## 組み込みインスペクタ
+
+| Layer type | File | Fields |
+|---|---|---|
+| `shape` | `inspectors/shape.tsx` | 色、x、y、幅、高さ、回転（°） |
+| `text` | `inspectors/text.tsx` | テキスト内容、フォント、色、サイズ（mm）、x、y、回転（°） |
+| `path` | `inspectors/path.tsx` | 塗り（または none）、ストローク（または none）、ストローク幅（mm）、閉じているか |
+| `image` | `inspectors/image.tsx` | x、y、幅、高さ、「Convert to vector…」 |
+| `pattern` | `inspectors/pattern.tsx` | 「Browse…」（パターンピッカー）、色、パターンのパラメータごとに 1 つのスライダー |
+
+### Shape
+
+矩形/楕円レイヤーには、位置・サイズ・回転のフィールドと `ColorPicker` が付きます。ジオメトリのフィールドはすべて素の `NumberField` です。選択ツールのリサイズハンドルが書き込むのと同じフィールドなので、ハンドルをドラッグしても幅を入力しても、まったく同じパッチが生成されます。
+
+### Text
+
+複数行の内容用に `<textarea>` を追加し、フォントの `<select>` は `CURATED_FONTS` から生成します（[フォント](./fonts.mdx)を参照）。レイヤーの現在の `fontFamily` がキュレートされた選択肢に含まれていない場合 — たとえば手編集した JSON のインポートや、デモドキュメントの汎用的な `sans-serif` など — その値は黙って差し替えられるのではなく、選択可能な合成オプションとして保持されます。フォントを選ぶと `ensureFont()` が呼ばれ、実際のフェイスが読み込まれた時点で再描画を要求します。そのため、キャンバスがフォールバックのフェイスのまま止まってしまうことはありません。
+
+### Path
+
+塗りとストロークはそれぞれ `allowNone` 付きの `ColorPicker` を使います。パスは塗りのみ（ペンツールやトレースで作られた閉じた形状）にも、ストロークのみ（開いたパス）にもなり得るためです。ノード/ハンドルの位置はここでは編集 **できません**。これらはキャンバス上で選択ツールのドラッグによって直接編集します（Alt で対称ハンドルの制約を解除）。インスペクタはこの点をキャプションで注記します。
+
+### Image
+
+編集できるのはジオメトリ（x/y/幅/高さ）だけです。画像レイヤーはデザイン時のラスタ参照であって、製造可能なレイヤーではありません。唯一の実質的な操作は **Convert to vector…** で、[トレースダイアログ](./add-actions-and-dialogs.mdx)を開きます（`trace` ダイアログが登録されていない場合は、説明ツールチップ付きで無効になります。[画像のトレース](./image-tracing.mdx)を参照）。
+
+### Pattern
+
+現在のパターンの表示名を、[パターンピッカー](./add-actions-and-dialogs.mdx)を開く **Browse…** ボタン（そのダイアログが登録されていなければ無効）の背後に表示し、`ColorPicker` と、パターンが宣言する `PatternParamDef` ごとに 1 つの `<input type="range">` を表示します（[パターン → ジェネレータ契約](../patterns/generator-contract.mdx)を参照）。
+
+各スライダーは、選択ツールのドラッグと同じ遅延ジェスチャーのパターンに従います。スクラブの最初の `onChange` で 1 つの undo エントリ（`ctx.beginGesture()`）を開き、以降の同じドラッグの各ティックは `onChange(patch, { commit: false })` をストリーミングし、ポインタ/キーを離すとローカルでスクラブを終えるだけです。末尾でコミットはしません。`beginGesture` がすでに開いたエントリを二重にしてしまうためです。
+
+:::note
+新しいレイヤー型のインスペクタの登録は 1 ファイルの追加で済みます。`inspectors/my-type.tsx` を作成し、`registerInspector('my-type', MyInspector)` を呼び出します。[インスペクタの追加](./extension-architecture.mdx)を参照してください。
+:::

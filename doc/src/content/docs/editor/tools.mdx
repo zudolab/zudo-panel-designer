@@ -1,0 +1,80 @@
+---
+title: Tools
+sidebar_position: 3
+---
+
+Tools are the modules that interpret pointer and keyboard input on the canvas. Each one is a self-registered `ToolModule` (see [Extension architecture](./extension-architecture.mdx)) discovered from `packages/app/src/editor/tools/`. This page documents the five built-in tools and the event-routing contract every tool implements against.
+
+## Built-in tools
+
+| Tool | Shortcut | Cursor | Summary |
+|---|---|---|---|
+| Select | `V` | default | Move, resize (8 handles), and edit path anchors/handles of the selected layer. |
+| Pen | `P` | crosshair | Draw bezier paths anchor by anchor; close into a filled shape or finish as an open stroke. |
+| Text | `T` | text | Click the canvas to drop a new text layer, then hand off to Select. |
+| Pan | `H` | grab | Drag to pan the camera. Also reached transiently by holding Space in any other tool. |
+| Zoom | `Z` | zoom-in | Click to zoom in anchored at the pointer; Alt-click to zoom out. |
+
+### Select (`V`)
+
+`tools/select.tsx` is the reference tool — it exercises every part of the tool contract and is the file to copy when building a new one. On pointer down it, in order:
+
+1. If a layer is already selected, tries to grab a path node/bezier handle on it (`tryGrabNode`) — within 7px for anchors, 6px for handles.
+2. Otherwise tries to grab one of the 8 resize handles on the selection's bounding box (`tryGrabResizeHandle`) — only offered for `shape`/`image` layers that aren't rotated (a rotated bbox isn't axis-resizable).
+3. Otherwise hit-tests the whole document top-down (`topmostHit`) and selects whatever it hits, or deselects if it hits nothing.
+
+Dragging streams the change via `ctx.replace()` and only opens an undo entry (`ctx.beginGesture()`) once the drag has moved past the 0.1mm snap grid — a pure click, or a sub-snap jitter that nets zero effective change, leaves history untouched. `pointerUp`/`onDeactivate` both clear the drag state so a tool switch mid-drag can never leave a stale gesture open.
+
+### Pen (`P`)
+
+`tools/pen.tsx` builds a bezier path one anchor at a time:
+
+- **Click** appends a grid-snapped corner anchor.
+- **Click-drag** on the anchor just placed pulls out mirrored `hout`/`hin` bezier handles, turning it into a smooth anchor.
+- **Click near the first anchor** (path needs ≥3 anchors) closes the path into a filled shape (`fill: gold`, no stroke).
+- **Enter** finishes the path open instead (a stroke, no fill) — needs ≥2 anchors.
+- **Esc** cancels the in-progress draft.
+
+The whole multi-click gesture never touches `ctx.doc` until the path is finished — unlike Select's live-dragging, nothing is mid-flight in the document, so finishing collapses into exactly one `ctx.commit()` (one undo entry). A floating hint bar (its own self-mounted React tree, since the tool contract has no chrome slot) shows the available actions and their enabled state. The in-progress path is drawn by the tool's `renderDraft` hook, not by the main renderer.
+
+### Text (`T`)
+
+`tools/text.tsx` is intentionally the smallest tool: a pointer-down creates a `TextLayer` at the click point (default content `"TEXT"`, size 6mm, color white — the silkscreen layer), commits it, selects it, and immediately switches the active tool back to `select` so the freshly placed text is draggable/resizable/editable right away.
+
+### Pan (`H` / Space-drag)
+
+`tools/pan.tsx` drags the camera's screen-px offset. It's also reached without switching tools: holding Space while any other tool is active makes the Editor route pointer events to `pan` instead (see [Space-drag override](#the-pointer-keyboard-event-contract-pointer-events-space-drag-override) below), so a user can pan mid-edit without losing their place in, say, an in-progress pen path.
+
+### Zoom (`Z`)
+
+`tools/zoom.tsx` zooms by a fixed factor (1.5× in, 1/1.5× out) anchored at the click point via `camera.zoomAt` — the mm point under the pointer stays stationary. Alt-click zooms out instead of in.
+
+## The pointer/keyboard event contract
+
+The Editor shell (`Editor.tsx`) owns exactly one rule for routing input: **the active tool gets first refusal, then app-level fallbacks run.**
+
+### Pointer events
+
+Every canvas pointer event is normalized into a `ToolPointerEvent` (screen px relative to the canvas, the corresponding document mm, button/buttons, modifier keys, `pointerId`) and handed to `onPointerDown` / `onPointerMove` / `onPointerUp` / `onDoubleClick` on whichever tool is currently *effective*.
+
+#### Space-drag override
+
+The effective tool is normally `activeToolId`, but while Space is held it is forced to `'pan'` regardless of what's active — so pan is available as a momentary override from any tool without changing `activeToolId` itself. Releasing Space (or a `buttons === 0` move, which catches Space being released mid-drag) restores the previously active tool.
+
+### Keyboard events
+
+On `keydown`, the shell first calls the active tool's `onKeyDown(e, ctx)`. If — and only if — that returns `true`, routing stops there: the tool has claimed the key and no app-level fallback runs. This is how Pen owns Enter/Esc for finishing/cancelling its draft without the shell needing a shared keyboard switch that every tool would otherwise have to edit.
+
+When the tool does not return `true`, the shell runs its fallbacks in this order:
+
+1. `⌘/Ctrl+Z` (undo) / `⌘/Ctrl+Shift+Z` (redo).
+2. A single-key tool shortcut (`V`/`P`/`T`/`H`/`Z`, case-insensitive) — matched only when no modifier key is held, so it never fires ahead of the undo/redo check.
+3. `Esc` — deselect.
+4. `Delete`/`Backspace` — delete the selected layer.
+5. Arrow keys — nudge the selected layer by 0.1mm, or 1mm with Shift held. Pattern layers (which cover the whole panel) are not nudgeable; path layers translate their whole point set.
+
+Keyboard input is ignored globally while an `<input>`/`<textarea>`/`<select>` is focused (e.g. the layer-rename field, an inspector's number field), so typing "V" into a text box never switches tools.
+
+:::tip
+When building a new tool, `onKeyDown` returning `true` is the *only* way to intercept a key before the shell's fallbacks — there is no separate priority list to edit. See [Adding a tool](./extension-architecture.mdx#adding-a-tool).
+:::
