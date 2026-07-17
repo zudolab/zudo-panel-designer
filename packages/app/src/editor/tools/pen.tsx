@@ -200,6 +200,10 @@ registerTool({
   shortcut: 'p',
   icon: '✒',
   cursor: 'crosshair',
+  description:
+    'Click to drop a corner anchor; click-drag pulls out bezier handles for a curved anchor. Click ' +
+    'back on the first anchor (3+ points) to close the path into a filled shape, or press Enter to ' +
+    'finish it open as a stroked line. Esc cancels the in-progress path. Shortcut: P.',
   onActivate(ctx: ToolContext) {
     draft = null;
     penDragging = false;

@@ -16,6 +16,9 @@ registerTool({
   shortcut: 't',
   icon: 'T',
   cursor: 'text',
+  description:
+    'Click anywhere on the canvas to place a new text layer at that point, then hand off to the ' +
+    'Select tool so it can be repositioned and styled right away. Shortcut: T.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
     const layer: TextLayer = {
       id: mintId('text'),

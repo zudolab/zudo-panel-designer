@@ -14,6 +14,9 @@ registerTool({
   shortcut: 'h',
   icon: '✋',
   cursor: 'grab',
+  description:
+    'Drag to pan the canvas view. Also available from any other tool by holding Space — release it ' +
+    'to snap back to the tool you were using. Shortcut: H.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
     drag = { startX: e.screen.x, startY: e.screen.y, origCam: ctx.camera };
   },

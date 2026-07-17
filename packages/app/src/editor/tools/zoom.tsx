@@ -13,6 +13,9 @@ registerTool({
   shortcut: 'z',
   icon: '🔍',
   cursor: 'zoom-in',
+  description:
+    'Click to zoom in, anchored at the click point; Alt-click to zoom out. The mouse wheel also ' +
+    'zooms at the pointer from any tool. Shortcut: Z.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
     ctx.setCamera(zoomAt(ctx.camera, e.screen, e.altKey ? ZOOM_OUT : ZOOM_IN));
   },
