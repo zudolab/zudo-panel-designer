@@ -29,6 +29,7 @@ import { createDemoDoc } from './demo-doc';
 import { normalizeSelectedIds } from './selection';
 import { installTestBridge } from './test-bridge';
 import { useDocHistory } from './use-doc-history';
+import { useGuideDrag, type GuideDragDeps } from './use-guide-drag';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from './types';
 import { CanvasViewport } from './components/canvas-viewport';
 import { RulerCorner, RulerStrip } from './components/ruler';
@@ -61,6 +62,9 @@ export function Editor() {
   // "Show content outside the panel" (issue #43) — default ON, no
   // persistence (matches the house style: no storage layer in this app).
   const [showOutsidePanel, setShowOutsidePanel] = useState(true);
+  // "Show guides" master toggle (issue #54) — default ON, no persistence (house
+  // style). When OFF, guides neither render nor accept drag interaction.
+  const [showGuides, setShowGuides] = useState(true);
   const [, setAssetVersion] = useState(0); // bump repaints when an image loads
   const [, setRepaintNonce] = useState(0); // tools ask for repaints via ctx
 
@@ -92,11 +96,13 @@ export function Editor() {
   const cameraRef = useRef(camera);
   const rawSelectedIdsRef = useRef(rawSelectedIds);
   const panelRef = useRef(panel);
+  const showGuidesRef = useRef(showGuides);
   useEffect(() => {
     docRef.current = doc;
     cameraRef.current = camera;
     rawSelectedIdsRef.current = rawSelectedIds;
     panelRef.current = panel;
+    showGuidesRef.current = showGuides;
   });
 
   // The normalized live view of the selection — what ctx and the test bridge
@@ -164,6 +170,21 @@ export function Editor() {
     [commit, replace, beginGesture, undo, redo, readSelectedId, readSelectedIds],
   );
 
+  // Guide drag controller (#54): the cross-component ruler->canvas pointer
+  // routing. Deps read the same live refs as ctx so the window listeners never
+  // lag a commit; see use-guide-drag.ts for the routing design.
+  const guideDragDeps = useMemo<GuideDragDeps>(
+    () => ({
+      getCamera: () => cameraRef.current,
+      getDoc: () => docRef.current,
+      getCanvasRect: () => canvasRef.current?.getBoundingClientRect() ?? null,
+      commit,
+      isEnabled: () => showGuidesRef.current,
+    }),
+    [commit],
+  );
+  const guideDrag = useGuideDrag(guideDragDeps);
+
   // --- container measurement + fit ---------------------------------------
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -229,6 +250,8 @@ export function Editor() {
       images: imagesRef.current,
       showNodes: activeToolId === 'select' && selectedLayer?.type === 'path',
       showOutsidePanel,
+      guides: showGuides ? doc.guides : [],
+      guideDraft: showGuides ? guideDrag.draft : null,
       renderDraft: activeTool?.renderDraft ? (d) => activeTool.renderDraft?.(d, ctx) : undefined,
     });
   });
@@ -377,6 +400,10 @@ export function Editor() {
 
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!cameraRef.current) return;
+    // Guide grab (#54) wins over tool routing: if the pointer landed on an
+    // existing guide line, start a guide move/delete drag and don't let the
+    // active tool see the event. Skipped while Space-panning.
+    if (!spaceDown && guideDrag.tryGrabOnCanvas(e)) return;
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -421,8 +448,20 @@ export function Editor() {
             change but NEVER move in layout (see components/ruler.tsx). */}
         <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[20px_minmax(0,1fr)] grid-rows-[20px_minmax(0,1fr)]">
           <RulerCorner />
-          <RulerStrip orientation="horizontal" camera={camera} lengthPx={canvasSize.w} />
-          <RulerStrip orientation="vertical" camera={camera} lengthPx={canvasSize.h} />
+          <RulerStrip
+            orientation="horizontal"
+            camera={camera}
+            lengthPx={canvasSize.w}
+            guidesEnabled={showGuides}
+            onGuidePointerDown={(e) => guideDrag.startCreate('horizontal', e)}
+          />
+          <RulerStrip
+            orientation="vertical"
+            camera={camera}
+            lengthPx={canvasSize.h}
+            guidesEnabled={showGuides}
+            onGuidePointerDown={(e) => guideDrag.startCreate('vertical', e)}
+          />
           <CanvasViewport
             containerRef={containerRef}
             canvasRef={canvasRef}
@@ -441,6 +480,8 @@ export function Editor() {
           activeToolId={activeToolId}
           showOutsidePanel={showOutsidePanel}
           onShowOutsidePanelChange={setShowOutsidePanel}
+          showGuides={showGuides}
+          onShowGuidesChange={setShowGuides}
         />
       </div>
       <DialogHost ctx={ctx} />

@@ -5,7 +5,7 @@
 //
 // All tick placement math lives in ../ruler-ticks (pure + unit-tested); this
 // file only paints.
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Camera } from '../camera';
 import { formatTickLabel, getRulerTicksMm, pickTickStepMm } from '../ruler-ticks';
 
@@ -37,9 +37,22 @@ export interface RulerStripProps {
   camera: Camera | null;
   /** css px length along the strip's long axis (= viewport width / height) */
   lengthPx: number;
+  // Guide drag source (#54). A pointerdown on the strip STARTS a create drag;
+  // the strip only reports the initial event — the whole cross-element drag is
+  // then tracked at the window level by useGuideDrag (see its design comment).
+  // The strip fixes the orientation (this is the horizontal or vertical strip);
+  // the controller decides the rest.
+  guidesEnabled?: boolean;
+  onGuidePointerDown?: (e: ReactPointerEvent) => void;
 }
 
-export function RulerStrip({ orientation, camera, lengthPx }: RulerStripProps) {
+export function RulerStrip({
+  orientation,
+  camera,
+  lengthPx,
+  guidesEnabled = false,
+  onGuidePointerDown,
+}: RulerStripProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const horizontal = orientation === 'horizontal';
   const dpr = window.devicePixelRatio || 1;
@@ -121,6 +134,15 @@ export function RulerStrip({ orientation, camera, lengthPx }: RulerStripProps) {
     <div
       data-testid={horizontal ? 'ruler-h' : 'ruler-v'}
       className="overflow-hidden bg-neutral-900"
+      // touchAction:none so a touch drag from the strip isn't stolen by the
+      // browser as a pan/zoom gesture before it reaches the canvas (mirrors the
+      // editor canvas's touch-none).
+      style={
+        guidesEnabled
+          ? { cursor: horizontal ? 'row-resize' : 'col-resize', touchAction: 'none' }
+          : undefined
+      }
+      onPointerDown={guidesEnabled ? onGuidePointerDown : undefined}
     >
       <canvas ref={canvasRef} className="block" />
     </div>

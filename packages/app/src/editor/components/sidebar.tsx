@@ -17,6 +17,8 @@ export interface SidebarProps {
   activeToolId: string;
   showOutsidePanel: boolean;
   onShowOutsidePanelChange: (value: boolean) => void;
+  showGuides: boolean;
+  onShowGuidesChange: (value: boolean) => void;
 }
 
 export function Sidebar({
@@ -26,20 +28,33 @@ export function Sidebar({
   activeToolId,
   showOutsidePanel,
   onShowOutsidePanelChange,
+  showGuides,
+  onShowGuidesChange,
 }: SidebarProps) {
   return (
     <aside className="flex w-72 flex-col border-l border-neutral-800 bg-neutral-900">
       <div className="flex flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3">
         <CollapsibleSection title="View">
-          <label className="flex items-center justify-between gap-2 text-xs">
-            <span className="text-neutral-400">Show content outside the panel</span>
-            <input
-              type="checkbox"
-              checked={showOutsidePanel}
-              onChange={(e) => onShowOutsidePanelChange(e.target.checked)}
-              className="accent-sky-400"
-            />
-          </label>
+          <div className="flex flex-col gap-2">
+            <label className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-neutral-400">Show content outside the panel</span>
+              <input
+                type="checkbox"
+                checked={showOutsidePanel}
+                onChange={(e) => onShowOutsidePanelChange(e.target.checked)}
+                className="accent-sky-400"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-neutral-400">Show guides</span>
+              <input
+                type="checkbox"
+                checked={showGuides}
+                onChange={(e) => onShowGuidesChange(e.target.checked)}
+                className="accent-sky-400"
+              />
+            </label>
+          </div>
         </CollapsibleSection>
 
         <CollapsibleSection title="Panel">

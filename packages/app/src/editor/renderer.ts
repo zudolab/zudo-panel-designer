@@ -11,6 +11,7 @@ import {
   rectCenter,
   rectCorners,
   rotatedRectAABB,
+  type Guide,
   type Layer,
   type Pt,
   type Rect,
@@ -19,6 +20,7 @@ import {
 import { patternByName } from '@zpd/patterns';
 import type { Camera } from './camera';
 import { ensureFont } from './fonts';
+import { guideScreenCoord, type GuideDraft } from './guides';
 import { outsidePanelRegion } from './outside-panel-region';
 import type { DraftRenderContext, PanelDims } from './types';
 
@@ -38,6 +40,11 @@ export interface RenderExtras {
   images: Map<string, HTMLImageElement>;
   showNodes: boolean; // draw path anchors/handles for the selected path layer
   showOutsidePanel: boolean; // ghost-paint off-panel layer content (issue #43)
+  // View furniture guides (#54). Committed guides to paint as thin lines; the
+  // master "Show guides" toggle is applied by the caller (it passes [] when
+  // off). `guideDraft` is the live ruler-drag preview, or null when idle.
+  guides?: readonly Guide[];
+  guideDraft?: GuideDraft | null;
   // The active tool's draft preview hook (pen path, marquee, …). Drawn last,
   // unclipped, on top of the selection chrome.
   renderDraft?: (draft: DraftRenderContext) => void;
@@ -435,6 +442,10 @@ export function renderScene(
   ctx.lineWidth = 1;
   ctx.strokeRect(cam.offsetX + 0.5, cam.offsetY + 0.5, panelPxW - 1, panelPxH - 1);
 
+  // guides (#54) — thin lines across the whole viewport, above layer content
+  // and below the selection chrome/handles.
+  drawGuides(ctx, cam, cssW, cssH, extras);
+
   // selection chrome — UNCLIPPED, in screen space
   drawSelectionChrome(ctx, doc.layers, panel, cam, extras);
 
@@ -463,6 +474,75 @@ function makeDraftContext(
       ctx.restore();
     },
   };
+}
+
+// Guide furniture colors (#54). A distinct cyan so guides never read as
+// selection chrome (blue) or panel outline (white).
+const GUIDE_COLOR = '#12b5cb';
+const GUIDE_HIDDEN_ALPHA = 0.3; // faint, per the Guide type contract
+const GUIDE_DELETE_COLOR = 'rgba(255,90,90,0.85)'; // "will delete on drop"
+
+// One thin, device-pixel-crisp guide line spanning the whole viewport. `coord`
+// is the screen px on the line's fixed axis (screen y for horizontal, x for
+// vertical). The caller sets stroke style / dash before calling.
+function strokeGuideLine(
+  ctx: CanvasRenderingContext2D,
+  orientation: Guide['orientation'],
+  coord: number,
+  cssW: number,
+  cssH: number,
+): void {
+  const p = Math.round(coord) + 0.5; // center in a device px for a crisp 1px line
+  ctx.beginPath();
+  if (orientation === 'horizontal') {
+    ctx.moveTo(0, p);
+    ctx.lineTo(cssW, p);
+  } else {
+    ctx.moveTo(p, 0);
+    ctx.lineTo(p, cssH);
+  }
+  ctx.stroke();
+}
+
+function drawGuides(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  cssW: number,
+  cssH: number,
+  extras: RenderExtras,
+): void {
+  const guides = extras.guides ?? [];
+  const draft = extras.guideDraft ?? null;
+  if (guides.length === 0 && !draft) return;
+
+  ctx.save();
+  ctx.lineWidth = 1;
+
+  // committed guides — the one being moved is drawn from the draft instead.
+  for (const guide of guides) {
+    if (draft?.movingId === guide.id) continue;
+    ctx.strokeStyle = GUIDE_COLOR;
+    ctx.globalAlpha = guide.hidden ? GUIDE_HIDDEN_ALPHA : 1;
+    ctx.setLineDash(guide.hidden ? [3, 3] : []);
+    strokeGuideLine(ctx, guide.orientation, guideScreenCoord(guide, cam), cssW, cssH);
+  }
+
+  // live drag preview: a create drag only shows while over the canvas; a move
+  // drag off the canvas paints a "will delete" affordance instead.
+  if (draft && (draft.overCanvas || draft.movingId !== null)) {
+    const coord =
+      draft.orientation === 'horizontal'
+        ? draft.position * cam.pxPerMm + cam.offsetY
+        : draft.position * cam.pxPerMm + cam.offsetX;
+    const deleting = draft.movingId !== null && !draft.overCanvas;
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = deleting ? GUIDE_DELETE_COLOR : GUIDE_COLOR;
+    ctx.setLineDash(deleting ? [4, 4] : []);
+    strokeGuideLine(ctx, draft.orientation, coord, cssW, cssH);
+  }
+
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 
 // Axis-aligned selection bboxes (mm) for the chrome pass: one per selected,
