@@ -65,6 +65,24 @@ export async function importJsonFile(file: File, ctx: ToolContext): Promise<void
   toastSuccess('Panel imported');
 }
 
+// Programmatic file-picker entry point (issue #76): the header's "Import
+// JSON" button owns a persistent hidden <input> via a ref, but the command
+// registry's palette-facing command has no component-owned DOM node to reach
+// for. A transient file input (same throwaway-input technique as
+// add-actions/add-image.ts) opens the native picker and routes the result
+// through the exact same importJsonFile() path as the header button and the
+// drop handler.
+export function pickImportJsonFile(ctx: ToolContext): void {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (file) void importJsonFile(file, ctx);
+  });
+  input.click();
+}
+
 // Entry point for a dropped (or picked) file of unknown kind: image/SVG ->
 // add as a layer; .json -> the parse-confirm-replace path above; anything
 // else -> an error toast so an unsupported drop isn't a silent no-op.
