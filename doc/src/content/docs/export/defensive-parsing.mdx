@@ -75,9 +75,21 @@ Each entry in the `layers` array is parsed independently by `parseLayer()`:
 ## Why this matters
 
 Because parsing never throws, the editor (and anything that reuses
-`@zpd/core`) can treat "load this JSON" as a total function: worst case, a
-garbage or empty input produces the same default document a brand-new
-session starts with (`createDefaultDoc()`), never an unhandled exception.
+`@zpd/core`) can treat "load this JSON" as a total function: worst case it
+degrades to a safe document, never an unhandled exception. The exact
+fallback depends on the shape of the input:
+
+- **Non-object garbage** (`null`, a primitive, an array, a function, …)
+  falls back to `createDefaultDoc()` in full — the same document a
+  brand-new session starts with, dot-grid layer and all.
+- **A plain object with missing or invalid fields** — including the empty
+  object `{}` — is repaired field by field: `panelHp` becomes
+  `DEFAULT_PANEL_HP` and `layers` becomes `[]`. This is **not** the
+  new-session document: it has the default panel size but an empty layer
+  list, with no dot-grid layer.
+
 This is exercised directly in `packages/core/src/serialize.test.ts`, which
 feeds `parsePanelConfig` inputs like `null`, `42`, `'not json'`, `true`,
-`[]`, and a bare function and asserts it never throws.
+`[]`, and a bare function — asserting each never throws and equals
+`createDefaultDoc()` — and separately checks that `parsePanelConfig({})`
+yields a positive `panelHp` with an empty `layers` array.
