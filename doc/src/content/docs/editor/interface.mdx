@@ -1,0 +1,47 @@
+---
+title: Interface
+sidebar_position: 2
+---
+
+The editor (`Editor.tsx`) is a single full-screen shell with four regions: a header, a left toolbar, a center canvas viewport, and a right sidebar. The shell owns only generic state — the document (with undo/redo history), the camera, the current selection, and which tool is active. Everything domain-specific is rendered from data the [extension registries](./extension-architecture.mdx) expose, so this page describes the chrome as it behaves once those registries are populated.
+
+## Header
+
+`components/header.tsx` is the top bar. From left to right it shows:
+
+- The app name.
+- A zoom cluster: zoom-out / zoom-in buttons (25% steps), the current zoom percentage (relative to the "fit" scale, not to physical mm), and a **Fit** button that re-centers and re-scales the camera to frame the whole panel.
+- Undo / redo buttons, disabled when there is nothing to undo/redo.
+- A **?** button that opens the [keyboard shortcuts dialog](./add-actions-and-dialogs.mdx#dialogs-built-in-dialogs-shortcuts-dialog).
+- A **⬇ JSON** button that downloads the current document as an order-ready panel config JSON (see [Download trigger](#download-trigger) below).
+
+## Left toolbar
+
+`components/toolbar.tsx` is entirely data-driven: it renders one button per entry in the [tool registry](./extension-architecture.mdx), in registration order, followed by a divider and one button per entry in the [add-action registry](./add-actions-and-dialogs.mdx#add-actions). Clicking a tool button calls `ctx.setActiveTool(tool.id)`; clicking an add-action button calls `action.run(ctx)`. Neither list is hand-maintained — a new file dropped into `tools/` or `add-actions/` appears here automatically. See [Tools](./tools.mdx) for the built-in tool set.
+
+## Canvas viewport
+
+`components/canvas-viewport.tsx` is a purely presentational wrapper around a single `<canvas>`: it exposes a `containerRef` (measured with a `ResizeObserver` so the camera can re-fit on resize) and forwards pointer events to the Editor shell. The `<canvas>` itself has `touch-action: none` so drags aren't hijacked as scroll/pinch gestures on touch devices. All actual painting happens in the Editor's repaint effect — see [Rendering & camera](./rendering-and-camera.mdx).
+
+## Right sidebar
+
+`components/sidebar.tsx` scrolls independently (`overflow-y-auto overscroll-contain`, so the list bottoming out never scrolls the canvas underneath) and stacks four sections:
+
+- **Panel** — a `<select>` of the real Eurorack HP sizes (`PANEL_SIZES` from `@zpd/core`), each labeled `{hp}HP — {widthMm}×{heightMm}mm`. Changing it commits a new `panelHp` on the document, which re-fits the camera.
+- **Palette (fixed)** — a read-only legend of the three panel colors (black/soldermask, gold/exposed copper, white/silkscreen). This list is fixed because it mirrors a physical PCB finish, not a user preference.
+- **Layers** — `components/layer-list.tsx`, the visual layer stack (top of the list = top of the stack = last array index). Each row supports select (click), rename (double-click the name), reorder (▲/▼), show/hide (👁), and delete (✕), all routed through `@zpd/core`'s layer-ops so ordering and immutability rules live in one place.
+- **Properties** — `components/inspector-host.tsx`, which renders the registered [inspector](./inspectors.mdx) for the selected layer's type, or a placeholder when nothing is selected.
+
+## Download trigger
+
+The header's **⬇ JSON** button calls `downloadPanelConfig(ctx.doc)` from `download.ts`. That function:
+
+1. Serializes the document with `@zpd/core`'s `serializePanelConfig` (the canonical shape the fabrication reader expects) and `JSON.stringify`s it — pulled out as the pure, DOM-free `panelConfigJson()` helper so the exact output string is unit-testable without a real `Blob`/anchor.
+2. Wraps the string in a `Blob`, creates an object URL, and triggers a browser download named `zpd-panel-{panelHp}hp.json` via a temporary `<a download>` click.
+3. Revokes the object URL on a deferred tick (`setTimeout(..., 0)`) rather than immediately — revoking in the same tick as the click can abort the download in some browsers before it has read the blob.
+
+This is the editor-side trigger only; the shape of the exported JSON and how it's consumed downstream is documented in the Export section.
+
+:::note
+The document model, undo/redo history, and layer types referenced throughout this section (`DocState`, `Layer`, `PATTERN_GENERATORS`, `serializePanelConfig`, …) live in `@zpd/core` and `@zpd/patterns` and are covered in the Document Model section.
+:::

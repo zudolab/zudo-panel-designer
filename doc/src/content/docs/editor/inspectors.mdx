@@ -1,0 +1,70 @@
+---
+title: Inspectors
+sidebar_position: 4
+---
+
+An inspector is the property panel shown in the sidebar's **Properties** section for the currently selected layer. Each layer `type` has exactly one registered inspector component, discovered from `packages/app/src/editor/inspectors/` (see [Extension architecture](./extension-architecture.mdx)). This page covers the inspector contract and the five built-in inspectors, one per layer type.
+
+## The inspector contract
+
+`components/inspector-host.tsx` looks up the inspector registered for the selected layer's `type` and renders it with:
+
+```ts
+interface InspectorProps<L extends Layer = Layer> {
+  layer: L;
+  onChange(patch: Partial<L>, options?: { commit?: boolean }): void;
+  ctx: ToolContext;
+}
+```
+
+`onChange` patches the layer and pushes the result through the document history:
+
+- `commit: true` (the **default**) — a discrete edit becomes its own undo entry. Used for things like a number field's blur/Enter, a color pick, or a checkbox toggle.
+- `commit: false` — the change is *streamed* (`ctx.replace`) rather than committed, for continuous input like a slider drag. The caller is expected to have opened one undo entry with `ctx.beginGesture()` first; every subsequent `commit: false` call coalesces into that same entry until the gesture ends.
+
+When no inspector is registered for a layer's type, `InspectorHost` shows a plain "No inspector registered" message instead of crashing — a half-built extension wave still renders.
+
+## Shared building blocks
+
+All five built-in inspectors are composed from `components/inspector-ui.tsx`:
+
+- `Field` / `Row` — a labeled row (a `<label>` vs. a plain `<div>` — `Row` is used when the control is a button, since a `<label>` would otherwise steal the button's accessible name).
+- `NumberField` — a numeric input that commits exactly one undo entry per discrete edit (blur, Enter, or a single arrow-key step). While focused it holds a local draft string so typing "250" doesn't collapse through 0/2/25 as commits, and a cleared/`NaN` draft reverts to the last valid value rather than committing 0.
+- `ColorPicker` — one swatch button per `PALETTE` entry (black/gold/white), plus an optional "none" (`∅`) swatch when `allowNone` is set (used by the path inspector's fill/stroke, which can each be null).
+- `ActionButton` — a full-width button for an inspector's "open a dialog" affordance (e.g. Pattern's Browse…, Image's Convert to vector…).
+
+## Built-in inspectors
+
+| Layer type | File | Fields |
+|---|---|---|
+| `shape` | `inspectors/shape.tsx` | Color, x, y, width, height, rotation (°) |
+| `text` | `inspectors/text.tsx` | Text content, font, color, size (mm), x, y, rotation (°) |
+| `path` | `inspectors/path.tsx` | Fill (or none), stroke (or none), stroke width (mm), closed |
+| `image` | `inspectors/image.tsx` | x, y, width, height, "Convert to vector…" |
+| `pattern` | `inspectors/pattern.tsx` | "Browse…" (pattern picker), color, one slider per pattern param |
+
+### Shape
+
+Rect/ellipse layers get position, size, and rotation fields plus a `ColorPicker`. All geometry fields are plain `NumberField`s — the same fields Select's resize handles write to, so dragging a handle and typing a width produce identical patches.
+
+### Text
+
+Adds a `<textarea>` for the multi-line content and a font `<select>` populated from `CURATED_FONTS` (see [Fonts](./fonts.mdx)). If the layer's current `fontFamily` isn't one of the curated options — e.g. a hand-edited JSON import, or the demo document's generic `sans-serif` — it's kept as a selectable, synthesized option rather than silently swapped out. Picking a font calls `ensureFont()` and requests a repaint once the real face has actually loaded, so the canvas doesn't stay stuck on the fallback face.
+
+### Path
+
+Fill and stroke each use `ColorPicker` with `allowNone`, since a path can be fill-only (closed shapes from the pen tool or a trace) or stroke-only (open paths). Node/handle positions are **not** editable here — they're edited directly on the canvas by dragging with the Select tool (Alt breaks the mirrored-handle constraint), which the inspector notes in a caption.
+
+### Image
+
+Only geometry (x/y/width/height) is editable — an image layer is a design-time raster reference, not a manufacturable layer. Its one real action is **Convert to vector…**, which opens the [trace dialog](./add-actions-and-dialogs.mdx#dialogs-built-in-dialogs-trace-dialog) (disabled, with an explanatory tooltip, if no `trace` dialog is registered — see [Image tracing](./image-tracing.mdx)).
+
+### Pattern
+
+Shows the current pattern's display name behind a **Browse…** button that opens the [pattern picker](./add-actions-and-dialogs.mdx#dialogs-built-in-dialogs-pattern-picker-dialog) (disabled if that dialog isn't registered), a `ColorPicker`, and one `<input type="range">` per `PatternParamDef` the pattern declares (see [Patterns → Generator contract](../patterns/generator-contract.mdx)).
+
+Each slider follows the same lazy-gesture pattern as Select's drag: the first `onChange` of a scrub opens one undo entry (`ctx.beginGesture()`), every subsequent tick of the same drag streams `onChange(patch, { commit: false })`, and releasing the pointer/key just ends the scrub locally — there is no trailing commit, since that would double up the entry `beginGesture` already opened.
+
+:::note
+Registering a new layer type's inspector is a one-file addition: create `inspectors/my-type.tsx` and call `registerInspector('my-type', MyInspector)`. See [Adding an inspector](./extension-architecture.mdx#adding-an-inspector).
+:::

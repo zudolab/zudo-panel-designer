@@ -1,0 +1,79 @@
+---
+title: Add-Actions & Dialogs
+sidebar_position: 5
+---
+
+Two more self-registering extension kinds round out the toolbar: **add-actions**, the "Add …" buttons at the bottom of the left toolbar, and **dialogs**, the modal surfaces they (and inspectors) open. Both are discovered from `packages/app/src/editor/add-actions/` and `packages/app/src/editor/dialogs/` respectively — see [Extension architecture](./extension-architecture.mdx).
+
+## Add-actions
+
+An add-action is the simplest extension kind:
+
+```ts
+interface AddAction {
+  id: string;
+  label: string;
+  icon?: string;
+  run(ctx: ToolContext): void;
+}
+```
+
+`components/toolbar.tsx` renders one button per registered action, below a divider under the tool buttons, in registration order. Clicking a button just calls `action.run(ctx)`.
+
+| Add-action | File | Behavior |
+|---|---|---|
+| Add rectangle | `add-actions/add-rect.ts` | Commits a new `shape` layer (rect) sized/positioned relative to the panel, selects it. |
+| Add ellipse | `add-actions/add-ellipse.ts` | Same as above, `shape: 'ellipse'`. |
+| Add pattern… | `add-actions/add-pattern.ts` | Opens the [pattern picker dialog](#dialogs-built-in-dialogs-pattern-picker-dialog) with no props — the dialog itself adds the layer once a pattern is chosen. |
+| Add image… | `add-actions/add-image.ts` | Opens a transient `<input type="file">`, reads the file as a data URL, probes its natural size to fit the panel (max 80% width / 50% height), then commits an `image` layer. |
+
+Add rectangle/ellipse both snap their initial geometry to the 0.1mm grid and cap their default width at `min(20mm, panelWidth/2)` so a freshly added shape is never larger than the panel it lands on.
+
+## Dialogs
+
+A dialog is a registered `{ id, component }` pair rendered by `components/dialog-host.tsx`, which is mounted once at the root of the Editor and subscribes to a tiny observable open/close store:
+
+```ts
+interface DialogModule<P = unknown> {
+  id: string;
+  component: ComponentType<DialogProps<P>>;
+}
+interface DialogProps<P = unknown> {
+  props: P;
+  close(): void;
+  ctx: ToolContext;
+}
+```
+
+Because the store lives outside React (`openDialog`/`closeDialog` in `registry/dialogs.ts`), anything can open a dialog — including a tool's pointer handler, which is not a React component. `DialogHost` renders the open dialog's component inside a `role="dialog" aria-modal="true"` backdrop; clicking the backdrop (but not the dialog body itself, which stops propagation) closes it.
+
+### Built-in dialogs
+
+| Dialog id | File | Opened from |
+|---|---|---|
+| `shortcuts` | `dialogs/shortcuts.tsx` | Header's **?** button. |
+| `pattern-picker` | `dialogs/pattern-picker.tsx` | Pattern inspector's **Browse…**, or the **Add pattern…** add-action. |
+| `trace` | `dialogs/trace.tsx` | Image inspector's **Convert to vector…**. |
+
+#### Shortcuts dialog
+
+A static reference table of every keyboard/mouse shortcut in the app (tool letters, zoom keys, undo/redo, delete, nudge, Esc) — the concrete example the README points to for how a dialog is built.
+
+#### Pattern picker dialog
+
+A responsive grid of pattern thumbnails, one card per entry in `PATTERN_GENERATORS` (see [Patterns → Built-in catalog](../patterns/built-in-patterns.mdx)), each rendered with `renderPatternThumb`. It opens two ways, both resolving to a single `ctx.commit()` (one undo entry) before closing:
+
+- **With `{ layerId }`** (from the pattern inspector) — clicking a card swaps that existing pattern layer's `patternType` and resets its `params` to the new pattern's defaults.
+- **With no props** (from the Add pattern… add-action) — clicking a card creates a brand-new pattern layer on top of the stack and selects it.
+
+Each thumbnail is drawn with a `useLayoutEffect` (not `useEffect`) so it's sized and painted before the browser's first paint frame — otherwise the `<canvas>` would flash its default 300×150 box for one frame and the grid would visibly jump.
+
+#### Trace dialog
+
+The image-to-vector workflow — see [Image tracing](./image-tracing.mdx) for the full pipeline it drives. In outline: it decodes the source image layer, downscales and traces it to an SVG (debounced 250ms after any option change), previews that SVG in an `<img>` (never `dangerouslySetInnerHTML`, so a hostile trace result can't execute embedded script), and on **Apply** converts the SVG into `PathLayer`s, inserts them directly above the source image, hides the source image (rather than deleting it — it stays as a hidden design-time reference), and selects the first traced layer. All of that is one `ctx.commit()`.
+
+Trace options exposed in the dialog: a **3-color palette** toggle (quantize straight to the fixed panel palette vs. a free 2–8 color count), **min shape outline** (drops small traced regions below this pixel threshold), and **blur radius** (pre-blur before tracing, to smooth noisy source rasters).
+
+:::tip
+Both the pattern and image inspectors check for their dialog's registration (`getDialog('pattern-picker')` / `getDialog('trace')`) and disable their trigger button — with an explanatory tooltip — if it isn't registered yet. This lets an inspector ship before its dialog does without a broken button.
+:::

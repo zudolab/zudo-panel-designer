@@ -1,0 +1,87 @@
+---
+title: Built-in Catalog
+sidebar_position: 3
+---
+
+`packages/patterns/src/patterns.ts` ships twelve built-in patterns, registered in `PATTERN_GENERATORS` in the exact order below. Every pattern follows the [generator contract](./generator-contract.mdx): deterministic, mm-space, and clamped through `resolveParam` against the ranges listed here. `pitch`/`cell`/`size`/`width`/`lineWidth`/`radius`/`amplitude`/`wavelength` params are all in millimetres; `count` is a unitless ray count; `centerY` is a unitless 0–1 fraction of the panel height.
+
+## Parameter reference
+
+| Pattern (`name`) | Draw style | Parameters (`key` — range, step, default) |
+|---|---|---|
+| Dot Grid (`dot-grid`) | fill | `pitch` 2–15mm, step 0.5, default 5; `radius` 0.2–4mm, step 0.1, default 1 |
+| Diagonal Stripes (`diag-stripes`) | stroke | `pitch` 2–20mm, step 0.5, default 6; `lineWidth` 0.3–10mm, step 0.1, default 2 |
+| Grid Lines (`grid-lines`) | stroke | `pitch` 2–15mm, step 0.5, default 5; `lineWidth` 0.1–3mm, step 0.05, default 0.4 |
+| Concentric Circles (`concentric-circles`) | stroke | `pitch` 1–15mm, step 0.5, default 4; `lineWidth` 0.1–4mm, step 0.05, default 0.6; `centerY` 0–1, step 0.05, default 0.5 |
+| Hex Lattice (`hex-lattice`) | stroke | `cell` 2–20mm, step 0.5, default 6; `lineWidth` 0.1–3mm, step 0.05, default 0.5 |
+| Checker (`checker`) | fill | `cell` 1–20mm, step 0.5, default 5 |
+| Wave Lines (`wave-lines`) | stroke | `pitch` 2–15mm, step 0.5, default 5; `amplitude` 0.5–8mm, step 0.25, default 1.5; `wavelength` 3–30mm, step 1, default 12; `lineWidth` 0.1–3mm, step 0.05, default 0.6 |
+| Crosshatch (`crosshatch`) | stroke | `pitch` 2–20mm, step 0.5, default 7; `lineWidth` 0.1–4mm, step 0.05, default 0.5 |
+| Radial Burst (`radial-burst`) | stroke | `count` (rays) 8–96, step 2, default 36; `lineWidth` 0.1–3mm, step 0.05, default 0.5; `centerY` 0–1, step 0.05, default 0.5; `innerRadius` 0–30mm, step 0.5, default 4 |
+| Brick (`brick`) | stroke | `brickW` 3–30mm, step 0.5, default 12; `brickH` 2–15mm, step 0.5, default 5; `lineWidth` 0.1–3mm, step 0.05, default 0.4 |
+| Diamond Lattice (`diamond-lattice`) | stroke | `size` 3–30mm, step 0.5, default 8; `lineWidth` 0.1–3mm, step 0.05, default 0.5 |
+| Scallops (`scallops`) | stroke | `width` 3–30mm, step 0.5, default 10; `lineWidth` 0.1–3mm, step 0.05, default 0.5 |
+
+:::note
+`resolveParam` clamps every value into its declared `[min, max]` before a generator uses it, so a stale or hand-edited `params` value (e.g. from an imported order JSON) can never send a draw loop negative or non-finite. See [Generator contract → Param clamping](./generator-contract.mdx#param-clamping).
+:::
+
+## Pattern notes
+
+### Dot Grid
+
+A grid of filled circles, `radius` mm each, spaced `pitch` mm apart on both axes and centered on the panel.
+
+### Diagonal Stripes
+
+Parallel 45°-diagonal strokes spanning the full panel diagonal (`width + height`), so the field is always fully covered regardless of aspect ratio, spaced `pitch` mm apart.
+
+### Grid Lines
+
+A plain rectilinear grid: vertical strokes every `pitch` mm, then horizontal strokes every `pitch` mm, both centered on the panel.
+
+### Concentric Circles
+
+Rings expanding outward from a center point at `(width/2, height × centerY)`, spaced `pitch` mm apart, out to the corner farthest from that center — so the rings always fully cover the panel even when `centerY` is off-center.
+
+### Hex Lattice
+
+A honeycomb of pointy-top hexagon outlines, `cell` mm across, laid out on an offset-row lattice (`w = √3 × r` flat-to-flat column spacing, `1.5 × r` row spacing, alternating rows offset by half of `w`).
+
+### Checker
+
+A checkerboard of filled `cell` mm squares — the classic two-color grid pattern, drawn as filled squares only (the "off" squares are the panel's base color showing through).
+
+### Wave Lines
+
+Horizontal sine-wave rows, `pitch` mm apart, each with `amplitude` mm of vertical swing and a `wavelength` mm period. The sine phase is anchored to the panel's horizontal center so the waves stay visually centered at any panel width.
+
+### Crosshatch
+
+Two diagonal-stripe passes at right angles to each other (45° and 135°), both spaced `pitch` mm apart — Diagonal Stripes doubled and mirrored.
+
+### Radial Burst
+
+`count` straight rays from a center point at `(width/2, height × centerY)`, starting `innerRadius` mm out from the center (leaving a clear inner circle) and extending to the panel's far corner.
+
+### Brick
+
+A running-bond brick course pattern: horizontal courses `brickH` mm tall, vertical joints every `brickW` mm, with alternating rows offset by half a brick width — the same offset convention real brickwork uses.
+
+### Diamond Lattice
+
+An argyle-style field of diamond outlines (`size` mm point-to-point), laid out on two interleaved sublattices stepped by `size/2` so adjacent diamonds share edges and tessellate seamlessly, instead of leaving gaps at the corners.
+
+### Scallops
+
+Overlapping lower-semicircle arcs (`width` mm each), nested row to row like fish scales — each row offset horizontally by half a scallop width, and rows stacked one radius (half a scallop width) apart vertically.
+
+## Thumbnails
+
+`packages/patterns/src/thumbnail.ts` renders the picker card preview shown in the [pattern picker dialog](../editor/add-actions-and-dialogs.mdx#dialogs-built-in-dialogs-pattern-picker-dialog). `renderPatternThumb(canvas, gen, sizePx)`:
+
+1. Sizes the canvas's backing store for the current `devicePixelRatio` while keeping its CSS box pinned to `sizePx`.
+2. Scales the context so a fixed **30mm** window (`THUMB_SPAN_MM`) fills the backing store exactly — every pattern's thumbnail frames the same physical span, so patterns with very different `pitch`/`cell` sizes stay visually comparable at a glance.
+3. Fills the background black (`#151515`, mirroring the panel's soldermask base) and calls the generator's `draw()` with a fixed foreground (`#d4af37`, gold — mirroring exposed copper) and its own `defaultParams()`.
+
+The two thumbnail colors are literal constants local to `thumbnail.ts`, not imported from `@zpd/core`'s `PALETTE` — a deliberate duplication so the `@zpd/patterns` package stays self-contained and dependency-free from `@zpd/core`.
