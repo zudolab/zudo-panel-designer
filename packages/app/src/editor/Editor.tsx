@@ -55,6 +55,9 @@ export function Editor() {
   const [camera, setCameraState] = useState<Camera | null>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   const [spaceDown, setSpaceDown] = useState(false);
+  // "Show content outside the panel" (issue #43) — default ON, no
+  // persistence (matches the house style: no storage layer in this app).
+  const [showOutsidePanel, setShowOutsidePanel] = useState(true);
   const [, setAssetVersion] = useState(0); // bump repaints when an image loads
   const [, setRepaintNonce] = useState(0); // tools ask for repaints via ctx
 
@@ -201,6 +204,7 @@ export function Editor() {
       selectedId,
       images: imagesRef.current,
       showNodes: activeToolId === 'select' && selectedLayer?.type === 'path',
+      showOutsidePanel,
       renderDraft: activeTool?.renderDraft ? (d) => activeTool.renderDraft?.(d, ctx) : undefined,
     });
   });
@@ -391,6 +395,8 @@ export function Editor() {
           selectedId={selectedId}
           selectedLayer={selectedLayer}
           activeToolId={activeToolId}
+          showOutsidePanel={showOutsidePanel}
+          onShowOutsidePanelChange={setShowOutsidePanel}
         />
       </div>
       <DialogHost ctx={ctx} />

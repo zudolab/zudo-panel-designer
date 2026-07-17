@@ -16,16 +16,22 @@ import {
 import { patternByName } from '@zpd/patterns';
 import type { Camera } from './camera';
 import { ensureFont } from './fonts';
+import { outsidePanelRegion } from './outside-panel-region';
 import type { DraftRenderContext, PanelDims } from './types';
 
 const WORKSPACE_BG = '#26282c';
 const SELECT_COLOR = '#4da3ff';
 const HANDLE_SIZE = 8;
+// Dimmed, not full opacity: in zpd the area beyond the panel edge is
+// physically cut off in fabrication, so dimming encodes "this will not be
+// manufactured" — don't "correct" this into full opacity later (issue #43).
+const OUTSIDE_GHOST_ALPHA = 0.35;
 
 export interface RenderExtras {
   selectedId: string | null;
   images: Map<string, HTMLImageElement>;
   showNodes: boolean; // draw path anchors/handles for the selected path layer
+  showOutsidePanel: boolean; // ghost-paint off-panel layer content (issue #43)
   // The active tool's draft preview hook (pen path, marquee, …). Drawn last,
   // unclipped, on top of the selection chrome.
   renderDraft?: (draft: DraftRenderContext) => void;
@@ -255,6 +261,49 @@ export function renderScene(
   ctx.fillStyle = PALETTE[0].hex;
   ctx.fillRect(cam.offsetX, cam.offsetY, panelPxW, panelPxH);
   ctx.restore();
+
+  // ghost pass: off-panel layer content at low alpha (issue #43). Runs BEFORE
+  // the clipped in-panel pass below, using its own disjoint even-odd clip —
+  // see outside-panel-region.ts for which layers are eligible.
+  const outsideRegion = outsidePanelRegion(
+    extras.showOutsidePanel,
+    doc.layers,
+    { cssW, cssH },
+    cam,
+    panel,
+  );
+  if (outsideRegion) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(
+      outsideRegion.outerRect.x,
+      outsideRegion.outerRect.y,
+      outsideRegion.outerRect.width,
+      outsideRegion.outerRect.height,
+    ); // whole viewport
+    ctx.rect(
+      outsideRegion.innerRect.x,
+      outsideRegion.innerRect.y,
+      outsideRegion.innerRect.width,
+      outsideRegion.innerRect.height,
+    ); // minus the panel
+    // The even-odd clip is load-bearing, not cosmetic: outerRect + innerRect
+    // under 'evenodd' clips to exactly the OUTSIDE region, disjoint from the
+    // panel-clipped pass below — every pixel is painted by exactly one pass.
+    // A plain full-viewport clip (no innerRect subtraction) would also paint
+    // this ghost content UNDER the panel, so any layer with opacity < 1
+    // inside the panel would double-composite against its own full-alpha
+    // draw — a real Porter-Duff alpha bug hit by a reference implementation
+    // of this feature. Do not "simplify" this into a single rect.
+    ctx.clip('evenodd');
+    ctx.globalAlpha = OUTSIDE_GHOST_ALPHA;
+    ctx.translate(cam.offsetX, cam.offsetY);
+    ctx.scale(cam.pxPerMm, cam.pxPerMm);
+    for (const layer of outsideRegion.ghostLayers) {
+      drawLayer(ctx, layer, panel, extras.images);
+    }
+    ctx.restore();
+  }
 
   // all layers, clipped to the panel, drawn in mm space via one transform
   ctx.save();
