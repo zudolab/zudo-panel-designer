@@ -1,5 +1,7 @@
+import { useRef, type ChangeEvent } from 'react';
 import { createDefaultDoc } from '@zpd/core';
 import { downloadPanelConfig } from '../download';
+import { importJsonFile } from '../import';
 import { replaceDoc } from '../replace-doc';
 import type { ToolContext } from '../types';
 import type { SaveStatus } from '../use-autosave';
@@ -18,6 +20,15 @@ export interface HeaderProps {
 }
 
 export function Header({ ctx, zoomPercent, canUndo, canRedo, saveStatus, onFit, onZoomStep }: HeaderProps) {
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset so picking the same file again still fires a change event.
+    e.target.value = '';
+    if (file) void importJsonFile(file, ctx);
+  };
+
   const handleNewPanel = async () => {
     const confirmed = await confirmDialog({
       title: 'Start a new panel?',
@@ -63,6 +74,20 @@ export function Header({ ctx, zoomPercent, canUndo, canRedo, saveStatus, onFit, 
         <ChromeButton title="Keyboard shortcuts" onClick={() => ctx.openDialog('shortcuts')}>
           ?
         </ChromeButton>
+        <ChromeButton
+          className="border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
+          title="Import panel config JSON"
+          onClick={() => importInputRef.current?.click()}
+        >
+          ⬆ JSON
+        </ChromeButton>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={handleImportFileChange}
+        />
         <ChromeButton
           className="border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
           title="Download panel config JSON"
