@@ -6,17 +6,16 @@ import { createPortal } from 'react-dom';
 import { useSyncExternalStore } from 'react';
 import { Toast } from './toast';
 import { dismissToast, getToasts, subscribeToasts } from '../../registry/toasts';
+import { Z_INDEX } from '../../z-index';
 
-// z-[60]: above the dialog backdrop (z-50, see dialog-host.tsx). No shared
-// z-index token exists yet — composer-parity/modal-infra (#65) may introduce
-// one; reconcile then.
 export function ToastContainer() {
   const toasts = useSyncExternalStore(subscribeToasts, getToasts, getToasts);
   if (toasts.length === 0) return null;
 
   return createPortal(
     <div
-      className="pointer-events-none fixed left-1/2 top-4 z-[60] flex -translate-x-1/2 flex-col items-center gap-2"
+      className="pointer-events-none fixed left-1/2 top-4 flex -translate-x-1/2 flex-col items-center gap-2"
+      style={{ zIndex: Z_INDEX.toast }}
       aria-label="Notifications"
     >
       {toasts.map((toast) => (

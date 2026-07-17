@@ -32,15 +32,13 @@ import {
   type Ref,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { Z_INDEX } from '../z-index';
 
 // Gap between trigger edge and tooltip edge (px, fixed by design).
 const GAP = 6;
 // Minimum viewport margin to keep the tooltip on-screen (px).
 const VIEWPORT_MARGIN = 8;
-// Above dialog-host's modal backdrop (z-50) so a tooltip stays visible over
-// an open dialog. Local constant — coordinate with a shared z-index token
-// module if/when the modal-infra topic lands one.
-const TOOLTIP_Z_INDEX = 60;
+const TOOLTIP_Z_INDEX = Z_INDEX.tooltip;
 
 export type TooltipPlacement = 'top' | 'right' | 'bottom' | 'left';
 
@@ -171,7 +169,13 @@ function computePosition(
   return { top: pos.top, left: pos.left, actualPlacement: placement };
 }
 
-export function Tooltip({ content, placement = 'top', delay = 300, disabled = false, children }: TooltipProps) {
+export function Tooltip({
+  content,
+  placement = 'top',
+  delay = 300,
+  disabled = false,
+  children,
+}: TooltipProps) {
   const tooltipId = useId();
   const triggerRef = useRef<Element | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -179,7 +183,9 @@ export function Tooltip({ content, placement = 'top', delay = 300, disabled = fa
   const rafRef = useRef<number | null>(null);
 
   const [visible, setVisible] = useState(false);
-  const [position, setPosition] = useState<(Position & { actualPlacement: TooltipPlacement }) | null>(null);
+  const [position, setPosition] = useState<
+    (Position & { actualPlacement: TooltipPlacement }) | null
+  >(null);
 
   const clearShowTimer = useCallback(() => {
     if (showTimerRef.current !== null) {
@@ -245,7 +251,9 @@ export function Tooltip({ content, placement = 'top', delay = 300, disabled = fa
 
     return () => {
       window.removeEventListener('resize', repositionRaf);
-      window.removeEventListener('scroll', repositionRaf, { capture: true } as EventListenerOptions);
+      window.removeEventListener('scroll', repositionRaf, {
+        capture: true,
+      } as EventListenerOptions);
     };
   }, [visible, repositionRaf]);
 
@@ -312,7 +320,8 @@ export function Tooltip({ content, placement = 'top', delay = 300, disabled = fa
   } else {
     // React 19 passes `ref` as a regular prop; fall back to the legacy
     // `element.ref` field so this works either side of the 18 → 19 boundary.
-    const childRef = (childProps as { ref?: Ref<unknown> }).ref ?? (children as { ref?: Ref<unknown> }).ref;
+    const childRef =
+      (childProps as { ref?: Ref<unknown> }).ref ?? (children as { ref?: Ref<unknown> }).ref;
 
     // Compose with (not overwrite) any handlers the child already carries,
     // and merge (not replace) any existing aria-describedby.
