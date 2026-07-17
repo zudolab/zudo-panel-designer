@@ -32,6 +32,7 @@ import { readDoc } from './doc-store';
 import { normalizeSelectedIds } from './selection';
 import { installTestBridge } from './test-bridge';
 import { useAutosave } from './use-autosave';
+import { useClipboard } from './use-clipboard';
 import { useDocHistory } from './use-doc-history';
 import { useGuideDrag, type GuideDragDeps } from './use-guide-drag';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from './types';
@@ -167,7 +168,8 @@ export function Editor() {
         const id = readSelectedId();
         return docRef.current.layers.find((l) => l.id === id) ?? null;
       },
-      toMm: (screenPt) => (cameraRef.current ? unproject(cameraRef.current, screenPt) : { x: 0, y: 0 }),
+      toMm: (screenPt) =>
+        cameraRef.current ? unproject(cameraRef.current, screenPt) : { x: 0, y: 0 },
       toScreen: (mmPt) => (cameraRef.current ? project(cameraRef.current, mmPt) : { x: 0, y: 0 }),
       commit,
       replace,
@@ -178,9 +180,7 @@ export function Editor() {
       select: (id) => setRawSelectedIds(id === null ? [] : [id]),
       selectIds: (ids) => setRawSelectedIds(ids),
       setCamera: (next) =>
-        setCameraState((prev) =>
-          typeof next === 'function' ? (prev ? next(prev) : prev) : next,
-        ),
+        setCameraState((prev) => (typeof next === 'function' ? (prev ? next(prev) : prev) : next)),
       setActiveTool: setActiveToolId,
       requestRepaint: () => setRepaintNonce((n) => n + 1),
       evictImageCache: (layers) => reconcileImageCache(imagesRef.current, layers),
@@ -189,6 +189,11 @@ export function Editor() {
     }),
     [commit, replace, reset, beginGesture, undo, redo, readSelectedId, readSelectedIds],
   );
+
+  // Clipboard (#74): Cmd/Ctrl+C/X/D/A (wired into the keydown fallback below)
+  // plus its own self-contained window `paste` listener — the SOLE Cmd/Ctrl+V
+  // path (see use-clipboard.ts; deliberately no 'v' case in the switch below).
+  const clipboard = useClipboard(ctx);
 
   // Guide drag controller (#54): the cross-component ruler->canvas pointer
   // routing. Deps read the same live refs as ctx so the window listeners never
@@ -220,7 +225,10 @@ export function Editor() {
   const fitView = useCallback(() => {
     const el = containerRef.current;
     if (!el || el.clientWidth === 0) return;
-    const cam = fit(panel.widthMm, panel.heightMm, { width: el.clientWidth, height: el.clientHeight });
+    const cam = fit(panel.widthMm, panel.heightMm, {
+      width: el.clientWidth,
+      height: el.clientHeight,
+    });
     setFitScale(cam.pxPerMm);
     setCameraState(cam);
   }, [panel.widthMm, panel.heightMm]);
@@ -321,9 +329,7 @@ export function Editor() {
         if (!ids.has(l.id) || l.type === 'pattern') return l;
         moved = true;
         const patch =
-          l.type === 'path'
-            ? translatePathLayer(l, dx, dy)
-            : { x: l.x + dx, y: l.y + dy };
+          l.type === 'path' ? translatePathLayer(l, dx, dy) : { x: l.x + dx, y: l.y + dy };
         return { ...l, ...patch } as Layer;
       });
       if (!moved) return; // pattern-only selection → no phantom undo entry
@@ -348,6 +354,29 @@ export function Editor() {
         preventDefault: () => e.preventDefault(),
       };
       if (getTool(activeToolId)?.onKeyDown?.(keyEvent, ctx) === true) return;
+
+      // Clipboard (#74): copy/cut/duplicate/select-all. No 'v' case here —
+      // paste is the window `paste` event, owned entirely by use-clipboard.ts.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+        switch (e.key.toLowerCase()) {
+          case 'c':
+            e.preventDefault();
+            clipboard.handleCopy();
+            return;
+          case 'x':
+            e.preventDefault();
+            clipboard.handleCut();
+            return;
+          case 'd':
+            e.preventDefault();
+            clipboard.handleDuplicate();
+            return;
+          case 'a':
+            e.preventDefault();
+            clipboard.handleSelectAll();
+            return;
+        }
+      }
 
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
@@ -394,30 +423,27 @@ export function Editor() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [activeToolId, ctx, commit, undo, redo, readSelectedIds]);
+  }, [activeToolId, ctx, commit, undo, redo, readSelectedIds, clipboard]);
 
   // --- pointer routing to the active (or Space-override pan) tool ---------
   const effectiveToolId = spaceDown ? 'pan' : activeToolId;
-  const toPointer = useCallback(
-    (e: ReactPointerEvent<HTMLCanvasElement>): ToolPointerEvent => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      const mm = cameraRef.current ? unproject(cameraRef.current, screen) : { x: 0, y: 0 };
-      return {
-        screen,
-        mm,
-        button: e.button,
-        buttons: e.buttons,
-        altKey: e.altKey,
-        shiftKey: e.shiftKey,
-        metaKey: e.metaKey,
-        ctrlKey: e.ctrlKey,
-        pointerId: e.pointerId,
-        preventDefault: () => e.preventDefault(),
-      };
-    },
-    [],
-  );
+  const toPointer = useCallback((e: ReactPointerEvent<HTMLCanvasElement>): ToolPointerEvent => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const mm = cameraRef.current ? unproject(cameraRef.current, screen) : { x: 0, y: 0 };
+    return {
+      screen,
+      mm,
+      button: e.button,
+      buttons: e.buttons,
+      altKey: e.altKey,
+      shiftKey: e.shiftKey,
+      metaKey: e.metaKey,
+      ctrlKey: e.ctrlKey,
+      pointerId: e.pointerId,
+      preventDefault: () => e.preventDefault(),
+    };
+  }, []);
 
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!cameraRef.current) return;
