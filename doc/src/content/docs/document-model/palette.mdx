@@ -1,0 +1,41 @@
+---
+title: The 3-color palette
+description: The fixed 3-color palette and its physical PCB meaning, from palette.ts.
+sidebar_position: 3
+---
+
+## A fixed 3-entry palette
+
+Every color in a zpd document is one of exactly three fixed entries — there is no custom-color mode. The physical PCB panel finish decides these; they are not arbitrary UI colors:
+
+```ts
+type ColorIndex = 0 | 1 | 2;
+```
+
+| Index | Name | Hex | PCB meaning |
+| --- | --- | --- | --- |
+| `0` | black | `#151515` | Soldermask |
+| `1` | gold | `#d4af37` | Exposed copper, ENIG-plated |
+| `2` | white | `#f2f0e9` | Silkscreen |
+
+```ts
+const PALETTE: readonly PaletteEntry[] = [
+  { index: 0, name: 'black', hex: '#151515', note: 'soldermask' },
+  { index: 1, name: 'gold', hex: '#d4af37', note: 'exposed copper (ENIG)' },
+  { index: 2, name: 'white', hex: '#f2f0e9', note: 'silkscreen' },
+];
+```
+
+<Note title="Hex is display-only; the name is the contract">
+  The hex values are display approximations for the editor UI — they are chosen to look right on screen, not to match an exact ink/plating swatch. The color *names* (`'black' | 'gold' | 'white'`) are the actual contract that other packages (patterns, serialize, app) rely on, including the `palette` field written into an exported `PanelConfig`.
+</Note>
+
+## Lookup helper
+
+```ts
+function paletteEntry(index: ColorIndex): PaletteEntry {
+  return PALETTE[index];
+}
+```
+
+Every colorable layer field (`ShapeLayer.color`, `PatternLayer.color`, `TextLayer.color`, `PathLayer.fill` / `PathLayer.stroke`) stores a `ColorIndex`, not a hex string or a name — `paletteEntry` is the one place that resolves an index to its display hex and physical-layer note.

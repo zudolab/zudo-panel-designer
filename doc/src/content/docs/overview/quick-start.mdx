@@ -1,0 +1,35 @@
+---
+title: Quick start
+description: Requirements, dev commands, and ports for running zpd locally.
+sidebar_position: 10
+---
+
+## Requirements
+
+- Node.js >= 22
+- pnpm — version is pinned via the root `package.json` `packageManager` field; run it through `corepack` rather than a separately installed pnpm.
+
+## Dev commands
+
+All commands run from the repo root and operate across the whole workspace unless noted:
+
+| Command | What it does |
+| --- | --- |
+| `pnpm install` | Install all workspace dependencies. |
+| `pnpm dev` | Start the app dev server at **http://localhost:15200**. |
+| `pnpm build` | Build all packages (`pnpm -r build`). |
+| `pnpm typecheck` | Typecheck all packages (`pnpm -r typecheck`). |
+| `pnpm lint` | Lint the whole repo with ESLint. |
+| `pnpm format` | Format the whole repo with Prettier. |
+| `pnpm test` | Run the unit test suite with Vitest. |
+| `pnpm test:e2e` | Run the app's Playwright e2e suite. |
+| `pnpm deploy` | Deploy `packages/app/dist` to Cloudflare Workers as static assets. Requires a build to already exist. |
+| `pnpm deploy:dry` | Validate `wrangler.toml` without deploying. Needs no Cloudflare credentials. |
+
+<Tip>
+  `pnpm dev` only starts the editor app (`@zpd/app`, port 15200). `@zpd/core` and `@zpd/patterns` have no dev server of their own — they are libraries consumed by the app, checked via `pnpm typecheck` and `pnpm test`.
+</Tip>
+
+## Deployment
+
+The app deploys as Cloudflare Workers static assets (not Cloudflare Pages). `.github/workflows/production-deploy.yml` builds and deploys on every push to `main`; `.github/workflows/pr-checks.yml` runs the credential-free `pnpm deploy:dry` on every PR.

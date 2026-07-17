@@ -1,0 +1,31 @@
+---
+title: What is zpd
+description: What zudo-panel-designer is, what it produces, and how the monorepo is organized.
+sidebar_position: 1
+---
+
+## What zpd is
+
+zpd (zudo-panel-designer) is a web app for designing **Takazudo Modular** blank PCB panels. You lay out a panel in the browser — shapes, patterns, vector paths, text, traced images — and download the result as a versioned order JSON called `PanelConfig`. That file is the deliverable: it is what gets sent off to fabricate the physical panel.
+
+There is no server-side project storage in stage 1 — the browser tab holds the working document, and `PanelConfig` is the portable, re-loadable snapshot of it.
+
+<Note title="Design-time vs. manufacturable data">
+  A panel is a stack of layers (see [Document State &amp; Layers](../document-model/document-state-and-layers.mdx)). Most layer types are directly manufacturable, but image layers are the exception — a raster image cannot be fabricated. It exists only as design-time reference; the panel is manufactured from the vector layers traced from it.
+</Note>
+
+## Monorepo layout
+
+| Directory | Package | Role |
+| --- | --- | --- |
+| `packages/core` | `@zpd/core` | The document model, geometry/ops, and undo/redo history. No UI, no rendering — pure data and functions. |
+| `packages/patterns` | `@zpd/patterns` | Panel pattern definitions (e.g. the default dot-grid pattern) consumed by `PatternLayer.patternType`. |
+| `packages/app` | `@zpd/app` (private) | The Vite + React one-page editor app end users interact with. |
+
+`@zpd/core` is intentionally UI-free: it is the source of truth for what a panel document *is* and how it can be edited, independent of how it gets rendered or which framework draws it. The document-model section of these docs describes that package in detail.
+
+## Where to go next
+
+- [Panel finishes &amp; sizing](./finishes-and-sizing.mdx) — the fixed product constraints (colors, widths, height) that every panel must fit.
+- [Quick start](./quick-start.mdx) — dev commands and ports for running zpd locally.
+- [Document Model](../document-model/index.mdx) — the full `DocState` / `Layer` data shape and its editing contracts.
