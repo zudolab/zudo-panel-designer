@@ -17,15 +17,15 @@ describe('HelpPanel', () => {
 
     expect(screen.getByText('Select')).toBeTruthy();
     expect(screen.getByText('V')).toBeTruthy();
-    expect(screen.getByText(/marquee-select/)).toBeTruthy();
+    expect(screen.getByText(/click empty space to deselect/)).toBeTruthy();
   });
 
   it('updates live when the active tool id changes', () => {
     const { rerender } = render(<HelpPanel activeToolId="select" />);
-    expect(screen.getByText(/marquee-select/)).toBeTruthy();
+    expect(screen.getByText(/click empty space to deselect/)).toBeTruthy();
 
     rerender(<HelpPanel activeToolId="pen" />);
-    expect(screen.queryByText(/marquee-select/)).toBeNull();
+    expect(screen.queryByText(/click empty space to deselect/)).toBeNull();
     expect(screen.getByText('Pen')).toBeTruthy();
     expect(screen.getByText('P')).toBeTruthy();
     expect(screen.getByText(/bezier handles/)).toBeTruthy();
