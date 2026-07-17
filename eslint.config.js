@@ -32,6 +32,18 @@ export default tseslint.config(
     },
   },
   {
+    // Root-level Node scripts (e.g. data-generation scripts run via `node`,
+    // not bundled) — need Node globals (console, process, fetch), not browser ones.
+    files: ['scripts/**/*.{js,mjs,cjs}'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
     files: ['packages/app/**/*.{ts,tsx}'],
     plugins: {
       'react-hooks': reactHooks,
