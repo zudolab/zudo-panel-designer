@@ -14,6 +14,7 @@ import {
   createHistory,
   redo as coreRedo,
   replace as coreReplace,
+  reset as coreReset,
   undo as coreUndo,
   type DocState,
   type HistoryState,
@@ -96,6 +97,9 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
     replace: (next) => {
       history = coreReplace(history, next);
     },
+    reset: (next) => {
+      history = coreReset(next);
+    },
     beginGesture: () => {
       beginGestureCalls += 1;
       history = coreBeginGesture(history);
@@ -117,6 +121,7 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
     requestRepaint: () => {
       repaintCalls += 1;
     },
+    evictImageCache: () => {},
     openDialog: () => {},
     closeDialog: () => {},
   };

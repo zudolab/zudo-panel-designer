@@ -3,12 +3,13 @@
 // over. Text is deliberately excluded here — it needs Canvas metrics
 // (measureTextBbox), which jsdom/node lack; shapes and paths cover the rule.
 import { describe, expect, it } from 'vitest';
-import { mergeBboxes, type Layer, type Rect, type ShapeLayer } from '@zpd/core';
+import { mergeBboxes, type ImageLayer, type Layer, type Rect, type ShapeLayer } from '@zpd/core';
 import {
   canRotate,
   CORNER_HANDLE_IDS,
   cornerHandleRects,
   multiResizeBbox,
+  reconcileImageCache,
   resizeHandleRects,
   ROTATE_HANDLE_OFFSET_PX,
   rotateHandleScreenPos,
@@ -246,5 +247,49 @@ describe('cornerHandleRects (#52 — corner handles ONLY for multi-selections)',
     expect(center('ne')).toEqual({ x: 30, y: 10 });
     expect(center('se')).toEqual({ x: 30, y: 20 });
     expect(center('sw')).toEqual({ x: 10, y: 20 });
+  });
+});
+
+// --- reconcileImageCache (#69 — whole-document replace) ---------------------
+
+function imageLayer(id: string, src: string): ImageLayer {
+  return { id, name: id, type: 'image', src, x: 0, y: 0, width: 10, height: 10 };
+}
+
+describe('reconcileImageCache', () => {
+  it('evicts an entry whose id no longer has an image layer in the next doc', () => {
+    const cache = new Map<string, { src: string }>([['a', { src: 'data:1' }]]);
+    reconcileImageCache(cache, []);
+    expect(cache.has('a')).toBe(false);
+  });
+
+  it('evicts a same-id entry when the src differs (a reused id must not keep a stale bitmap)', () => {
+    const cache = new Map<string, { src: string }>([['a', { src: 'data:old' }]]);
+    reconcileImageCache(cache, [imageLayer('a', 'data:new')]);
+    expect(cache.has('a')).toBe(false);
+  });
+
+  it('keeps a same-id, same-src entry untouched', () => {
+    const cached = { src: 'data:same' };
+    const cache = new Map<string, { src: string }>([['a', cached]]);
+    reconcileImageCache(cache, [imageLayer('a', 'data:same')]);
+    expect(cache.get('a')).toBe(cached);
+  });
+
+  it('ignores non-image layers when building the reconciliation set', () => {
+    const cache = new Map<string, { src: string }>([['a', { src: 'data:1' }]]);
+    const shapeLayer: Layer = {
+      id: 'a',
+      name: 'a',
+      type: 'shape',
+      shape: 'rect',
+      x: 0,
+      y: 0,
+      width: 5,
+      height: 5,
+      color: 1,
+    };
+    reconcileImageCache(cache, [shapeLayer]);
+    expect(cache.has('a')).toBe(false);
   });
 });

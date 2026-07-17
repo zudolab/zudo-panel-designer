@@ -34,9 +34,15 @@ export interface ToolContext {
 
   // document mutation, routed through the undo/redo history:
   //  - beginGesture() opens ONE undo entry, then stream replace() per move,
-  //  - commit() is a standalone atomic change (its own undo entry).
+  //  - commit() is a standalone atomic change (its own undo entry),
+  //  - reset() swaps the WHOLE document and clears past/future — for
+  //    whole-document replacement (New-panel, import-replace), where the
+  //    previous doc's undo history isn't meaningful for the next one. See
+  //    replace-doc.ts, the shared entry point that also clears selection and
+  //    evicts the stale image cache.
   commit(next: DocState): void;
   replace(next: DocState): void;
+  reset(next: DocState): void;
   beginGesture(): void;
   undo(): void;
   redo(): void;
@@ -50,6 +56,13 @@ export interface ToolContext {
 
   // ask the renderer to repaint (e.g. after a tool's own draft state changed)
   requestRepaint(): void;
+
+  // Evicts renderer image-cache entries not backed by a same-id, same-src
+  // image layer in `layers` — the cache stays Editor-local (Editor.tsx's
+  // imagesRef), this is the only way another module can invalidate it. Used
+  // by replace-doc.ts after a whole-document swap, where a fresh doc can
+  // legitimately reuse an id with a different src.
+  evictImageCache(layers: readonly Layer[]): void;
 
   openDialog(id: string, props?: unknown): void;
   closeDialog(): void;

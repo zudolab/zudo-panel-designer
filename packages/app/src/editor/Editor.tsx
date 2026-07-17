@@ -23,7 +23,7 @@ import {
 } from '@zpd/core';
 import { fit, project, unproject, zoomAt, type Camera } from './camera';
 import { installBrowserZoomGuard } from './browser-zoom-guard';
-import { renderScene } from './renderer';
+import { reconcileImageCache, renderScene } from './renderer';
 import { getTool, toolByShortcut } from './registry';
 import { closeDialog, openDialog } from './registry/dialogs';
 import { createDemoDoc } from './demo-doc';
@@ -50,7 +50,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export function Editor() {
-  const { doc, canUndo, canRedo, commit, replace, beginGesture, undo, redo } =
+  const { doc, canUndo, canRedo, commit, replace, reset, beginGesture, undo, redo } =
     useDocHistory(createDemoDoc());
   // Selection state (#44): the stored ids are RAW (exactly what select() /
   // selectIds() was given); every read derives the normalized view (de-duped,
@@ -161,6 +161,7 @@ export function Editor() {
       toScreen: (mmPt) => (cameraRef.current ? project(cameraRef.current, mmPt) : { x: 0, y: 0 }),
       commit,
       replace,
+      reset,
       beginGesture,
       undo,
       redo,
@@ -172,10 +173,11 @@ export function Editor() {
         ),
       setActiveTool: setActiveToolId,
       requestRepaint: () => setRepaintNonce((n) => n + 1),
+      evictImageCache: (layers) => reconcileImageCache(imagesRef.current, layers),
       openDialog,
       closeDialog,
     }),
-    [commit, replace, beginGesture, undo, redo, readSelectedId, readSelectedIds],
+    [commit, replace, reset, beginGesture, undo, redo, readSelectedId, readSelectedIds],
   );
 
   // Guide drag controller (#54): the cross-component ruler->canvas pointer
