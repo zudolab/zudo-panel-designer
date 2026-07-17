@@ -7,6 +7,7 @@
 import {
   duplicateLayersAbove,
   hitTestLayer,
+  mergeBboxes,
   mintId,
   movePathAnchor,
   movePathHandle,
@@ -15,6 +16,8 @@ import {
   resizeRotatedRect,
   rotatedRectAABB,
   scaleLayer,
+  snapAxis,
+  snapScalar,
   snapToGrid,
   translatePathLayer,
   type DocState,
@@ -22,6 +25,7 @@ import {
   type Pt,
   type Rect,
   type ResizeHandle,
+  type SnapOptions,
 } from '@zpd/core';
 import {
   canRotate,
@@ -50,6 +54,89 @@ const MARQUEE_FILL = 'rgba(77,163,255,0.10)';
 const MARQUEE_STROKE = 'rgba(77,163,255,0.9)';
 
 const snap = (v: number) => snapToGrid(v, SNAP_MM);
+
+// Catch radius for guides, in SCREEN px, converted to mm at the current zoom
+// (#55; core/snap.ts explicitly leaves this to the tool so the same guide
+// feels equally easy to hit whether zoomed in or out — core itself stays in
+// mm and has no notion of zoom).
+const GUIDE_SNAP_PX = 8;
+
+function snapOptions(ctx: ToolContext): SnapOptions {
+  return { gridMm: SNAP_MM, toleranceMm: GUIDE_SNAP_PX / ctx.camera.pxPerMm, guides: ctx.doc.guides };
+}
+
+// Union (rotated-AABB) bbox of a move gesture's targets, at their pointerdown
+// geometry — the candidate set snapAxis checks against guides. null when no
+// target has measurable bounds (never happens in practice; targets exclude
+// patterns, and every other layer type has a bbox).
+function targetsBbox(targets: readonly MoveTarget[], panel: PanelDims): Rect | null {
+  const rects: Rect[] = [];
+  for (const { orig } of targets) {
+    const bbox = layerBbox(orig, panel);
+    if (bbox) rects.push(rotatedRectAABB(bbox, layerRotation(orig)));
+  }
+  return rects.length ? mergeBboxes(rects) : null;
+}
+
+// Mirrors core/resize.ts's private HANDLE_AXES map (not exported): which edge
+// on each axis a handle drags. 'end' = the far edge (x+width / y+height),
+// 'start' = the near edge (x / y), undefined = that axis is untouched by this
+// handle.
+const RESIZE_HANDLE_AXES: Record<ResizeHandle, { x?: 'start' | 'end'; y?: 'start' | 'end' }> = {
+  n: { y: 'start' },
+  s: { y: 'end' },
+  e: { x: 'end' },
+  w: { x: 'start' },
+  ne: { x: 'end', y: 'start' },
+  nw: { x: 'start', y: 'start' },
+  se: { x: 'end', y: 'end' },
+  sw: { x: 'start', y: 'end' },
+};
+
+// Axis-aligned resize snap (#55). The x/y/width/height baseline below is the
+// EXACT pre-#55 grid-only computation (`snap` on each field independently),
+// so an ungated drag (no guide in range) is bit-identical to before. Only the
+// handle's FREE edge(s) — the coordinate(s) that actually move — additionally
+// get the layered grid-then-guide treatment: guides are absolute mm
+// positions, meaningless applied to a relative width/height, so the free
+// edge is snapped as an ABSOLUTE coordinate and width/height is then derived
+// around the OPPOSITE (anchor) edge — orig.x/orig.y/orig.width/orig.height,
+// not r's — so the anchor never drifts off its pointerdown position.
+function resizeSnapPatch(
+  orig: Rect,
+  r: Rect,
+  handle: ResizeHandle,
+  ctx: ToolContext,
+): { x: number; y: number; width: number; height: number } {
+  const axes = RESIZE_HANDLE_AXES[handle];
+  const opts = snapOptions(ctx);
+  let x = snap(r.x);
+  let y = snap(r.y);
+  let width = snap(r.width);
+  let height = snap(r.height);
+
+  if (axes.x === 'end') {
+    const snappedRight = snapScalar(r.x + r.width, 'x', opts).value;
+    width = Math.max(MIN_RESIZE_MM, roundMm(snappedRight - r.x));
+  } else if (axes.x === 'start') {
+    const anchorRight = orig.x + orig.width;
+    const snappedX = snapScalar(r.x, 'x', opts).value;
+    width = Math.max(MIN_RESIZE_MM, roundMm(anchorRight - snappedX));
+    x = roundMm(anchorRight - width);
+  }
+
+  if (axes.y === 'end') {
+    const snappedBottom = snapScalar(r.y + r.height, 'y', opts).value;
+    height = Math.max(MIN_RESIZE_MM, roundMm(snappedBottom - r.y));
+  } else if (axes.y === 'start') {
+    const anchorBottom = orig.y + orig.height;
+    const snappedY = snapScalar(r.y, 'y', opts).value;
+    height = Math.max(MIN_RESIZE_MM, roundMm(anchorBottom - snappedY));
+    y = roundMm(anchorBottom - height);
+  }
+
+  return { x, y, width, height };
+}
 
 // One member of an in-flight move drag. `orig` is the layer as it was at
 // pointerdown (or, after an Alt-duplicate re-target, the source it was cloned
@@ -505,18 +592,46 @@ registerTool({
         }
         let dx = e.mm.x - drag.startMm.x;
         let dy = e.mm.y - drag.startMm.y;
+        let xLocked = false;
+        let yLocked = false;
         if (e.shiftKey) {
           // Shift constrains to the dominant axis, re-evaluated live per move
           // so the drag can flip axes without releasing.
-          if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
-          else dx = 0;
+          if (Math.abs(dx) >= Math.abs(dy)) {
+            dy = 0;
+            yLocked = true;
+          } else {
+            dx = 0;
+            xLocked = true;
+          }
         }
         // ONE snapped gesture delta for every target: snapping each member's
         // absolute position independently would give off-grid members
         // different effective deltas and change the selection's relative
-        // spacing mid-drag.
-        const sdx = snap(dx);
-        const sdy = snap(dy);
+        // spacing mid-drag. The grid baseline below is exactly that — a
+        // single delta snap of the raw pointer movement, not a per-candidate
+        // absolute snap — so an ungated drag (no guide in range) is
+        // bit-identical to pre-#55 behavior.
+        let sdx = snap(dx);
+        let sdy = snap(dy);
+        // Guides win ties (#53/#55) but only override the grid baseline when
+        // the moving selection's combined bbox — edges + centre — actually
+        // lands within catch range of a same-axis guide; a shift-locked axis
+        // is skipped so a guide can never sneak in movement Shift disallowed.
+        const bbox = targetsBbox(drag.targets, ctx.panel);
+        if (bbox) {
+          const opts = snapOptions(ctx);
+          if (!xLocked) {
+            const movedX = bbox.x + dx;
+            const gx = snapAxis([movedX, movedX + bbox.width, movedX + bbox.width / 2], 'x', opts);
+            if (gx.guide) sdx = roundMm(dx + gx.delta);
+          }
+          if (!yLocked) {
+            const movedY = bbox.y + dy;
+            const gy = snapAxis([movedY, movedY + bbox.height, movedY + bbox.height / 2], 'y', opts);
+            if (gy.guide) sdy = roundMm(dy + gy.delta);
+          }
+        }
         if (!gestureOpen && sdx === 0 && sdy === 0) break;
         ensureGesture(ctx);
         const patches = new Map<string, Partial<Layer>>();
@@ -546,7 +661,7 @@ registerTool({
         // resize keeps float hygiene only.
         const patch = drag.rotation
           ? { x: roundMm(r.x), y: roundMm(r.y), width: roundMm(r.width), height: roundMm(r.height) }
-          : { x: snap(r.x), y: snap(r.y), width: snap(r.width), height: snap(r.height) };
+          : resizeSnapPatch(drag.orig, r, drag.handle, ctx);
         if (
           !gestureOpen &&
           patch.x === drag.orig.x &&
