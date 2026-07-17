@@ -18,7 +18,6 @@ import {
 import {
   PANEL_HEIGHT_MM,
   panelWidthMm,
-  snapToGrid,
   translatePathLayer,
   type Layer,
 } from '@zpd/core';
@@ -39,7 +38,6 @@ import { Sidebar } from './components/sidebar';
 import { Toolbar } from './components/toolbar';
 
 const FALLBACK_CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
-const snap = (v: number) => snapToGrid(v, 0.1);
 
 function isEditableTarget(target: EventTarget | null): boolean {
   return (
@@ -265,6 +263,13 @@ export function Editor() {
       // Nudges the WHOLE selection as ONE undo entry (#45). Patterns are pinned
       // to the panel (eligibility matrix), so a mixed selection moves only its
       // non-pattern members — but the whole thing stays a single commit.
+      //
+      // Every movable layer gets the SAME (dx, dy) delta so the selection
+      // translates as a rigid unit — snapping each layer's absolute position
+      // independently would apply different effective deltas to off-grid
+      // members (allowed via the numeric inspectors) and shear the group. dx/dy
+      // are already grid steps (0.1 / 1mm), and this matches translatePathLayer,
+      // which already moves paths by the raw delta.
       const ids = new Set(readSelectedIds());
       if (ids.size === 0) return;
       let moved = false;
@@ -274,7 +279,7 @@ export function Editor() {
         const patch =
           l.type === 'path'
             ? translatePathLayer(l, dx, dy)
-            : { x: snap(l.x + dx), y: snap(l.y + dy) };
+            : { x: l.x + dx, y: l.y + dy };
         return { ...l, ...patch } as Layer;
       });
       if (!moved) return; // pattern-only selection → no phantom undo entry
