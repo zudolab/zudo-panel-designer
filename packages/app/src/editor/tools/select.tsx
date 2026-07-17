@@ -281,10 +281,14 @@ registerTool({
 
     downScreen = e.screen;
     const selected = ctx.selectedLayer;
-    // node/handle drags on the current selection win over a fresh hit-test
-    if (selected && tryGrabNode(selected, e, ctx)) return;
-    if (selected && tryGrabRotateHandle(selected, e, ctx)) return;
-    if (selected && tryGrabResizeHandle(selected, e, ctx)) return;
+    // node/handle drags on the current selection win over a fresh hit-test.
+    // A HIDDEN selected layer wears no chrome (selectionBboxes skips it), so
+    // none of its grab targets may swallow clicks — an invisible knob would
+    // rotate the hidden layer or block selecting a visible layer beneath it.
+    const grabbable = selected && !selected.hidden ? selected : null;
+    if (grabbable && tryGrabNode(grabbable, e, ctx)) return;
+    if (grabbable && tryGrabRotateHandle(grabbable, e, ctx)) return;
+    if (grabbable && tryGrabResizeHandle(grabbable, e, ctx)) return;
 
     const hit = topmostHit(ctx.doc, e.mm);
     const toggleModifier = e.shiftKey || e.metaKey || e.ctrlKey;

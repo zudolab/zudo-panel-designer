@@ -642,6 +642,23 @@ describe('select tool — rotate handle (#51)', () => {
     expect(ctx.selectedIds).toEqual(['s1']);
   });
 
+  it('a HIDDEN selected layer exposes no grab targets — its invisible knob must not eat clicks', () => {
+    // The chrome pass (selectionBboxes) skips hidden layers, so no handle is
+    // drawn — pressing where the rotate knob WOULD be must fall through to
+    // the empty-space path instead of rotating an invisible layer.
+    const shape: ShapeLayer = { ...rectAt('s1', 10, 10), hidden: true };
+    const { ctx, getHistory, layerById } = makeHarness({ panelHp: 12, layers: [shape] });
+    ctx.select('s1');
+
+    const h = handleAt(shape);
+    select.onPointerDown?.(ptr(h), ctx);
+    select.onPointerUp?.(ptr(h), ctx);
+
+    expect(getHistory().past).toHaveLength(0);
+    expect((layerById('s1') as ShapeLayer).rotation).toBeUndefined();
+    expect(ctx.selectedIds).toEqual([]); // empty-space click deselected
+  });
+
   it('image layers get NO rotate handle — the grab point is plain empty space', () => {
     const image: Layer = {
       id: 'i1',
