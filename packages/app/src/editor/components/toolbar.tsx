@@ -18,7 +18,7 @@ export function Toolbar({ ctx, activeToolId }: ToolbarProps) {
         <ChromeButton
           key={tool.id}
           active={tool.id === activeToolId}
-          title={tool.shortcut ? `${tool.label} (${tool.shortcut.toUpperCase()})` : tool.label}
+          tooltip={tool.shortcut ? `${tool.label} (${tool.shortcut.toUpperCase()})` : tool.label}
           onClick={() => ctx.setActiveTool(tool.id)}
           className="h-8 w-8 !px-0 text-base"
         >
@@ -31,7 +31,7 @@ export function Toolbar({ ctx, activeToolId }: ToolbarProps) {
       {allAddActions().map((action) => (
         <ChromeButton
           key={action.id}
-          title={action.label}
+          tooltip={action.label}
           onClick={() => action.run(ctx)}
           className="h-8 w-8 !px-0 text-base"
         >

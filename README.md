@@ -4,6 +4,11 @@ A web app for designing Takazudo Modular PCB blank panels. Lay out a panel in
 the browser and download a versioned order JSON. Panels come in three fixed
 finishes: **black**, **gold**, and **white**.
 
+The editor gives you a tool palette with hover tooltips, a collapsible
+card-panel sidebar (panel size, palette, layers, properties, and a per-tool
+help footer), and mm rulers framing the canvas. Full behavior is covered in the
+[doc site](https://doc-zudo-panel-designer.takazudomodular.com/).
+
 ## Monorepo layout
 
 - `packages/core` (`@zpd/core`) — document model, geometry/ops/history. No UI.
@@ -31,7 +36,7 @@ Run from the repo root:
 - `pnpm deploy` — build output must exist already; deploys `packages/app/dist`
   to Cloudflare Workers as static assets (`wrangler deploy --env production`).
 - `pnpm deploy:dry` — validate `wrangler.toml` without deploying (`wrangler
-  deploy --dry-run --env production`); needs no Cloudflare credentials.
+deploy --dry-run --env production`); needs no Cloudflare credentials.
 
 `_temp-resource/` holds a reference prototype only. It is excluded from all
 lint/format/test/typecheck tooling and is not part of the workspace.

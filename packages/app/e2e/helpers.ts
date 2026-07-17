@@ -42,7 +42,9 @@ export async function toScreenPoint(
 ): Promise<{ x: number; y: number }> {
   const camera: Camera | null = await bridge(page).getCamera();
   if (!camera) throw new Error('camera not ready');
-  const box = await page.locator('canvas').boundingBox();
+  // testid, not bare 'canvas': the ruler strips (#33) added more <canvas>
+  // elements, which would multi-match under Playwright strict mode
+  const box = await page.getByTestId('editor-canvas').boundingBox();
   if (!box) throw new Error('canvas not visible');
   return {
     x: box.x + mm.x * camera.pxPerMm + camera.offsetX,

@@ -34,6 +34,16 @@ Zoom is clamped to `[0.5, 100]` px/mm (`MIN_PX_PER_MM` / `MAX_PX_PER_MM`) — 0.
 
 Mouse-wheel zoom is wired directly in `Editor.tsx` as a non-passive `wheel` listener (`preventDefault()` to stop page scroll), anchored at the cursor via the same `zoomAt`.
 
+## The mm rulers
+
+The millimeter ruler strips framing the viewport ([Interface → Canvas viewport & rulers](./interface.mdx#canvas-viewport-rulers)) are a **pure consumer of the camera**: they read `pxPerMm` and the relevant offset and derive everything else, holding no state of their own. The tick math lives in `ruler-ticks.ts` (pure, DOM-free, unit-tested); `components/ruler.tsx` only paints what it returns.
+
+The strips share the camera's exact coordinate model — `screen = mm × pxPerMm + offset` — so **mm 0 always lands at the camera offset**, i.e. the panel's top-left corner, for any pan or zoom. `getRulerTicksMm(pxPerMm, offset, lengthPx, step)` walks integer minor-tick indices across the visible span (overscanned one tick past each end so edge labels don't pop in and out while panning), computing each tick's `mm` from `i × minor` — which keeps mm 0 exact and makes the "is this a labeled major tick?" test the float-safe `i % 5 === 0`.
+
+The tick spacing adapts to zoom on a **1-2-5 × 10ⁿ** ladder. `pickTickStepMm(pxPerMm)` picks the smallest such step whose on-screen major-tick spacing is at least ~50px, so labels never crowd: at deep zoom the major step can drop to a fraction of a millimeter (labels then show one decimal), and when zoomed far out it climbs to 10mm, 20mm, 50mm, and beyond. Minor (unlabeled) ticks sit at one-fifth of the major step.
+
+Crucially, the strips are **fixed in layout** — they occupy static 20px gutters and never receive a pan/zoom transform. Only their *canvas content* repaints when the camera changes; the elements themselves don't move. (Position-syncing a ruler DOM element to the scroll/pan offset is a well-known drift-bug source, avoided here by design.) Each strip snaps ticks to the device-pixel grid so lines stay crisp at any `devicePixelRatio`.
+
 ## The repaint loop
 
 `renderer.ts`'s `renderScene(canvas, doc, panel, cam, extras)` runs on every render of `Editor.tsx` (it's a plain effect with no dependency array — cheap enough at this scene scale to just always run) and does, per frame:

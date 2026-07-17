@@ -17,7 +17,7 @@ test('@smoke app loads clean and boots the default document', async ({ page }) =
   page.on('pageerror', (err) => errors.push(err.message));
 
   await openEditor(page);
-  await expect(page.locator('canvas')).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toBeVisible();
 
   // wait-ok: asserting ABSENCE of console errors past first paint — no
   // positive event to poll for, so hold a bounded settle window.
@@ -41,7 +41,7 @@ test('@smoke app loads clean and boots the default document', async ({ page }) =
 test('@smoke add rectangle, drag it, then undo restores its position', async ({ page }) => {
   await openEditor(page);
 
-  await page.getByTitle('Add rectangle').click();
+  await page.getByLabel('Add rectangle').click();
   const rectId = await bridge(page).getSelectedId();
   expect(rectId).not.toBeNull();
 

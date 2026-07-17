@@ -31,6 +31,7 @@ import { installTestBridge } from './test-bridge';
 import { useDocHistory } from './use-doc-history';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from './types';
 import { CanvasViewport } from './components/canvas-viewport';
+import { RulerCorner, RulerStrip } from './components/ruler';
 import { DialogHost } from './components/dialog-host';
 import { Header } from './components/header';
 import { Sidebar } from './components/sidebar';
@@ -358,7 +359,7 @@ export function Editor() {
     );
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-neutral-950 text-neutral-100">
+    <div className="flex h-screen flex-col overflow-hidden bg-neutral-950 text-neutral-100 select-none">
       <Header
         ctx={ctx}
         zoomPercent={zoomPercent}
@@ -369,16 +370,28 @@ export function Editor() {
       />
       <div className="flex min-h-0 flex-1">
         <Toolbar ctx={ctx} activeToolId={activeToolId} />
-        <CanvasViewport
-          containerRef={containerRef}
-          canvasRef={canvasRef}
-          cursor={cursor}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onDoubleClick={onDoubleClick}
+        {/* Ruler frame: fixed 20px gutters; strips repaint content on camera
+            change but NEVER move in layout (see components/ruler.tsx). */}
+        <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[20px_minmax(0,1fr)] grid-rows-[20px_minmax(0,1fr)]">
+          <RulerCorner />
+          <RulerStrip orientation="horizontal" camera={camera} lengthPx={canvasSize.w} />
+          <RulerStrip orientation="vertical" camera={camera} lengthPx={canvasSize.h} />
+          <CanvasViewport
+            containerRef={containerRef}
+            canvasRef={canvasRef}
+            cursor={cursor}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onDoubleClick={onDoubleClick}
+          />
+        </div>
+        <Sidebar
+          ctx={ctx}
+          selectedId={selectedId}
+          selectedLayer={selectedLayer}
+          activeToolId={activeToolId}
         />
-        <Sidebar ctx={ctx} selectedId={selectedId} selectedLayer={selectedLayer} />
       </div>
       <DialogHost ctx={ctx} />
     </div>
