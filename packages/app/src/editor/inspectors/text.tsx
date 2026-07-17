@@ -20,7 +20,7 @@ function TextInspector({ layer, onChange, ctx }: InspectorProps<TextLayer>) {
           rows={2}
           value={layer.content}
           onChange={(e) => onChange({ content: e.target.value })}
-          className="w-full rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-neutral-100"
+          className="w-full select-text rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-neutral-100"
         />
       </label>
       <Field label="Font">

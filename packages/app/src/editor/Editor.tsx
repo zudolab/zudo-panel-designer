@@ -358,7 +358,7 @@ export function Editor() {
     );
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-neutral-950 text-neutral-100">
+    <div className="flex h-screen flex-col overflow-hidden bg-neutral-950 text-neutral-100 select-none">
       <Header
         ctx={ctx}
         zoomPercent={zoomPercent}
