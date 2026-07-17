@@ -14,6 +14,7 @@ import {
   rectsIntersect,
   resizeRotatedRect,
   rotatedRectAABB,
+  scaleLayer,
   snapToGrid,
   translatePathLayer,
   type DocState,
@@ -24,9 +25,11 @@ import {
 } from '@zpd/core';
 import {
   canRotate,
+  cornerHandleRects,
   drawHoverOutline,
   layerBbox,
   layerRotation,
+  multiResizeBbox,
   resizeHandleRects,
   rotateHandleScreenPos,
 } from '../renderer';
@@ -81,6 +84,19 @@ type Drag =
       // Layer rotation latched at pointerdown — the whole gesture resolves in
       // this one frame (mid-drag the rect changes, the rotation doesn't).
       rotation: number;
+    }
+  | {
+      kind: 'multi-resize';
+      // Corner id by construction — edge handles are never offered for a
+      // multi-selection (#52; cornerHandleRects is the only grab source).
+      handle: ResizeHandle;
+      // Combined bbox latched at pointerdown — the whole gesture's factor and
+      // anchors resolve against this one frame, like `orig` in resize.
+      bbox: Rect;
+      startMm: Pt;
+      // Pattern-free, exactly like multi-move: patterns stay selected but are
+      // unaffected (the epic's eligibility matrix).
+      targets: MoveTarget[];
     }
   | {
       kind: 'rotate';
@@ -257,6 +273,68 @@ function tryGrabRotateHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolCont
   return true;
 }
 
+// Corner handle id -> that corner of the rect (and, with `opposite`, the
+// diagonally opposing one — the default scale anchor).
+function bboxCorner(rect: Rect, handle: ResizeHandle, opposite = false): Pt {
+  const west = handle === 'nw' || handle === 'sw';
+  const north = handle === 'nw' || handle === 'ne';
+  return {
+    x: west !== opposite ? rect.x : rect.x + rect.width,
+    y: north !== opposite ? rect.y : rect.y + rect.height,
+  };
+}
+
+// Group-level factor floor (#52, per #50's review note): scaleLayer clamps its
+// factor PER LAYER at the minSize floor, which would let clamped members stop
+// shrinking while unclamped ones kept going — the group would lose its
+// rigidity exactly at the clamp boundary. Pre-clamping the ONE shared factor
+// to every member's own floor makes the per-layer clamp a no-op, so a single
+// factor drives the whole selection all the way down. The combined bbox's dims
+// join the floor so a dimension-less (path-only) selection bottoms out too
+// instead of collapsing to a point; the tiny seed just keeps the factor
+// positive (scaleLayer's contract) for fully degenerate geometry.
+function groupFactorFloor(targets: readonly MoveTarget[], bbox: Rect): number {
+  let floor = 1e-6;
+  const consider = (dim: number) => {
+    if (dim > 0) floor = Math.max(floor, MIN_RESIZE_MM / dim);
+  };
+  for (const { orig } of targets) {
+    if (orig.type === 'shape' || orig.type === 'image') {
+      consider(orig.width);
+      consider(orig.height);
+    } else if (orig.type === 'text') {
+      consider(orig.sizeMm);
+    }
+  }
+  consider(bbox.width);
+  consider(bbox.height);
+  return floor;
+}
+
+// Multi-resize grab (#52): corner handles on the combined bbox start a uniform
+// group scale. multiResizeBbox (renderer.ts) is the shared eligibility gate,
+// so exactly the handles the chrome draws are grabbable here.
+function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
+  const ids = ctx.selectedIds;
+  const bbox = multiResizeBbox(ctx.doc.layers, ids, ctx.panel);
+  if (!bbox) return false;
+  for (const h of cornerHandleRects(bbox, ctx.camera)) {
+    if (e.screen.x >= h.x && e.screen.x <= h.x + h.size && e.screen.y >= h.y && e.screen.y <= h.y + h.size) {
+      drag = {
+        kind: 'multi-resize',
+        handle: h.id,
+        bbox,
+        startMm: e.mm,
+        targets: ctx.doc.layers
+          .filter((l) => ids.includes(l.id) && l.type !== 'pattern')
+          .map((l) => ({ id: l.id, orig: l })),
+      };
+      return true;
+    }
+  }
+  return false;
+}
+
 registerTool({
   id: 'select',
   label: 'Select',
@@ -271,7 +349,9 @@ registerTool({
     'and hold Shift while dragging to constrain movement to one axis. With one layer selected, drag ' +
     'its handles to resize (shapes/images, rotated shapes included) or its anchors and bezier ' +
     'handles to reshape a path, and drag the round handle above a shape or text layer to rotate it ' +
-    'about its center (Shift snaps to 45° steps). Arrow keys nudge the selection (Shift = ×10); ' +
+    'about its center (Shift snaps to 45° steps). With several layers selected, drag a corner of ' +
+    'the combined box to scale them all uniformly about the opposite corner — hold Alt to scale ' +
+    'about the center instead (patterns are unaffected). Arrow keys nudge the selection (Shift = ×10); ' +
     'Delete/Backspace removes it. Shortcut: V.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
     hoveredId = null; // pointer engaged — hover chrome resumes after release
@@ -289,6 +369,9 @@ registerTool({
     if (grabbable && tryGrabNode(grabbable, e, ctx)) return;
     if (grabbable && tryGrabRotateHandle(grabbable, e, ctx)) return;
     if (grabbable && tryGrabResizeHandle(grabbable, e, ctx)) return;
+    // >1 selected: the combined bbox's corner handles win over a fresh
+    // hit-test, same precedence as the single-selection handles above (#52).
+    if (tryGrabMultiResizeHandle(e, ctx)) return;
 
     const hit = topmostHit(ctx.doc, e.mm);
     const toggleModifier = e.shiftKey || e.metaKey || e.ctrlKey;
@@ -471,6 +554,45 @@ registerTool({
         }
         ensureGesture(ctx);
         updateLayer(ctx, drag.layerId, patch, false);
+        break;
+      }
+      case 'multi-resize': {
+        // Uniform factor from projecting the dragged corner onto the
+        // corner<->anchor diagonal: motion along the diagonal scales,
+        // perpendicular motion is ignored. Aspect is therefore locked by
+        // construction — which is exactly why SHIFT IS A DELIBERATE NO-OP
+        // here (#52, recorded): non-uniform scale of a rotated member is not
+        // representable in the x/y/width/height/rotation model, and text has
+        // only sizeMm. Do not "fix" Shift into an aspect toggle.
+        const corner = bboxCorner(drag.bbox, drag.handle);
+        // Alt re-anchors to the CENTRE, sampled live per move like Shift's
+        // axis constraint in the move case — toggling mid-drag re-resolves
+        // the same gesture about the new anchor.
+        const anchor = e.altKey ? rectCenter(drag.bbox) : bboxCorner(drag.bbox, drag.handle, true);
+        const vx = corner.x - anchor.x;
+        const vy = corner.y - anchor.y;
+        const len2 = vx * vx + vy * vy;
+        if (len2 === 0) break; // zero-size combined bbox: nothing to scale against
+        const cx = corner.x + (e.mm.x - drag.startMm.x) - anchor.x;
+        const cy = corner.y + (e.mm.y - drag.startMm.y) - anchor.y;
+        const f = roundMm(
+          Math.max((cx * vx + cy * vy) / len2, groupFactorFloor(drag.targets, drag.bbox)),
+        );
+        if (!gestureOpen && f === 1) break;
+        ensureGesture(ctx);
+        // No grid-snap and no per-member rounding: every member recomputes
+        // from its pointerdown original with the ONE shared (already rounded)
+        // factor — nothing accumulates — and snapping members independently
+        // would change the group's relative spacing mid-drag, the same
+        // reasoning as multi-move's single gesture delta and rotated resize.
+        const scaled = new Map<string, Layer>();
+        for (const { id, orig } of drag.targets) {
+          scaled.set(id, scaleLayer(orig, f, anchor, MIN_RESIZE_MM));
+        }
+        ctx.replace({
+          ...ctx.doc,
+          layers: ctx.doc.layers.map((l) => scaled.get(l.id) ?? l),
+        });
         break;
       }
       case 'rotate': {

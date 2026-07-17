@@ -782,3 +782,148 @@ describe('select tool — replace composition (#49 review)', () => {
     expect(layerById('s2')).toMatchObject({ x: 60.18, y: 40 });
   });
 });
+
+// Combined-bbox multi-resize (#52). rectAt makes 20×10 rects, so s1 (10,10)
+// + s2 (40,30) give a combined bbox of (10,10,50,30): se corner (60,40),
+// nw anchor (10,10), centre (35,25). The identity camera keeps handle grabs
+// at the literal mm corners.
+describe('select tool — multi-resize via the combined bbox (#52)', () => {
+  const twoRects = () => makeHarness({
+    panelHp: 12,
+    layers: [rectAt('s1', 10, 10), rectAt('s2', 40, 30)],
+  });
+
+  it('dragging the se corner scales BOTH members uniformly about the nw corner, ONE undo entry', () => {
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = twoRects();
+    ctx.selectIds(['s1', 's2']);
+
+    // corner (60,40), anchor (10,10), diagonal v0 = (50,30). Dragging by
+    // 0.5·v0 = (+25,+15) projects to factor 1.5 exactly.
+    select.onPointerDown?.(ptr({ x: 60, y: 40 }), ctx);
+    select.onPointerMove?.(ptr({ x: 70, y: 46 }), ctx); // mid-drag stream
+    select.onPointerMove?.(ptr({ x: 85, y: 55 }), ctx);
+    select.onPointerUp?.(ptr({ x: 85, y: 55 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(1);
+    expect(getHistory().past).toHaveLength(1);
+    // s1 touches the anchor so it grows in place; s2's offset from the anchor
+    // scales by the same 1.5 — the group stays rigid.
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 10, width: 30, height: 15 });
+    expect(layerById('s2')).toMatchObject({ x: 55, y: 40, width: 30, height: 15 });
+    // selection survives the gesture (no collapse — that's a move-click rule)
+    expect(ctx.selectedIds).toEqual(['s1', 's2']);
+
+    ctx.undo();
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 10, width: 20, height: 10 });
+    expect(layerById('s2')).toMatchObject({ x: 40, y: 30, width: 20, height: 10 });
+  });
+
+  it('Alt scales about the combined bbox CENTRE', () => {
+    const { ctx, layerById } = twoRects();
+    ctx.selectIds(['s1', 's2']);
+
+    // centre anchor (35,25): corner offset v0 = (25,15). The same (+25,+15)
+    // drag now doubles the offset → factor 2.
+    select.onPointerDown?.(ptr({ x: 60, y: 40 }), ctx);
+    select.onPointerMove?.(ptr({ x: 85, y: 55 }, { altKey: true }), ctx);
+    select.onPointerUp?.(ptr({ x: 85, y: 55 }, { altKey: true }), ctx);
+
+    expect(layerById('s1')).toMatchObject({ x: -15, y: -5, width: 40, height: 20 });
+    expect(layerById('s2')).toMatchObject({ x: 45, y: 35, width: 40, height: 20 });
+  });
+
+  it('Shift is a NO-OP — identical result to the plain drag (aspect locked by construction)', () => {
+    const { ctx, layerById } = twoRects();
+    ctx.selectIds(['s1', 's2']);
+
+    select.onPointerDown?.(ptr({ x: 60, y: 40 }), ctx);
+    select.onPointerMove?.(ptr({ x: 85, y: 55 }, { shiftKey: true }), ctx);
+    select.onPointerUp?.(ptr({ x: 85, y: 55 }, { shiftKey: true }), ctx);
+
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 10, width: 30, height: 15 });
+    expect(layerById('s2')).toMatchObject({ x: 55, y: 40, width: 30, height: 15 });
+  });
+
+  it('patterns in the selection are unaffected and stay selected', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [gridPattern('g1'), rectAt('s1', 10, 10), rectAt('s2', 40, 30)],
+    });
+    ctx.selectIds(['g1', 's1', 's2']);
+
+    // the pattern's bbox is panel-wide (harness PANEL: 100×128.5), so the
+    // combined bbox IS the panel; its se corner is (100,128.5) and dragging
+    // by 0.5·v0 projects to factor 1.5 again.
+    select.onPointerDown?.(ptr({ x: 100, y: 128.5 }), ctx);
+    select.onPointerMove?.(ptr({ x: 150, y: 192.75 }), ctx);
+    select.onPointerUp?.(ptr({ x: 150, y: 192.75 }), ctx);
+
+    expect(layerById('g1')).toEqual(gridPattern('g1')); // untouched
+    expect(layerById('s1')).toMatchObject({ x: 15, y: 15, width: 30, height: 15 });
+    expect(layerById('s2')).toMatchObject({ x: 60, y: 45, width: 30, height: 15 });
+    expect(ctx.selectedIds).toEqual(['g1', 's1', 's2']);
+  });
+
+  it('edge midpoints offer NO handle for a multi-selection — corner-only by design', () => {
+    const { ctx, getHistory, layerById } = twoRects();
+    ctx.selectIds(['s1', 's2']);
+
+    // the 'n' edge midpoint of the combined bbox, (35,10), is empty canvas:
+    // a press there must fall through to the empty-space path (deselect +
+    // marquee), never start a scale gesture.
+    select.onPointerDown?.(ptr({ x: 35, y: 10 }), ctx);
+    select.onPointerMove?.(ptr({ x: 35, y: 14 }), ctx);
+    select.onPointerUp?.(ptr({ x: 35, y: 14 }), ctx);
+
+    expect(getHistory().past).toHaveLength(0);
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 10, width: 20, height: 10 });
+    expect(layerById('s2')).toMatchObject({ x: 40, y: 30, width: 20, height: 10 });
+    expect(ctx.selectedIds).toEqual([]); // the empty-space click deselected
+  });
+
+  it('the shared factor bottoms out at the GROUP floor — members stay rigid at min size', () => {
+    const { ctx, layerById } = twoRects();
+    ctx.selectIds(['s1', 's2']);
+
+    // Drag the se corner all the way onto the anchor: the raw projected
+    // factor is 0, but the group floor is MIN_RESIZE_MM / 10 (the smallest
+    // member dim, height 10) = 0.05 — ONE factor for both members, so their
+    // relative spacing scales by exactly 0.05 too (rigidity at the clamp).
+    select.onPointerDown?.(ptr({ x: 60, y: 40 }), ctx);
+    select.onPointerMove?.(ptr({ x: 10, y: 10 }), ctx);
+    select.onPointerUp?.(ptr({ x: 10, y: 10 }), ctx);
+
+    const s1 = layerById('s1') as ShapeLayer;
+    const s2 = layerById('s2') as ShapeLayer;
+    expect(s1.width).toBeCloseTo(1);
+    expect(s1.height).toBeCloseTo(0.5); // exactly the MIN_RESIZE_MM floor
+    expect(s2.width).toBeCloseTo(1);
+    expect(s2.height).toBeCloseTo(0.5);
+    expect(s1.x).toBeCloseTo(10);
+    expect(s1.y).toBeCloseTo(10);
+    expect(s2.x).toBeCloseTo(11.5); // 10 + 30·0.05
+    expect(s2.y).toBeCloseTo(11); // 10 + 20·0.05
+  });
+
+  it('a sub-threshold press or a perpendicular drag writes NO history (lazy undo)', () => {
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = twoRects();
+    ctx.selectIds(['s1', 's2']);
+
+    // sub-threshold jitter on the corner: below DRAG_THRESHOLD_PX, gated out
+    select.onPointerDown?.(ptr({ x: 60, y: 40 }), ctx);
+    select.onPointerMove?.(ptr({ x: 62, y: 41 }), ctx);
+    select.onPointerUp?.(ptr({ x: 62, y: 41 }), ctx);
+    expect(getBeginGestureCalls()).toBe(0);
+    expect(getHistory().past).toHaveLength(0);
+
+    // perpendicular drag: past the threshold but orthogonal to the diagonal
+    // v0 = (50,30), so the projected factor stays exactly 1 — still no entry
+    select.onPointerDown?.(ptr({ x: 60, y: 40 }), ctx);
+    select.onPointerMove?.(ptr({ x: 57, y: 45 }), ctx); // delta (-3,+5) ⊥ (50,30)
+    select.onPointerUp?.(ptr({ x: 57, y: 45 }), ctx);
+    expect(getBeginGestureCalls()).toBe(0);
+    expect(getHistory().past).toHaveLength(0);
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 10, width: 20, height: 10 });
+    expect(layerById('s2')).toMatchObject({ x: 40, y: 30, width: 20, height: 10 });
+  });
+});

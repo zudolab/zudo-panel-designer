@@ -6,6 +6,9 @@ import { describe, expect, it } from 'vitest';
 import { mergeBboxes, type Layer, type Rect, type ShapeLayer } from '@zpd/core';
 import {
   canRotate,
+  CORNER_HANDLE_IDS,
+  cornerHandleRects,
+  multiResizeBbox,
   resizeHandleRects,
   ROTATE_HANDLE_OFFSET_PX,
   rotateHandleScreenPos,
@@ -148,5 +151,68 @@ describe('canRotate (#51 eligibility)', () => {
     expect(
       canRotate({ id: 'g', name: 'g', type: 'pattern', patternType: 'dot-grid', params: {}, color: 1 }),
     ).toBe(false);
+  });
+});
+
+// --- multi-resize eligibility + corner handles (#52) -------------------------
+
+const pattern = (id: string): Layer => ({
+  id,
+  name: id,
+  type: 'pattern',
+  patternType: 'dot-grid',
+  params: {},
+  color: 1,
+});
+
+describe('multiResizeBbox (#52 eligibility gate)', () => {
+  it('returns the combined bbox for a multi-selection of scalable layers', () => {
+    const layers: Layer[] = [shape('a', 0, 0), shape('b', 40, 30)];
+    expect(multiResizeBbox(layers, ['a', 'b'], PANEL)).toEqual({ x: 0, y: 0, width: 50, height: 40 });
+  });
+
+  it('is null for a single selection — that is the 8-handle path, not this one', () => {
+    const layers: Layer[] = [shape('a', 0, 0), shape('b', 40, 30)];
+    expect(multiResizeBbox(layers, ['a'], PANEL)).toBeNull();
+  });
+
+  it('is null when hidden members leave fewer than two visible bboxes', () => {
+    const layers: Layer[] = [shape('a', 0, 0), shape('b', 40, 30, { hidden: true })];
+    expect(multiResizeBbox(layers, ['a', 'b'], PANEL)).toBeNull();
+  });
+
+  it('is null for a pattern-only multi-selection — nothing in it can scale', () => {
+    const layers: Layer[] = [pattern('g1'), pattern('g2')];
+    expect(multiResizeBbox(layers, ['g1', 'g2'], PANEL)).toBeNull();
+  });
+
+  it('a pattern plus a shape still qualifies (the shape is scalable)', () => {
+    const layers: Layer[] = [pattern('g1'), shape('a', 10, 10)];
+    // the pattern's bbox is panel-wide, so the union is the panel rect
+    expect(multiResizeBbox(layers, ['g1', 'a'], PANEL)).toEqual({
+      x: 0,
+      y: 0,
+      width: PANEL.widthMm,
+      height: PANEL.heightMm,
+    });
+  });
+});
+
+describe('cornerHandleRects (#52 — corner handles ONLY for multi-selections)', () => {
+  it('returns exactly the 4 corner handles, no edge handles', () => {
+    const rects = cornerHandleRects(BBOX, IDENTITY);
+    expect(rects.map((r) => r.id)).toEqual([...CORNER_HANDLE_IDS]);
+  });
+
+  it('corners sit at the bbox corners in screen space', () => {
+    const rects = cornerHandleRects(BBOX, IDENTITY);
+    const center = (id: string) => {
+      const h = rects.find((r) => r.id === id)!;
+      return { x: h.x + h.size / 2, y: h.y + h.size / 2 };
+    };
+    expect(center('nw')).toEqual({ x: 10, y: 10 });
+    expect(center('ne')).toEqual({ x: 30, y: 10 });
+    expect(center('se')).toEqual({ x: 30, y: 20 });
+    expect(center('sw')).toEqual({ x: 10, y: 20 });
   });
 });
