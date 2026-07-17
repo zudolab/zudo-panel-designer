@@ -95,13 +95,19 @@ const RESIZE_HANDLE_AXES: Record<ResizeHandle, { x?: 'start' | 'end'; y?: 'start
 
 // Axis-aligned resize snap (#55). The x/y/width/height baseline below is the
 // EXACT pre-#55 grid-only computation (`snap` on each field independently),
-// so an ungated drag (no guide in range) is bit-identical to before. Only the
-// handle's FREE edge(s) — the coordinate(s) that actually move — additionally
-// get the layered grid-then-guide treatment: guides are absolute mm
-// positions, meaningless applied to a relative width/height, so the free
-// edge is snapped as an ABSOLUTE coordinate and width/height is then derived
-// around the OPPOSITE (anchor) edge — orig.x/orig.y/orig.width/orig.height,
-// not r's — so the anchor never drifts off its pointerdown position.
+// left COMPLETELY UNTOUCHED unless a guide actually catches — so an ungated
+// drag (no guide in range) is bit-identical to before, even for an off-grid
+// origin (numeric inspectors allow one; a guide-aware recompute that always
+// ran, even with no guide, would silently diverge from the baseline there:
+// `x`'s independent grid rounding and a size computed from unrounded `r`
+// would no longer add up to the same edge — see #55 review). Only on an
+// actual guide catch do we recompute: guides are absolute mm positions,
+// meaningless applied to a relative width/height, so the free edge snaps as
+// an ABSOLUTE coordinate and width/height is then derived around the SAME
+// anchor coordinate being returned, so the two always add up to the intended
+// edge (the opposite/anchor edge stays exactly orig.x+orig.width /
+// orig.y+orig.height for a 'start' handle, and exactly the returned `x`/`y`
+// for an 'end' handle).
 function resizeSnapPatch(
   orig: Rect,
   r: Rect,
@@ -116,23 +122,27 @@ function resizeSnapPatch(
   let height = snap(r.height);
 
   if (axes.x === 'end') {
-    const snappedRight = snapScalar(r.x + r.width, 'x', opts).value;
-    width = Math.max(MIN_RESIZE_MM, roundMm(snappedRight - r.x));
+    const snapped = snapScalar(r.x + r.width, 'x', opts);
+    if (snapped.guide) width = Math.max(MIN_RESIZE_MM, roundMm(snapped.value - x));
   } else if (axes.x === 'start') {
-    const anchorRight = orig.x + orig.width;
-    const snappedX = snapScalar(r.x, 'x', opts).value;
-    width = Math.max(MIN_RESIZE_MM, roundMm(anchorRight - snappedX));
-    x = roundMm(anchorRight - width);
+    const snapped = snapScalar(r.x, 'x', opts);
+    if (snapped.guide) {
+      const anchorRight = orig.x + orig.width;
+      width = Math.max(MIN_RESIZE_MM, roundMm(anchorRight - snapped.value));
+      x = roundMm(anchorRight - width);
+    }
   }
 
   if (axes.y === 'end') {
-    const snappedBottom = snapScalar(r.y + r.height, 'y', opts).value;
-    height = Math.max(MIN_RESIZE_MM, roundMm(snappedBottom - r.y));
+    const snapped = snapScalar(r.y + r.height, 'y', opts);
+    if (snapped.guide) height = Math.max(MIN_RESIZE_MM, roundMm(snapped.value - y));
   } else if (axes.y === 'start') {
-    const anchorBottom = orig.y + orig.height;
-    const snappedY = snapScalar(r.y, 'y', opts).value;
-    height = Math.max(MIN_RESIZE_MM, roundMm(anchorBottom - snappedY));
-    y = roundMm(anchorBottom - height);
+    const snapped = snapScalar(r.y, 'y', opts);
+    if (snapped.guide) {
+      const anchorBottom = orig.y + orig.height;
+      height = Math.max(MIN_RESIZE_MM, roundMm(anchorBottom - snapped.value));
+      y = roundMm(anchorBottom - height);
+    }
   }
 
   return { x, y, width, height };

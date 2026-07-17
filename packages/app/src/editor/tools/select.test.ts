@@ -1163,6 +1163,50 @@ describe('select tool — guide snapping (#55)', () => {
     expect(resized.height).toBe(15);
   });
 
+  it('resize: an off-grid origin with NO guide in range is untouched — bit-identical to the pre-#55 baseline', () => {
+    // Regression for a review finding: computing the free edge's size from
+    // the RAW (unsnapped) anchor while returning the INDEPENDENTLY-rounded
+    // anchor would make x + width land short of the intended edge whenever
+    // the origin isn't already grid-aligned (numeric inspectors allow one).
+    // With no guide in range, resizeSnapPatch must not touch x/width at all.
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [],
+      layers: [rectAt('s1', 10.03, 10)],
+    });
+    ctx.select('s1');
+
+    // 'se' handle at (30.03, 20); dx=5 clears the 4px threshold.
+    select.onPointerDown?.(ptr({ x: 30.03, y: 20 }), ctx);
+    select.onPointerMove?.(ptr({ x: 35.03, y: 20 }), ctx);
+    select.onPointerUp?.(ptr({ x: 35.03, y: 20 }), ctx);
+
+    const resized = layerById('s1') as ShapeLayer;
+    expect(resized.x).toBe(10); // snap(10.03), same as before #55
+    expect(resized.width).toBe(25); // snap(25) — untouched, NOT 24.97
+    expect(resized.x + resized.width).toBe(35); // edges add up
+  });
+
+  it('resize: an off-grid origin with a guide in range still lands the edge exactly on the guide', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [vGuide(42.3)],
+      layers: [rectAt('s1', 10.03, 10)],
+    });
+    ctx.select('s1');
+
+    // 'se' handle at (30.03, 20); dx=12 puts the raw right edge at 42.03,
+    // 0.27mm from the guide.
+    select.onPointerDown?.(ptr({ x: 30.03, y: 20 }), ctx);
+    select.onPointerMove?.(ptr({ x: 42.03, y: 20 }), ctx);
+    select.onPointerUp?.(ptr({ x: 42.03, y: 20 }), ctx);
+
+    const resized = layerById('s1') as ShapeLayer;
+    // width must be derived from the SAME (rounded) x that's returned, so
+    // the actual right edge lands exactly on the guide, not 0.03mm short.
+    expect(resized.x + resized.width).toBeCloseTo(42.3, 6);
+  });
+
   it('resize: the "nw" free edges snap to guides; the se anchor stays exact', () => {
     const { ctx, layerById } = makeHarness({
       panelHp: 12,
