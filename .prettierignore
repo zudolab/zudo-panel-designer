@@ -4,3 +4,4 @@ _temp-resource
 worktrees
 coverage
 pnpm-lock.yaml
+doc
