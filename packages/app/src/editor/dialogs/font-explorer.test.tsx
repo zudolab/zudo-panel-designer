@@ -236,6 +236,24 @@ describe('font-explorer dialog', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  it('is a no-op (no commit) when the already-applied family is clicked, but still closes', () => {
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: [{ ...textLayer, fontFamily: 'ABeeZee' }],
+    };
+    const ctx = stubCtx({ doc });
+    const close = vi.fn();
+    const Dialog = getDialogComponent();
+    render(<Dialog props={{ layerId: 't1' }} close={close} ctx={ctx} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use ABeeZee (current)' }));
+
+    expect(ctx.commit).not.toHaveBeenCalled();
+    expect(ensureFontMock).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it('marks the layer\'s current family as the active card', () => {
     // ABeeZee is the first catalog entry; make it the layer's font so its card
     // is on the first page and flagged active.
