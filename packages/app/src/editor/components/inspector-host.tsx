@@ -10,9 +10,18 @@ import type { ToolContext } from '../types';
 export interface InspectorHostProps {
   ctx: ToolContext;
   layer: Layer | null;
+  // The full selection (#45). `layer` is non-null only at exactly one selected;
+  // this disambiguates "nothing selected" from "many selected".
+  selectedIds: readonly string[];
 }
 
-export function InspectorHost({ ctx, layer }: InspectorHostProps) {
+export function InspectorHost({ ctx, layer, selectedIds }: InspectorHostProps) {
+  // Multi-selection has no single-layer inspector yet — a plain count message.
+  if (selectedIds.length > 1) {
+    return (
+      <p className="text-xs text-neutral-500">{selectedIds.length} layers selected</p>
+    );
+  }
   if (!layer) {
     return <p className="text-xs text-neutral-500">Select a layer to edit its properties.</p>;
   }

@@ -23,9 +23,10 @@ describe('panelConfigJson (the Download JSON path)', () => {
     const json = panelConfigJson(doc);
     const parsed = JSON.parse(json);
 
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
     expect(parsed.app).toBe('zpd');
     expect(parsed.panel.hp).toBe(6);
+    expect(parsed.guides).toEqual([]);
     expect(json).toContain('\n'); // pretty-printed (indent: 2), not minified
   });
 });

@@ -5,8 +5,13 @@ the browser and download a versioned order JSON. Panels come in three fixed
 finishes: **black**, **gold**, and **white**.
 
 The editor gives you a tool palette with hover tooltips, a collapsible
-card-panel sidebar (panel size, palette, layers, properties, and a per-tool
-help footer), and mm rulers framing the canvas. Full behavior is covered in the
+card-panel sidebar (view options, panel size, palette, layers, properties, and
+a per-tool help footer), and mm rulers framing the canvas. The Select tool is a
+full multi-selection vector editor — marquee-select, move, rotate, resize, and
+edit path anchors — with ruler guides you drag out of the rulers and snap to,
+and a "show content outside the panel" view option (on by default) that ghosts
+anything spilling past the panel edge so it stays visible instead of clipped.
+Full behavior is covered in the
 [doc site](https://doc-zudo-panel-designer.takazudomodular.com/).
 
 ## Monorepo layout

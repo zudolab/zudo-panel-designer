@@ -36,6 +36,7 @@ doc → serializePanelConfig → JSON.stringify → JSON.parse → parsePanelCon
 - 一部の点にはベジェハンドル（`hin`／`hout`）があり、他の点にはない `path` レイヤー
 - `path` レイヤーの `extraSubpaths`（画像トレースによる複数の閉じたサブパス）
 - 一部のレイヤーには `rotation` があり、他のレイヤーにはない状態
+- ドキュメントのルーラー `guides`（hidden なものを含む。専用の serialize-v2 テストが `roundTripped.guides` は元と deep-equal になることをアサートします）
 
 上記のすべては、ラウンドトリップを経ても変わらずに残ります。
 

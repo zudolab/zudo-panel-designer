@@ -1,7 +1,7 @@
 // Layer list — top of the stack first (visual top == last array index).
 // Select / show-hide / reorder / rename / delete go through @zpd/core
 // layer-ops so ordering + immutability semantics live in one place.
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   PALETTE,
   removeLayer,
@@ -11,6 +11,7 @@ import {
   type ColorIndex,
   type Layer,
 } from '@zpd/core';
+import { nextListSelection } from '../selection';
 import type { ToolContext } from '../types';
 
 const TYPE_ICON: Record<Layer['type'], string> = {
@@ -29,13 +30,27 @@ function layerColorIndex(layer: Layer): ColorIndex {
 
 export interface LayerListProps {
   ctx: ToolContext;
-  selectedId: string | null;
+  selectedIds: readonly string[];
 }
 
-export function LayerList({ ctx, selectedId }: LayerListProps) {
+export function LayerList({ ctx, selectedIds }: LayerListProps) {
   const layers = ctx.doc.layers;
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
+  // Shift-range anchor (#45). A ref, not state: it only steers the NEXT click
+  // and must never trigger a re-render of its own.
+  const anchorRef = useRef<string | null>(null);
+
+  const handleRowClick = (id: string, e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => {
+    const next = nextListSelection(
+      { selectedIds, anchorId: anchorRef.current },
+      layers.map((l) => l.id),
+      id,
+      { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey },
+    );
+    anchorRef.current = next.anchorId;
+    ctx.selectIds(next.selectedIds);
+  };
 
   const move = (id: string, dir: 1 | -1) => {
     const from = layers.findIndex((l) => l.id === id);
@@ -46,7 +61,9 @@ export function LayerList({ ctx, selectedId }: LayerListProps) {
   };
   const remove = (id: string) => {
     ctx.commit({ ...ctx.doc, layers: removeLayer(layers, id) });
-    if (selectedId === id) ctx.select(null);
+    // Multi-capable drop-from-selection (#44); for today's 0/1 selection this
+    // is exactly the old `if (selectedId === id) ctx.select(null)`.
+    if (selectedIds.includes(id)) ctx.selectIds(selectedIds.filter((x) => x !== id));
   };
   const toggle = (id: string) => {
     ctx.commit({ ...ctx.doc, layers: toggleLayerHidden(layers, id) });
@@ -70,9 +87,9 @@ export function LayerList({ ctx, selectedId }: LayerListProps) {
       {[...layers].reverse().map((layer) => (
         <li
           key={layer.id}
-          onClick={() => ctx.select(layer.id)}
+          onClick={(e) => handleRowClick(layer.id, e)}
           className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs ${
-            layer.id === selectedId ? 'bg-sky-500/20 text-sky-100' : 'text-neutral-300 hover:bg-neutral-800'
+            selectedIds.includes(layer.id) ? 'bg-sky-500/20 text-sky-100' : 'text-neutral-300 hover:bg-neutral-800'
           }`}
         >
           <span className="w-4 text-center">{TYPE_ICON[layer.type]}</span>

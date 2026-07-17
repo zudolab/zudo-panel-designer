@@ -18,7 +18,6 @@ import {
 import {
   PANEL_HEIGHT_MM,
   panelWidthMm,
-  snapToGrid,
   translatePathLayer,
   type Layer,
 } from '@zpd/core';
@@ -27,8 +26,10 @@ import { renderScene } from './renderer';
 import { getTool, toolByShortcut } from './registry';
 import { closeDialog, openDialog } from './registry/dialogs';
 import { createDemoDoc } from './demo-doc';
+import { normalizeSelectedIds } from './selection';
 import { installTestBridge } from './test-bridge';
 import { useDocHistory } from './use-doc-history';
+import { useGuideDrag, type GuideDragDeps } from './use-guide-drag';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from './types';
 import { CanvasViewport } from './components/canvas-viewport';
 import { RulerCorner, RulerStrip } from './components/ruler';
@@ -38,7 +39,6 @@ import { Sidebar } from './components/sidebar';
 import { Toolbar } from './components/toolbar';
 
 const FALLBACK_CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
-const snap = (v: number) => snapToGrid(v, 0.1);
 
 function isEditableTarget(target: EventTarget | null): boolean {
   return (
@@ -50,11 +50,21 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function Editor() {
   const { doc, canUndo, canRedo, commit, replace, beginGesture, undo, redo } =
     useDocHistory(createDemoDoc());
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Selection state (#44): the stored ids are RAW (exactly what select() /
+  // selectIds() was given); every read derives the normalized view (de-duped,
+  // doc-order, stale ids dropped) via normalizeSelectedIds. Lazy on purpose —
+  // see selection.ts for why eager filtering would break select-after-commit.
+  const [rawSelectedIds, setRawSelectedIds] = useState<readonly string[]>([]);
   const [activeToolId, setActiveToolId] = useState('select');
   const [camera, setCameraState] = useState<Camera | null>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   const [spaceDown, setSpaceDown] = useState(false);
+  // "Show content outside the panel" (issue #43) — default ON, no
+  // persistence (matches the house style: no storage layer in this app).
+  const [showOutsidePanel, setShowOutsidePanel] = useState(true);
+  // "Show guides" master toggle (issue #54) — default ON, no persistence (house
+  // style). When OFF, guides neither render nor accept drag interaction.
+  const [showGuides, setShowGuides] = useState(true);
   const [, setAssetVersion] = useState(0); // bump repaints when an image loads
   const [, setRepaintNonce] = useState(0); // tools ask for repaints via ctx
 
@@ -68,6 +78,11 @@ export function Editor() {
     () => ({ widthMm: panelWidthMm(doc.panelHp), heightMm: PANEL_HEIGHT_MM }),
     [doc.panelHp],
   );
+  const selectedIds = useMemo(
+    () => normalizeSelectedIds(rawSelectedIds, doc.layers),
+    [rawSelectedIds, doc.layers],
+  );
+  const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const selectedLayer = useMemo(
     () => doc.layers.find((l) => l.id === selectedId) ?? null,
     [doc.layers, selectedId],
@@ -79,24 +94,38 @@ export function Editor() {
   // the next event the refs are current.
   const docRef = useRef(doc);
   const cameraRef = useRef(camera);
-  const selectedIdRef = useRef(selectedId);
+  const rawSelectedIdsRef = useRef(rawSelectedIds);
   const panelRef = useRef(panel);
+  const showGuidesRef = useRef(showGuides);
   useEffect(() => {
     docRef.current = doc;
     cameraRef.current = camera;
-    selectedIdRef.current = selectedId;
+    rawSelectedIdsRef.current = rawSelectedIds;
     panelRef.current = panel;
+    showGuidesRef.current = showGuides;
   });
+
+  // The normalized live view of the selection — what ctx and the test bridge
+  // read. Single-selection views derive from it (non-null iff exactly one).
+  const readSelectedIds = useCallback(
+    () => normalizeSelectedIds(rawSelectedIdsRef.current, docRef.current.layers),
+    [],
+  );
+  const readSelectedId = useCallback(() => {
+    const ids = readSelectedIds();
+    return ids.length === 1 ? ids[0] : null;
+  }, [readSelectedIds]);
 
   // e2e test bridge (Wave 6, #13) — reads through the same live refs as ctx,
   // so it never lags a commit. See test-bridge.ts for the prod/dev gating.
   useEffect(() => {
     installTestBridge({
       getDoc: () => docRef.current,
-      getSelectedId: () => selectedIdRef.current,
+      getSelectedId: () => readSelectedId(),
+      getSelectedIds: () => readSelectedIds(),
       getCamera: () => cameraRef.current,
     });
-  }, []);
+  }, [readSelectedId, readSelectedIds]);
 
   // Built once — all mutators are stable, all reads go through refs.
   const ctx = useMemo<ToolContext>(
@@ -110,11 +139,14 @@ export function Editor() {
       get panel() {
         return panelRef.current;
       },
+      get selectedIds() {
+        return readSelectedIds();
+      },
       get selectedId() {
-        return selectedIdRef.current;
+        return readSelectedId();
       },
       get selectedLayer() {
-        const id = selectedIdRef.current;
+        const id = readSelectedId();
         return docRef.current.layers.find((l) => l.id === id) ?? null;
       },
       toMm: (screenPt) => (cameraRef.current ? unproject(cameraRef.current, screenPt) : { x: 0, y: 0 }),
@@ -124,7 +156,8 @@ export function Editor() {
       beginGesture,
       undo,
       redo,
-      select: setSelectedId,
+      select: (id) => setRawSelectedIds(id === null ? [] : [id]),
+      selectIds: (ids) => setRawSelectedIds(ids),
       setCamera: (next) =>
         setCameraState((prev) =>
           typeof next === 'function' ? (prev ? next(prev) : prev) : next,
@@ -134,8 +167,23 @@ export function Editor() {
       openDialog,
       closeDialog,
     }),
-    [commit, replace, beginGesture, undo, redo],
+    [commit, replace, beginGesture, undo, redo, readSelectedId, readSelectedIds],
   );
+
+  // Guide drag controller (#54): the cross-component ruler->canvas pointer
+  // routing. Deps read the same live refs as ctx so the window listeners never
+  // lag a commit; see use-guide-drag.ts for the routing design.
+  const guideDragDeps = useMemo<GuideDragDeps>(
+    () => ({
+      getCamera: () => cameraRef.current,
+      getDoc: () => docRef.current,
+      getCanvasRect: () => canvasRef.current?.getBoundingClientRect() ?? null,
+      commit,
+      isEnabled: () => showGuidesRef.current,
+    }),
+    [commit],
+  );
+  const guideDrag = useGuideDrag(guideDragDeps);
 
   // --- container measurement + fit ---------------------------------------
   useLayoutEffect(() => {
@@ -198,9 +246,12 @@ export function Editor() {
     canvas.style.height = `${canvasSize.h}px`;
     const activeTool = getTool(activeToolId);
     renderScene(canvas, doc, panel, camera, {
-      selectedId,
+      selectedIds,
       images: imagesRef.current,
       showNodes: activeToolId === 'select' && selectedLayer?.type === 'path',
+      showOutsidePanel,
+      guides: showGuides ? doc.guides : [],
+      guideDraft: showGuides ? guideDrag.draft : null,
       renderDraft: activeTool?.renderDraft ? (d) => activeTool.renderDraft?.(d, ctx) : undefined,
     });
   });
@@ -224,22 +275,38 @@ export function Editor() {
   // --- keyboard: active tool first, then app-level fallbacks -------------
   useEffect(() => {
     const deleteSelected = () => {
-      const id = selectedIdRef.current;
-      if (!id) return;
-      commit({ ...docRef.current, layers: docRef.current.layers.filter((l) => l.id !== id) });
-      setSelectedId(null);
+      // Deletes the WHOLE selection as one undo entry (#45).
+      const ids = readSelectedIds();
+      if (ids.length === 0) return;
+      const doomed = new Set(ids);
+      commit({ ...docRef.current, layers: docRef.current.layers.filter((l) => !doomed.has(l.id)) });
+      setRawSelectedIds([]);
     };
     const nudge = (dx: number, dy: number) => {
-      const layer = ctx.selectedLayer;
-      if (!layer || layer.type === 'pattern') return;
-      const patch =
-        layer.type === 'path'
-          ? translatePathLayer(layer, dx, dy)
-          : { x: snap(layer.x + dx), y: snap(layer.y + dy) };
-      commit({
-        ...docRef.current,
-        layers: docRef.current.layers.map((l) => (l.id === layer.id ? ({ ...l, ...patch } as Layer) : l)),
+      // Nudges the WHOLE selection as ONE undo entry (#45). Patterns are pinned
+      // to the panel (eligibility matrix), so a mixed selection moves only its
+      // non-pattern members — but the whole thing stays a single commit.
+      //
+      // Every movable layer gets the SAME (dx, dy) delta so the selection
+      // translates as a rigid unit — snapping each layer's absolute position
+      // independently would apply different effective deltas to off-grid
+      // members (allowed via the numeric inspectors) and shear the group. dx/dy
+      // are already grid steps (0.1 / 1mm), and this matches translatePathLayer,
+      // which already moves paths by the raw delta.
+      const ids = new Set(readSelectedIds());
+      if (ids.size === 0) return;
+      let moved = false;
+      const layers = docRef.current.layers.map((l) => {
+        if (!ids.has(l.id) || l.type === 'pattern') return l;
+        moved = true;
+        const patch =
+          l.type === 'path'
+            ? translatePathLayer(l, dx, dy)
+            : { x: l.x + dx, y: l.y + dy };
+        return { ...l, ...patch } as Layer;
       });
+      if (!moved) return; // pattern-only selection → no phantom undo entry
+      commit({ ...docRef.current, layers });
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -276,7 +343,7 @@ export function Editor() {
       }
       switch (e.key) {
         case 'Escape':
-          setSelectedId(null);
+          setRawSelectedIds([]);
           break;
         case 'Delete':
         case 'Backspace':
@@ -306,7 +373,7 @@ export function Editor() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [activeToolId, ctx, commit, undo, redo]);
+  }, [activeToolId, ctx, commit, undo, redo, readSelectedIds]);
 
   // --- pointer routing to the active (or Space-override pan) tool ---------
   const effectiveToolId = spaceDown ? 'pan' : activeToolId;
@@ -333,6 +400,10 @@ export function Editor() {
 
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!cameraRef.current) return;
+    // Guide grab (#54) wins over tool routing: if the pointer landed on an
+    // existing guide line, start a guide move/delete drag and don't let the
+    // active tool see the event. Skipped while Space-panning.
+    if (!spaceDown && guideDrag.tryGrabOnCanvas(e)) return;
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -346,6 +417,9 @@ export function Editor() {
   };
   const onPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     getTool(effectiveToolId)?.onPointerUp?.(toPointer(e), ctx);
+  };
+  const onPointerLeave = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    getTool(effectiveToolId)?.onPointerLeave?.(toPointer(e), ctx);
   };
   const onDoubleClick = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     getTool(effectiveToolId)?.onDoubleClick?.(toPointer(e), ctx);
@@ -374,8 +448,20 @@ export function Editor() {
             change but NEVER move in layout (see components/ruler.tsx). */}
         <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[20px_minmax(0,1fr)] grid-rows-[20px_minmax(0,1fr)]">
           <RulerCorner />
-          <RulerStrip orientation="horizontal" camera={camera} lengthPx={canvasSize.w} />
-          <RulerStrip orientation="vertical" camera={camera} lengthPx={canvasSize.h} />
+          <RulerStrip
+            orientation="horizontal"
+            camera={camera}
+            lengthPx={canvasSize.w}
+            guidesEnabled={showGuides}
+            onGuidePointerDown={(e) => guideDrag.startCreate('horizontal', e)}
+          />
+          <RulerStrip
+            orientation="vertical"
+            camera={camera}
+            lengthPx={canvasSize.h}
+            guidesEnabled={showGuides}
+            onGuidePointerDown={(e) => guideDrag.startCreate('vertical', e)}
+          />
           <CanvasViewport
             containerRef={containerRef}
             canvasRef={canvasRef}
@@ -383,14 +469,19 @@ export function Editor() {
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
+            onPointerLeave={onPointerLeave}
             onDoubleClick={onDoubleClick}
           />
         </div>
         <Sidebar
           ctx={ctx}
-          selectedId={selectedId}
+          selectedIds={selectedIds}
           selectedLayer={selectedLayer}
           activeToolId={activeToolId}
+          showOutsidePanel={showOutsidePanel}
+          onShowOutsidePanelChange={setShowOutsidePanel}
+          showGuides={showGuides}
+          onShowGuidesChange={setShowGuides}
         />
       </div>
       <DialogHost ctx={ctx} />

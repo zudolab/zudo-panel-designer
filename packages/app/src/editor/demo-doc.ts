@@ -17,6 +17,7 @@ export function createDemoDoc(hp = 12): DocState {
   const base = createDefaultDoc(hp);
   return {
     panelHp: hp,
+    guides: base.guides,
     layers: [
       ...base.layers, // the default dot-grid pattern
       {

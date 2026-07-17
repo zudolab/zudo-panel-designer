@@ -23,7 +23,10 @@ export interface ZpdTestBridge {
   getLayers(): ZpdTestLayerSummary[];
   getLayerCount(): number;
   getPanelHp(): number;
+  // getSelectedId stays (existing specs read it): non-null only when exactly
+  // one layer is selected. getSelectedIds is the multi-select view (#44).
   getSelectedId(): string | null;
+  getSelectedIds(): string[];
   getCamera(): Camera | null;
   serialize(): PanelConfig;
 }
@@ -44,6 +47,7 @@ function isTestContext(): boolean {
 export interface TestBridgeSource {
   getDoc(): DocState;
   getSelectedId(): string | null;
+  getSelectedIds(): readonly string[];
   getCamera(): Camera | null;
 }
 
@@ -61,6 +65,7 @@ export function installTestBridge(source: TestBridgeSource): void {
     getLayerCount: () => source.getDoc().layers.length,
     getPanelHp: () => source.getDoc().panelHp,
     getSelectedId: () => source.getSelectedId(),
+    getSelectedIds: () => [...source.getSelectedIds()],
     getCamera: () => source.getCamera(),
     serialize: () => serializePanelConfig(source.getDoc()),
   };

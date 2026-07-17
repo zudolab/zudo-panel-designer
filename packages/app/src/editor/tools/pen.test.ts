@@ -28,6 +28,7 @@ import {
   type PathLayer,
   type Pt,
 } from '@zpd/core';
+import { normalizeSelectedIds } from '../selection';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
 
@@ -35,10 +36,17 @@ const CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 }; // identity: scre
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
 function makeHarness() {
-  let history: HistoryState<DocState> = createHistory({ panelHp: 12, layers: [] });
-  let selectedId: string | null = null;
+  let history: HistoryState<DocState> = createHistory({ panelHp: 12, guides: [], layers: [] });
+  let selectedIds: readonly string[] = [];
   let activeToolId = 'pen';
   let repaintCalls = 0;
+
+  // Same derivation the Editor performs (see Editor.tsx / selection.ts).
+  const readSelectedIds = () => normalizeSelectedIds(selectedIds, history.present.layers);
+  const readSelectedId = () => {
+    const ids = readSelectedIds();
+    return ids.length === 1 ? ids[0] : null;
+  };
 
   const ctx: ToolContext = {
     get doc() {
@@ -50,11 +58,14 @@ function makeHarness() {
     get panel() {
       return PANEL;
     },
+    get selectedIds() {
+      return readSelectedIds();
+    },
     get selectedId() {
-      return selectedId;
+      return readSelectedId();
     },
     get selectedLayer() {
-      return history.present.layers.find((l) => l.id === selectedId) ?? null;
+      return history.present.layers.find((l) => l.id === readSelectedId()) ?? null;
     },
     toMm: (p: Pt) => p,
     toScreen: (p: Pt) => p,
@@ -74,7 +85,10 @@ function makeHarness() {
       history = coreRedo(history);
     },
     select: (id) => {
-      selectedId = id;
+      selectedIds = id === null ? [] : [id];
+    },
+    selectIds: (ids) => {
+      selectedIds = ids;
     },
     setCamera: () => {},
     setActiveTool: (id) => {
@@ -90,7 +104,7 @@ function makeHarness() {
   return {
     ctx,
     getHistory: () => history,
-    getSelectedId: () => selectedId,
+    getSelectedId: () => readSelectedId(),
     getActiveToolId: () => activeToolId,
     getRepaintCalls: () => repaintCalls,
     layerById: (id: string) => history.present.layers.find((l) => l.id === id) as PathLayer,

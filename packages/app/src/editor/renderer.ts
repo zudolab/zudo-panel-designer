@@ -5,9 +5,14 @@
 // @zpd/core + @zpd/patterns APIs.
 import {
   buildPath2D,
+  mergeBboxes,
+  normalizeRect,
   PALETTE,
   pathBbox,
+  rectCenter,
+  rectCorners,
   rotatedRectAABB,
+  type Guide,
   type Layer,
   type Pt,
   type Rect,
@@ -16,16 +21,31 @@ import {
 import { patternByName } from '@zpd/patterns';
 import type { Camera } from './camera';
 import { ensureFont } from './fonts';
+import { guideScreenCoord, type GuideDraft } from './guides';
+import { outsidePanelRegion } from './outside-panel-region';
 import type { DraftRenderContext, PanelDims } from './types';
 
 const WORKSPACE_BG = '#26282c';
 const SELECT_COLOR = '#4da3ff';
 const HANDLE_SIZE = 8;
+// Dimmed, not full opacity: in zpd the area beyond the panel edge is
+// physically cut off in fabrication, so dimming encodes "this will not be
+// manufactured" — don't "correct" this into full opacity later (issue #43).
+const OUTSIDE_GHOST_ALPHA = 0.35;
 
 export interface RenderExtras {
-  selectedId: string | null;
+  // Multi-select contract (#44): the full (normalized) selection. The chrome
+  // pass draws a dashed bbox per selected layer plus a combined bbox when >1;
+  // resize handles / path nodes render only when exactly one is selected (#45).
+  selectedIds: readonly string[];
   images: Map<string, HTMLImageElement>;
   showNodes: boolean; // draw path anchors/handles for the selected path layer
+  showOutsidePanel: boolean; // ghost-paint off-panel layer content (issue #43)
+  // View furniture guides (#54). Committed guides to paint as thin lines; the
+  // master "Show guides" toggle is applied by the caller (it passes [] when
+  // off). `guideDraft` is the live ruler-drag preview, or null when idle.
+  guides?: readonly Guide[];
+  guideDraft?: GuideDraft | null;
   // The active tool's draft preview hook (pen path, marquee, …). Drawn last,
   // unclipped, on top of the selection chrome.
   renderDraft?: (draft: DraftRenderContext) => void;
@@ -64,6 +84,15 @@ export function measureTextBbox(layer: {
 }
 
 // Layer bbox in mm (pre-rotation). Pattern layers cover the whole panel.
+//
+// CANONICAL BOUNDS (#45): this app-side function is the ONE source of layer
+// bounds for selection chrome AND the marquee (#47) — both MUST read it so a
+// text layer's chrome and marquee-hit agree to the pixel. It uses real Canvas
+// text metrics (measureTextBbox). Core's estimateTextBbox in hit-test.ts is a
+// rough character-count fallback that exists only because @zpd/core is
+// dependency-free with no Canvas in Node; it is a Node-side hit-test fallback,
+// NOT a bounds source for anything the user sees. Do not re-point chrome/marquee
+// at core's estimate — they would visibly disagree for text.
 export function layerBbox(layer: Layer, panel: PanelDims): Rect | null {
   switch (layer.type) {
     case 'shape':
@@ -82,6 +111,31 @@ export function layerRotation(layer: Layer): number {
   return layer.type === 'shape' || layer.type === 'text' ? (layer.rotation ?? 0) : 0;
 }
 
+// Rotate-handle eligibility (#51): exactly the types whose `rotation` field
+// layerRotation reads. path/image/pattern have no rotation in the model — the
+// chrome must not invent one for them.
+export function canRotate(layer: Layer): boolean {
+  return layer.type === 'shape' || layer.type === 'text';
+}
+
+// Rotate a point about a center, degrees clockwise (same convention as
+// bbox.ts). rotationDeg 0 is an exact pass-through so unrotated geometry stays
+// bit-identical to the pre-#51 axis-aligned math.
+function rotateMmPoint(pt: Pt, center: Pt, rotationDeg: number): Pt {
+  if (!rotationDeg) return pt;
+  const rad = (rotationDeg * Math.PI) / 180;
+  const dx = pt.x - center.x;
+  const dy = pt.y - center.y;
+  return {
+    x: center.x + dx * Math.cos(rad) - dy * Math.sin(rad),
+    y: center.y + dx * Math.sin(rad) + dy * Math.cos(rad),
+  };
+}
+
+function mmToScreen(p: Pt, cam: Camera): Pt {
+  return { x: p.x * cam.pxPerMm + cam.offsetX, y: p.y * cam.pxPerMm + cam.offsetY };
+}
+
 export const RESIZE_HANDLE_IDS: readonly ResizeHandle[] = [
   'nw',
   'n',
@@ -93,6 +147,13 @@ export const RESIZE_HANDLE_IDS: readonly ResizeHandle[] = [
   'w',
 ];
 
+// Multi-resize (#52): a multi-selection's combined bbox wears CORNER handles
+// only. Uniform scale is the only group transform the model can express
+// (core scale.ts — non-uniform scale of a rotated member would need a shear),
+// so edge handles, which promise a one-axis stretch, are deliberately NOT
+// offered for a multi-selection.
+export const CORNER_HANDLE_IDS: readonly ResizeHandle[] = ['nw', 'ne', 'se', 'sw'];
+
 export interface HandleRect {
   id: ResizeHandle;
   x: number;
@@ -101,19 +162,22 @@ export interface HandleRect {
 }
 
 // 8 resize handles in SCREEN px for an mm bbox (chrome lives in screen space).
-export function resizeHandleRects(bbox: Rect, cam: Camera): HandleRect[] {
-  const x0 = bbox.x * cam.pxPerMm + cam.offsetX;
-  const y0 = bbox.y * cam.pxPerMm + cam.offsetY;
-  const x1 = (bbox.x + bbox.width) * cam.pxPerMm + cam.offsetX;
-  const y1 = (bbox.y + bbox.height) * cam.pxPerMm + cam.offsetY;
-  const xm = (x0 + x1) / 2;
-  const ym = (y0 + y1) / 2;
-  const at = (id: ResizeHandle, x: number, y: number): HandleRect => ({
-    id,
-    x: x - HANDLE_SIZE / 2,
-    y: y - HANDLE_SIZE / 2,
-    size: HANDLE_SIZE,
-  });
+// `bbox` is the RAW (pre-rotation) rect; a non-zero rotationDeg (#51) places
+// each handle at the ROTATED corner/edge-midpoint so the handles ride the
+// oriented chrome. The squares themselves stay screen-axis-aligned — grab
+// hit-testing stays a plain point-in-rect check.
+export function resizeHandleRects(bbox: Rect, cam: Camera, rotationDeg = 0): HandleRect[] {
+  const x0 = bbox.x;
+  const y0 = bbox.y;
+  const x1 = bbox.x + bbox.width;
+  const y1 = bbox.y + bbox.height;
+  const xm = x0 + bbox.width / 2;
+  const ym = y0 + bbox.height / 2;
+  const center = rectCenter(bbox);
+  const at = (id: ResizeHandle, x: number, y: number): HandleRect => {
+    const p = mmToScreen(rotateMmPoint({ x, y }, center, rotationDeg), cam);
+    return { id, x: p.x - HANDLE_SIZE / 2, y: p.y - HANDLE_SIZE / 2, size: HANDLE_SIZE };
+  };
   return [
     at('nw', x0, y0),
     at('n', xm, y0),
@@ -124,6 +188,68 @@ export function resizeHandleRects(bbox: Rect, cam: Camera): HandleRect[] {
     at('sw', x0, y1),
     at('w', x0, ym),
   ];
+}
+
+// The 4 corner handles of an (axis-aligned) bbox — the multi-resize
+// affordance (#52). Same squares/screen-space contract as resizeHandleRects.
+export function cornerHandleRects(bbox: Rect, cam: Camera): HandleRect[] {
+  return resizeHandleRects(bbox, cam).filter((h) => CORNER_HANDLE_IDS.includes(h.id));
+}
+
+// Whether core's scaleLayer can change this layer at all (#52): patterns are
+// panel-wide and pass through unchanged (the epic's eligibility matrix), and
+// a path with no points anywhere (the parser accepts them; pathBbox gives it
+// a 0×0 box, not null) has no coordinates to scale.
+function layerCanScale(layer: Layer): boolean {
+  switch (layer.type) {
+    case 'pattern':
+      return false;
+    case 'path':
+      return (
+        layer.points.length > 0 || (layer.extraSubpaths?.some((s) => s.length > 0) ?? false)
+      );
+    default:
+      return true;
+  }
+}
+
+// The combined bbox that offers multi-resize corner handles, or null when the
+// selection doesn't qualify (#52). Gates BOTH the chrome pass and the select
+// tool's handle grab — the one source of eligibility, so what is drawn is
+// exactly what is grabbable. Qualification: >1 visible selection bboxes (the
+// same set the combined-bbox chrome unions over) AND at least one visible
+// member scaleLayer can actually change — otherwise the handles would promise
+// a gesture that cannot affect the doc (and would write a phantom undo entry).
+export function multiResizeBbox(
+  layers: readonly Layer[],
+  selectedIds: readonly string[],
+  panel: PanelDims,
+): Rect | null {
+  if (selectedIds.length < 2) return null;
+  const boxes = selectionBboxes(layers, selectedIds, panel);
+  if (boxes.length < 2) return null;
+  const scalable = layers.some(
+    (l) => selectedIds.includes(l.id) && !l.hidden && layerCanScale(l),
+  );
+  return scalable ? mergeBboxes(boxes) : null;
+}
+
+// The rotate handle floats a fixed SCREEN distance beyond the top-edge
+// midpoint, along the layer's rotated "up" direction, so it tracks the
+// oriented chrome at any rotation and stays the same size at any zoom.
+export const ROTATE_HANDLE_OFFSET_PX = 20;
+const ROTATE_HANDLE_RADIUS_PX = 5;
+
+export function rotateHandleScreenPos(bbox: Rect, rotationDeg: number, cam: Camera): Pt {
+  const topMid = mmToScreen(
+    rotateMmPoint({ x: bbox.x + bbox.width / 2, y: bbox.y }, rectCenter(bbox), rotationDeg),
+    cam,
+  );
+  const rad = (rotationDeg * Math.PI) / 180;
+  return {
+    x: topMid.x + Math.sin(rad) * ROTATE_HANDLE_OFFSET_PX,
+    y: topMid.y - Math.cos(rad) * ROTATE_HANDLE_OFFSET_PX,
+  };
 }
 
 function drawLayer(
@@ -256,6 +382,49 @@ export function renderScene(
   ctx.fillRect(cam.offsetX, cam.offsetY, panelPxW, panelPxH);
   ctx.restore();
 
+  // ghost pass: off-panel layer content at low alpha (issue #43). Runs BEFORE
+  // the clipped in-panel pass below, using its own disjoint even-odd clip —
+  // see outside-panel-region.ts for which layers are eligible.
+  const outsideRegion = outsidePanelRegion(
+    extras.showOutsidePanel,
+    doc.layers,
+    { cssW, cssH },
+    cam,
+    panel,
+  );
+  if (outsideRegion) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(
+      outsideRegion.outerRect.x,
+      outsideRegion.outerRect.y,
+      outsideRegion.outerRect.width,
+      outsideRegion.outerRect.height,
+    ); // whole viewport
+    ctx.rect(
+      outsideRegion.innerRect.x,
+      outsideRegion.innerRect.y,
+      outsideRegion.innerRect.width,
+      outsideRegion.innerRect.height,
+    ); // minus the panel
+    // The even-odd clip is load-bearing, not cosmetic: outerRect + innerRect
+    // under 'evenodd' clips to exactly the OUTSIDE region, disjoint from the
+    // panel-clipped pass below — every pixel is painted by exactly one pass.
+    // A plain full-viewport clip (no innerRect subtraction) would also paint
+    // this ghost content UNDER the panel, so any layer with opacity < 1
+    // inside the panel would double-composite against its own full-alpha
+    // draw — a real Porter-Duff alpha bug hit by a reference implementation
+    // of this feature. Do not "simplify" this into a single rect.
+    ctx.clip('evenodd');
+    ctx.globalAlpha = OUTSIDE_GHOST_ALPHA;
+    ctx.translate(cam.offsetX, cam.offsetY);
+    ctx.scale(cam.pxPerMm, cam.pxPerMm);
+    for (const layer of outsideRegion.ghostLayers) {
+      drawLayer(ctx, layer, panel, extras.images);
+    }
+    ctx.restore();
+  }
+
   // all layers, clipped to the panel, drawn in mm space via one transform
   ctx.save();
   ctx.beginPath();
@@ -273,6 +442,10 @@ export function renderScene(
   ctx.strokeStyle = 'rgba(255,255,255,0.25)';
   ctx.lineWidth = 1;
   ctx.strokeRect(cam.offsetX + 0.5, cam.offsetY + 0.5, panelPxW - 1, panelPxH - 1);
+
+  // guides (#54) — thin lines across the whole viewport, above layer content
+  // and below the selection chrome/handles.
+  drawGuides(ctx, cam, cssW, cssH, extras);
 
   // selection chrome — UNCLIPPED, in screen space
   drawSelectionChrome(ctx, doc.layers, panel, cam, extras);
@@ -304,6 +477,153 @@ function makeDraftContext(
   };
 }
 
+// Guide furniture colors (#54). A distinct cyan so guides never read as
+// selection chrome (blue) or panel outline (white).
+const GUIDE_COLOR = '#12b5cb';
+const GUIDE_HIDDEN_ALPHA = 0.3; // faint, per the Guide type contract
+const GUIDE_DELETE_COLOR = 'rgba(255,90,90,0.85)'; // "will delete on drop"
+
+// One thin, device-pixel-crisp guide line spanning the whole viewport. `coord`
+// is the screen px on the line's fixed axis (screen y for horizontal, x for
+// vertical). The caller sets stroke style / dash before calling.
+function strokeGuideLine(
+  ctx: CanvasRenderingContext2D,
+  orientation: Guide['orientation'],
+  coord: number,
+  cssW: number,
+  cssH: number,
+): void {
+  const p = Math.round(coord) + 0.5; // center in a device px for a crisp 1px line
+  ctx.beginPath();
+  if (orientation === 'horizontal') {
+    ctx.moveTo(0, p);
+    ctx.lineTo(cssW, p);
+  } else {
+    ctx.moveTo(p, 0);
+    ctx.lineTo(p, cssH);
+  }
+  ctx.stroke();
+}
+
+function drawGuides(
+  ctx: CanvasRenderingContext2D,
+  cam: Camera,
+  cssW: number,
+  cssH: number,
+  extras: RenderExtras,
+): void {
+  const guides = extras.guides ?? [];
+  const draft = extras.guideDraft ?? null;
+  if (guides.length === 0 && !draft) return;
+
+  ctx.save();
+  ctx.lineWidth = 1;
+
+  // committed guides — the one being moved is drawn from the draft instead.
+  for (const guide of guides) {
+    if (draft?.movingId === guide.id) continue;
+    ctx.strokeStyle = GUIDE_COLOR;
+    ctx.globalAlpha = guide.hidden ? GUIDE_HIDDEN_ALPHA : 1;
+    ctx.setLineDash(guide.hidden ? [3, 3] : []);
+    strokeGuideLine(ctx, guide.orientation, guideScreenCoord(guide, cam), cssW, cssH);
+  }
+
+  // live drag preview: a create drag only shows while over the canvas; a move
+  // drag off the canvas paints a "will delete" affordance instead.
+  if (draft && (draft.overCanvas || draft.movingId !== null)) {
+    const coord =
+      draft.orientation === 'horizontal'
+        ? draft.position * cam.pxPerMm + cam.offsetY
+        : draft.position * cam.pxPerMm + cam.offsetX;
+    const deleting = draft.movingId !== null && !draft.overCanvas;
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = deleting ? GUIDE_DELETE_COLOR : GUIDE_COLOR;
+    ctx.setLineDash(deleting ? [4, 4] : []);
+    strokeGuideLine(ctx, draft.orientation, coord, cssW, cssH);
+  }
+
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+// Axis-aligned selection bboxes (mm) for the chrome pass: one per selected,
+// non-hidden layer, in selection order. Hidden layers are skipped — the layer
+// paint pass skips them (renderer.ts) so their chrome must vanish too. This is
+// also the set the combined bbox unions over. Kept pure + exported so the
+// selection-bounds rule is unit-testable without a Canvas.
+export function selectionBboxes(
+  layers: readonly Layer[],
+  selectedIds: readonly string[],
+  panel: PanelDims,
+): Rect[] {
+  const boxes: Rect[] = [];
+  for (const id of selectedIds) {
+    const layer = layers.find((l) => l.id === id);
+    if (!layer || layer.hidden) continue;
+    const raw = layerBbox(layer, panel);
+    if (!raw) continue;
+    // normalizeRect: a mirrored shape/image (negative width/height) reaches
+    // here as a negative-sized rect when unrotated (rotatedRectAABB only
+    // normalizes via min/max when it actually rotates). mergeBboxes, the
+    // corner handles, and the scale anchor all assume min=origin, so an
+    // un-normalized negative box yields a wrong combined outline and anchor.
+    boxes.push(normalizeRect(rotatedRectAABB(raw, layerRotation(layer))));
+  }
+  return boxes;
+}
+
+// Hover chrome (#47): a solid 1px outline at reduced alpha — deliberately
+// weaker than the dashed selection chrome so it reads as "would select", not
+// "is selected". Layer-hover only: the reference implementation's 1.2×
+// handle-hover enlargement is a deliberate, recorded exclusion.
+const HOVER_COLOR = 'rgba(77,163,255,0.55)';
+
+export function drawHoverOutline(ctx: CanvasRenderingContext2D, rect: Rect, cam: Camera): void {
+  ctx.save();
+  ctx.strokeStyle = HOVER_COLOR;
+  ctx.lineWidth = 1;
+  strokeMmRect(ctx, rect, cam);
+  ctx.restore();
+}
+
+function strokeMmRect(ctx: CanvasRenderingContext2D, rect: Rect, cam: Camera): void {
+  ctx.strokeRect(
+    rect.x * cam.pxPerMm + cam.offsetX,
+    rect.y * cam.pxPerMm + cam.offsetY,
+    rect.width * cam.pxPerMm,
+    rect.height * cam.pxPerMm,
+  );
+}
+
+// Oriented chrome outline (#51): the rect's 4 corners rotated about its
+// center, stroked as a closed polygon in screen space.
+function strokeOrientedMmRect(
+  ctx: CanvasRenderingContext2D,
+  rect: Rect,
+  rotationDeg: number,
+  cam: Camera,
+): void {
+  const center = rectCenter(rect);
+  const pts = rectCorners(rect).map((c) => mmToScreen(rotateMmPoint(c, center, rotationDeg), cam));
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i += 1) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.stroke();
+}
+
+// White squares with the selection-blue border — the one handle style, shared
+// by single-selection resize handles and the multi-selection corners (#52).
+function drawHandleSquares(ctx: CanvasRenderingContext2D, rects: readonly HandleRect[]): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = SELECT_COLOR;
+  ctx.lineWidth = 1;
+  for (const h of rects) {
+    ctx.fillRect(h.x, h.y, h.size, h.size);
+    ctx.strokeRect(h.x, h.y, h.size, h.size);
+  }
+}
+
 function drawSelectionChrome(
   ctx: CanvasRenderingContext2D,
   layers: Layer[],
@@ -311,36 +631,81 @@ function drawSelectionChrome(
   cam: Camera,
   extras: RenderExtras,
 ): void {
-  const selected = layers.find((l) => l.id === extras.selectedId);
-  if (!selected) return;
-  if (selected.hidden) return; // the layer pass skips hidden layers — chrome must too
-  const rawBbox = layerBbox(selected, panel);
-  if (!rawBbox) return;
-  const rotation = layerRotation(selected);
-  const bbox = rotatedRectAABB(rawBbox, rotation);
+  const boxes = selectionBboxes(layers, extras.selectedIds, panel);
+  if (boxes.length === 0) return;
+
+  // Handles + rotate affordance + path nodes are single-selection concerns:
+  // multi-resize is #52. `selected` is defined iff EXACTLY one layer is
+  // selected — and boxes is then non-empty, so the layer is present + visible.
+  const selected =
+    extras.selectedIds.length === 1
+      ? layers.find((l) => l.id === extras.selectedIds[0])
+      : undefined;
+  const rotation = selected ? layerRotation(selected) : 0;
+  // RAW (pre-rotation) bbox: the oriented chrome + handles anchor to it, not
+  // to the axis-aligned AABB in `boxes`.
+  const rawBbox = selected ? layerBbox(selected, panel) : null;
 
   ctx.save();
   ctx.strokeStyle = SELECT_COLOR;
   ctx.lineWidth = 1.5;
   ctx.setLineDash([5, 4]);
-  ctx.strokeRect(
-    bbox.x * cam.pxPerMm + cam.offsetX,
-    bbox.y * cam.pxPerMm + cam.offsetY,
-    bbox.width * cam.pxPerMm,
-    bbox.height * cam.pxPerMm,
-  );
+  if (selected && rotation && rawBbox) {
+    // Oriented chrome (#51): a single rotated layer wears the ORIENTED rect
+    // outline. The old axis-aligned rotatedRectAABB box would be incoherent
+    // against a rotate handle and rotated-corner resize handles.
+    strokeOrientedMmRect(ctx, rawBbox, rotation, cam);
+  } else {
+    // one dashed bbox per selected layer …
+    for (const b of boxes) strokeMmRect(ctx, b, cam);
+    // … plus the combined bbox that encloses them all when more than one is
+    // selected. mergeBboxes is the shared union (#45) — no bespoke union here.
+    if (boxes.length > 1) strokeMmRect(ctx, mergeBboxes(boxes), cam);
+  }
   ctx.setLineDash([]);
 
-  // resize handles only when the layer is eligible (not rotated)
-  const resizable = (selected.type === 'shape' || selected.type === 'image') && !rotation;
-  if (resizable) {
-    ctx.fillStyle = '#ffffff';
+  if (!selected) {
+    // Multi-resize affordance (#52): corner handles on the combined bbox.
+    // multiResizeBbox is the shared eligibility gate — the select tool grabs
+    // exactly the rects drawn here.
+    const multiBbox = multiResizeBbox(layers, extras.selectedIds, panel);
+    if (multiBbox) drawHandleSquares(ctx, cornerHandleRects(multiBbox, cam));
+    ctx.restore();
+    return;
+  }
+
+  // Resize handles: rotation no longer disqualifies a shape — the handles sit
+  // at the rotated corners and the drag resolves via resizeRotatedRect (#48).
+  // Type gate only (isResizable was deleted in #48): shape/image are the
+  // types with free width/height.
+  const resizable = selected.type === 'shape' || selected.type === 'image';
+  if (resizable && rawBbox) {
+    drawHandleSquares(ctx, resizeHandleRects(rawBbox, cam, rotation));
+  }
+
+  // Rotate handle (#51): shape/text only — the types layerRotation reads. A
+  // stem connects the rotated top-edge midpoint to a circular knob.
+  if (canRotate(selected) && rawBbox) {
+    const topMid = mmToScreen(
+      rotateMmPoint(
+        { x: rawBbox.x + rawBbox.width / 2, y: rawBbox.y },
+        rectCenter(rawBbox),
+        rotation,
+      ),
+      cam,
+    );
+    const knob = rotateHandleScreenPos(rawBbox, rotation, cam);
     ctx.strokeStyle = SELECT_COLOR;
     ctx.lineWidth = 1;
-    for (const h of resizeHandleRects(bbox, cam)) {
-      ctx.fillRect(h.x, h.y, h.size, h.size);
-      ctx.strokeRect(h.x, h.y, h.size, h.size);
-    }
+    ctx.beginPath();
+    ctx.moveTo(topMid.x, topMid.y);
+    ctx.lineTo(knob.x, knob.y);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(knob.x, knob.y, ROTATE_HANDLE_RADIUS_PX, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
   }
 
   // path node anchors + bezier handles when node-editing

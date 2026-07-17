@@ -12,15 +12,51 @@ import { LayerList } from './layer-list';
 
 export interface SidebarProps {
   ctx: ToolContext;
-  selectedId: string | null;
+  selectedIds: readonly string[];
   selectedLayer: Layer | null;
   activeToolId: string;
+  showOutsidePanel: boolean;
+  onShowOutsidePanelChange: (value: boolean) => void;
+  showGuides: boolean;
+  onShowGuidesChange: (value: boolean) => void;
 }
 
-export function Sidebar({ ctx, selectedId, selectedLayer, activeToolId }: SidebarProps) {
+export function Sidebar({
+  ctx,
+  selectedIds,
+  selectedLayer,
+  activeToolId,
+  showOutsidePanel,
+  onShowOutsidePanelChange,
+  showGuides,
+  onShowGuidesChange,
+}: SidebarProps) {
   return (
     <aside className="flex w-72 flex-col border-l border-neutral-800 bg-neutral-900">
       <div className="flex flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3">
+        <CollapsibleSection title="View">
+          <div className="flex flex-col gap-2">
+            <label className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-neutral-400">Show content outside the panel</span>
+              <input
+                type="checkbox"
+                checked={showOutsidePanel}
+                onChange={(e) => onShowOutsidePanelChange(e.target.checked)}
+                className="accent-sky-400"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-neutral-400">Show guides</span>
+              <input
+                type="checkbox"
+                checked={showGuides}
+                onChange={(e) => onShowGuidesChange(e.target.checked)}
+                className="accent-sky-400"
+              />
+            </label>
+          </div>
+        </CollapsibleSection>
+
         <CollapsibleSection title="Panel">
           <label className="flex items-center justify-between gap-2 text-xs">
             <span className="text-neutral-400">Size</span>
@@ -54,11 +90,11 @@ export function Sidebar({ ctx, selectedId, selectedLayer, activeToolId }: Sideba
         </CollapsibleSection>
 
         <CollapsibleSection title="Layers">
-          <LayerList ctx={ctx} selectedId={selectedId} />
+          <LayerList ctx={ctx} selectedIds={selectedIds} />
         </CollapsibleSection>
 
         <CollapsibleSection title={selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}>
-          <InspectorHost ctx={ctx} layer={selectedLayer} />
+          <InspectorHost ctx={ctx} layer={selectedLayer} selectedIds={selectedIds} />
         </CollapsibleSection>
       </div>
 

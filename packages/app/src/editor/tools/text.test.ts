@@ -18,6 +18,7 @@ function stubCtx(doc: DocState): ToolContext {
     doc,
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: PANEL,
+    selectedIds: [],
     selectedId: null,
     selectedLayer: null,
     toMm: (p: Pt) => p,
@@ -28,6 +29,7 @@ function stubCtx(doc: DocState): ToolContext {
     undo: vi.fn(),
     redo: vi.fn(),
     select: vi.fn(),
+    selectIds: vi.fn(),
     setCamera: vi.fn(),
     setActiveTool: vi.fn(),
     requestRepaint: vi.fn(),
@@ -55,7 +57,7 @@ const text = getTool('text')!;
 
 describe('text tool — click to place', () => {
   it('inserts a TextLayer at the click point, commits once, then selects it and switches to select', () => {
-    const doc: DocState = { panelHp: 12, layers: [] };
+    const doc: DocState = { panelHp: 12, guides: [], layers: [] };
     const ctx = stubCtx(doc);
 
     text.onPointerDown?.(ptr({ x: 12, y: 34 }), ctx);
@@ -89,7 +91,7 @@ describe('text tool — click to place', () => {
       y: 0,
       color: 2,
     };
-    const doc: DocState = { panelHp: 12, layers: [existing] };
+    const doc: DocState = { panelHp: 12, guides: [], layers: [existing] };
     const ctx = stubCtx(doc);
 
     text.onPointerDown?.(ptr({ x: 5, y: 5 }), ctx);

@@ -12,23 +12,25 @@ order artifact. It is produced by `serializePanelConfig()` and consumed by
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "app": "zpd",
   "panel": { "hp": 12, "widthMm": 60.6, "heightMm": 128.5 },
   "palette": ["black", "gold", "white"],
-  "layers": []
+  "layers": [],
+  "guides": []
 }
 ```
 
 | Field | Type | Notes |
 |---|---|---|
-| `version` | `1` | `PANEL_CONFIG_VERSION`. See [Versioning](#versioning) below. |
+| `version` | `2` | `PANEL_CONFIG_VERSION`. See [Versioning](#versioning) below. |
 | `app` | `"zpd"` | Fixed literal identifying the producing app. |
 | `panel.hp` | `number` | Panel width in Eurorack HP, from the live document (`doc.panelHp`). |
 | `panel.widthMm` | `number` | Derived from `hp` via `panelWidthMm()` — **advisory output**, not re-trusted on import (see below). |
 | `panel.heightMm` | `number` | `PANEL_HEIGHT_MM`, the fixed 3U Eurorack panel height (128.5mm). |
 | `palette` | `string[]` | The three fixed color names, in index order: `["black", "gold", "white"]`. |
 | `layers` | `Layer[]` | The document's layer stack, bottom to top. See [Layer fields](#layer-fields). |
+| `guides` | `Guide[]` | The document's ruler guides. Added in v2 (see [Versioning](#versioning)); see [Guide fields](#guide-fields). |
 
 :::note
 `panel.widthMm`, `panel.heightMm`, and `palette` are **derived/advisory
@@ -106,6 +108,17 @@ All five layer types share a base shape plus type-specific fields.
 | `src` | `string` | A data URL. Design-time reference only — a raster cannot be manufactured; the final panel uses the vector layers traced from it. |
 | `x`, `y`, `width`, `height` | `number` | Millimeters. |
 
+## Guide fields
+
+Each entry in the `guides` array is a ruler guide — a reference line, not a layer (see [Document state &amp; layers → Guides](../document-model/document-state-and-layers.mdx#guides)).
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `string` | Stable guide id. Minted via `mintId('guide')` if missing on import. |
+| `orientation` | `'horizontal' \| 'vertical'` | Required. A `horizontal` guide is the line `y = position`; a `vertical` guide is `x = position`. An entry with any other value is **dropped** on import (a guide with no valid axis can't plant a line). |
+| `position` | `number` | The line's coordinate in millimeters. Required and finite; an entry with a missing/non-finite `position` is **dropped** rather than defaulted to `0`. |
+| `hidden` | `boolean` (optional) | Omitted unless set. A hidden guide renders faintly and never snaps. |
+
 ## ColorIndex + palette
 
 Every layer's `color` (and a `path` layer's `fill`/`stroke`) is a
@@ -125,11 +138,16 @@ user-configurable per document.
 
 ## Versioning
 
-`PANEL_CONFIG_VERSION` is currently `1`, and the `PanelConfig` TypeScript
-type pins `version: 1` — there is only one format generation so far. The
-field exists so a future format change has somewhere to signal itself:
-a later parser could branch on `version` to handle older files, or reject/
-migrate a file whose version it doesn't recognize. Today, `parsePanelConfig`
-does not actually read or validate the incoming `version` field — see
-[Defensive Parsing](./defensive-parsing.mdx) for why the parser is lenient
-by design rather than strict about the envelope shape.
+`PANEL_CONFIG_VERSION` is currently `2`, and the `PanelConfig` TypeScript
+type pins `version: 2`. **v2** added the top-level `guides` array; v1 was the
+same envelope without it.
+
+The migration is deliberately **path-free**: `parsePanelConfig` does not read
+or branch on the incoming `version` field. Because every field defends itself
+individually, a v1 file (or any file missing `guides`, including one a user
+hand-edited) loads cleanly — `parseGuides` sees no array and yields `[]`, the
+same result the migration would produce. So there is no dedicated v1→v2
+upgrade step: an old file simply parses to a document with no guides. The
+`version` field is emitted for the human/order reader, not consumed by the
+parser — see [Defensive Parsing](./defensive-parsing.mdx) for why the parser
+is lenient by design rather than strict about the envelope shape.

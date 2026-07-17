@@ -11,6 +11,7 @@ export interface CanvasViewportProps {
   onPointerDown(e: ReactPointerEvent<HTMLCanvasElement>): void;
   onPointerMove(e: ReactPointerEvent<HTMLCanvasElement>): void;
   onPointerUp(e: ReactPointerEvent<HTMLCanvasElement>): void;
+  onPointerLeave(e: ReactPointerEvent<HTMLCanvasElement>): void;
   onDoubleClick(e: ReactPointerEvent<HTMLCanvasElement>): void;
 }
 
@@ -21,6 +22,7 @@ export function CanvasViewport({
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  onPointerLeave,
   onDoubleClick,
 }: CanvasViewportProps) {
   return (
@@ -32,6 +34,7 @@ export function CanvasViewport({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerLeave={onPointerLeave}
         onDoubleClick={onDoubleClick}
       />
     </div>

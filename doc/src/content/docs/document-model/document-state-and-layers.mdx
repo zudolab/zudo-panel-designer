@@ -14,11 +14,13 @@ Every geometric value in the document model — layer `x`/`y`, `width`/`height`,
 interface DocState {
   panelHp: number;
   layers: Layer[]; // bottom -> top (index 0 renders first)
+  guides: Guide[]; // ruler guides — view furniture, not layers
 }
 ```
 
 - `panelHp` — the panel's width, expressed in HP (see [Panel sizing](./panel-sizing.mdx)).
 - `layers` — a flat, ordered array. Index `0` is the **bottom** of the stack and renders first; later entries render on top of earlier ones.
+- `guides` — the document's ruler guides, a **required** array (see [Guides](#guides)).
 
 ## The `Layer` union
 
@@ -121,23 +123,41 @@ interface ImageLayer extends LayerBase {
 
 `src` is a design-time source only — a raster cannot be manufactured on the panel. The final panel uses the vector layers traced from it, not this layer.
 
+## Guides
+
+Guides are straight reference lines the editor draws to help you align layers. They are **view furniture, not layers** — they live in `DocState.guides` and never in `layers`, so they carry no color and are never fabricated.
+
+```ts
+interface Guide {
+  id: string;
+  orientation: 'horizontal' | 'vertical';
+  position: number; // mm
+  hidden?: boolean;
+}
+```
+
+A `horizontal` guide is the line `y = position` (spanning the panel width); a `vertical` guide is `x = position` (spanning the height). `guides` is required rather than optional so read sites never need `doc.guides ?? []`; the serialization boundary owns backward-compat instead (an old config with no `guides` loads as `[]` — see below). The editor-side behavior — dragging guides out of the rulers, snapping, and the "Show guides" toggle — is covered in [Editor → Guides](../editor/guides.mdx).
+
 ## Serializing to `PanelConfig`
 
 `DocState` is the in-memory working document. `PanelConfig` is the versioned, exported shape a user downloads and hands off for fabrication:
 
 ```ts
-const PANEL_CONFIG_VERSION = 1;
+const PANEL_CONFIG_VERSION = 2;
 
 interface PanelConfig {
-  version: 1;
+  version: 2;
   app: 'zpd';
   panel: { hp: number; widthMm: number; heightMm: number };
   palette: string[];
   layers: Layer[];
+  guides: Guide[];
 }
 ```
 
-`hp` and `layers` are authoritative and round-trip. `panel.widthMm`, `panel.heightMm`, and `palette` are **derived, advisory output** for a human/order reader — computed at export time from `hp` and the fixed palette — and are not re-trusted when the file is loaded back in.
+`hp`, `layers`, and `guides` are authoritative and round-trip. `panel.widthMm`, `panel.heightMm`, and `palette` are **derived, advisory output** for a human/order reader — computed at export time from `hp` and the fixed palette — and are not re-trusted when the file is loaded back in.
+
+**v2** added the top-level `guides` array. A v1 config (or any config missing `guides`) still loads cleanly, with `guides` defaulting to `[]`: `parsePanelConfig` doesn't branch on `version` — every field defends itself — so old files need no dedicated migration path. See [PanelConfig Format → Versioning](../export/panel-config-format.mdx#versioning).
 
 <Warning title="parsePanelConfig never throws">
   `parsePanelConfig` is fed whatever JSON a user hand-edited or an old/foreign tool produced, so every field is defended individually rather than letting one bad field fail the whole document: an invalid or missing `hp` falls back to the default panel size, an invalid `color` index clamps to `0` (black), and any layer with an unrecognized `type` is silently dropped. Garbage or non-object input yields the default document.

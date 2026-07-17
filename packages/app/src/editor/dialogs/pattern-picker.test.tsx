@@ -15,9 +15,10 @@ import { THUMBNAIL_SIZE_PX } from './pattern-picker';
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    doc: { panelHp: 12, layers: [] },
+    doc: { panelHp: 12, guides: [], layers: [] },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
+    selectedIds: [],
     selectedId: null,
     selectedLayer: null,
     toMm: (p: Pt) => p,
@@ -28,6 +29,7 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     undo: vi.fn(),
     redo: vi.fn(),
     select: vi.fn(),
+    selectIds: vi.fn(),
     setCamera: vi.fn(),
     setActiveTool: vi.fn(),
     requestRepaint: vi.fn(),
@@ -77,7 +79,7 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
       color: 1,
       params: { spacing: 999 }, // deliberately non-default to prove the reset
     };
-    const doc: DocState = { panelHp: 12, layers: [existing] };
+    const doc: DocState = { panelHp: 12, guides: [], layers: [existing] };
     const ctx = stubCtx({ doc });
     const close = vi.fn();
     const PatternPickerDialog = getPatternPickerDialog();
@@ -113,7 +115,7 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
       color: 2,
       params: { size: 5 },
     };
-    const doc: DocState = { panelHp: 12, layers: [target1, other] };
+    const doc: DocState = { panelHp: 12, guides: [], layers: [target1, other] };
     const ctx = stubCtx({ doc });
     const PatternPickerDialog = getPatternPickerDialog();
 
@@ -135,7 +137,7 @@ describe('pattern-picker dialog — add (opened without layerId)', () => {
       color: 1,
       params: {},
     };
-    const doc: DocState = { panelHp: 12, layers: [existing] };
+    const doc: DocState = { panelHp: 12, guides: [], layers: [existing] };
     const ctx = stubCtx({ doc });
     const close = vi.fn();
     const PatternPickerDialog = getPatternPickerDialog();
@@ -217,9 +219,7 @@ describe('pattern-picker dialog — a11y', () => {
     expect(document.activeElement).toBe(invoker);
 
     const PatternPickerDialog = getPatternPickerDialog();
-    const { unmount } = render(
-      <PatternPickerDialog props={{}} close={vi.fn()} ctx={stubCtx()} />,
-    );
+    const { unmount } = render(<PatternPickerDialog props={{}} close={vi.fn()} ctx={stubCtx()} />);
     unmount();
     expect(document.activeElement).toBe(invoker);
     invoker.remove();

@@ -11,13 +11,20 @@ export interface PanelDims {
   heightMm: number;
 }
 
-// Everything a tool handler needs. `doc`, `camera`, `selectedId` are LIVE
+// Everything a tool handler needs. `doc`, `camera`, `selectedIds` are LIVE
 // getters (read the latest committed state, never a stale render closure), so
 // a handler can read state it just mutated within the same gesture.
 export interface ToolContext {
   readonly doc: DocState;
   readonly camera: Camera;
   readonly panel: PanelDims;
+  // Multi-select contract (#44). `selectedIds` is the single source of truth:
+  // always de-duplicated, filtered to layers present in `doc`, and in DOCUMENT
+  // order (layers-array order, not click order) — see selection.ts.
+  readonly selectedIds: readonly string[];
+  // DERIVED single-selection views, kept so single-selection tools and
+  // inspectors compile unchanged: non-null only when exactly ONE layer is
+  // selected.
   readonly selectedId: string | null;
   readonly selectedLayer: Layer | null;
 
@@ -34,7 +41,10 @@ export interface ToolContext {
   undo(): void;
   redo(): void;
 
+  // select(id) is the derived single-selection setter — sugar for
+  // selectIds(id === null ? [] : [id]). Existing tools keep calling it.
   select(id: string | null): void;
+  selectIds(ids: readonly string[]): void;
   setCamera(next: Camera | ((cam: Camera) => Camera)): void;
   setActiveTool(id: string): void;
 
@@ -100,6 +110,10 @@ export interface ToolModule {
   onPointerDown?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onPointerMove?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onPointerUp?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
+  // Pointer left the canvas element (#47): transient chrome keyed to the
+  // cursor position (hover outlines, …) must clear here — no further
+  // onPointerMove will arrive to do it.
+  onPointerLeave?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onDoubleClick?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onKeyDown?(e: ToolKeyEvent, ctx: ToolContext): ToolEventResult;
   renderDraft?(draft: DraftRenderContext, ctx: ToolContext): void;

@@ -51,10 +51,12 @@ Crucially, the strips are **fixed in layout** — they occupy static 20px gutter
 1. Reset the transform and clear the whole backing store, then scale by `devicePixelRatio` — so 1 canvas unit equals 1 CSS px regardless of screen density.
 2. Fill the workspace background behind the panel.
 3. Draw a drop shadow + solid black fill for the panel rect, in screen space.
-4. **One `setTransform`-equivalent for the whole layer pass**: `ctx.save()`, clip to the panel rect, `ctx.translate(offsetX, offsetY)`, `ctx.scale(pxPerMm, pxPerMm)` — from this point until the matching `ctx.restore()`, **1 canvas unit = 1mm**, matching the pattern generators' own coordinate contract (see [Patterns → Generator contract](../patterns/generator-contract.mdx)). Every non-hidden layer is drawn once, in array order (later layers on top), inside this single transform.
-5. Restore, then stroke the panel outline in screen space.
-6. Draw **unclipped** selection chrome (dashed bbox, resize handles, path node anchors/handles) for the selected layer, if any and if it isn't hidden.
-7. Call the active tool's `renderDraft` hook, if it has one, so an in-progress gesture (the pen tool's draft path, for example) paints on top of everything else.
+4. When **Show content outside the panel** is on, run the [off-panel ghost pass](#the-off-panel-ghost-pass) — the layer content that spills past the panel edge, dimmed, drawn *before* the clipped pass below into a disjoint exterior region.
+5. **One `setTransform`-equivalent for the whole layer pass**: `ctx.save()`, clip to the panel rect, `ctx.translate(offsetX, offsetY)`, `ctx.scale(pxPerMm, pxPerMm)` — from this point until the matching `ctx.restore()`, **1 canvas unit = 1mm**, matching the pattern generators' own coordinate contract (see [Patterns → Generator contract](../patterns/generator-contract.mdx)). Every non-hidden layer is drawn once, in array order (later layers on top), inside this single transform.
+6. Restore, then stroke the panel outline in screen space.
+7. Draw the [guides](./guides.mdx) — thin lines across the whole viewport, above the layer content and below the selection chrome.
+8. Draw **unclipped** selection chrome (a dashed bbox per selected layer, a combined bbox when more than one is selected, and resize/rotate handles plus path node anchors/handles only when exactly one layer is selected).
+9. Call the active tool's `renderDraft` hook, if it has one, so an in-progress gesture (the pen tool's draft path, or the select tool's marquee/hover, for example) paints on top of everything else.
 
 ### Per-layer-type drawing
 
@@ -67,6 +69,26 @@ Crucially, the strips are **fixed in layout** — they occupy static 20px gutter
 - **image** — draws the cached `<img>` if it's loaded, otherwise a dashed placeholder outline (images are decoded/cached by `Editor.tsx`'s asset-loading effect, keyed by layer id).
 
 A rotated `shape`/`text` layer is rotated around its own bbox center via `ctx.translate`/`ctx.rotate`/`ctx.translate` before the type-specific draw runs; `path`/`pattern`/`image` layers have no rotation field.
+
+## The off-panel ghost pass
+
+Historically the editor clipped every layer to the panel rect, so a layer dragged partly off the panel had its off-panel portion clipped away while its selection handles still drew — you saw handles floating over empty workspace with no shape under them. The **Show content outside the panel** view option (default on — see [Interface → Right sidebar](./interface.mdx#right-sidebar)) fixes that by painting the off-panel region as a dimmed ghost.
+
+The pass runs **before** the clipped in-panel pass, into its own region. `outsidePanelRegion()` (`outside-panel-region.ts`, pure and node-tested) decides the two clip rects and which layers are eligible; `renderer.ts` turns that into the canvas calls. The region is an **even-odd clip of two rects** — the whole viewport (`outerRect`) *minus* the panel (`innerRect`) — which clips to exactly the region **outside** the panel, disjoint from the panel-clipped pass, so every pixel is painted by exactly one pass. That disjointness is load-bearing, not cosmetic: a plain full-viewport clip would also paint the ghost content *under* the panel, so any in-panel layer with opacity below 1 would double-composite against its own full-alpha draw — a real Porter-Duff alpha bug this feature was careful to avoid. Inside the clip the ghost content is drawn at **35% alpha**.
+
+### Why dimmed, and why view-only
+
+The dimming is a deliberate design choice, recorded in code and here so it is not "corrected" into full opacity later. In zpd the area beyond the panel edge is **physically cut off in fabrication** — so a dimmed ghost encodes "this will not be manufactured", not merely "this is off to the side".
+
+The toggle is **view-only**. Export has *never* clipped: `serializePanelConfig` (`serialize.ts`) emits `doc.layers` verbatim — off-panel geometry and all — and the clip only ever existed in the renderer. So turning the ghost on or off, like the clip it gates, changes only what you *see*, never what you *order*. (An off-panel layer is still a modeling mistake for a real panel; the ghost just makes it visible instead of silently clipped.)
+
+### What is ghosted
+
+`outsidePanelRegion` filters the eligible layers:
+
+- **Hidden layers** are never drawn, as everywhere else.
+- **Pattern layers are excluded** — a correctness rule, not an optimization. Patterns deliberately **overscan** the panel edges (`@zpd/patterns`' `centeredStart()`) so a dot grid reads as intentional at any panel size, and it is the main pass's panel clip that hides that overscan. Ghosting a pattern would flood the entire gutter with dot-grid. (Patterns are semantically [panel-bound](./tools.mdx#layer-eligibility-matrix), so `layerBbox()` returning the panel rect for a pattern must not be read as "a pattern can't paint outside it".)
+- **Layers fully inside the panel are skipped** — a pure performance cull. A layer whose rotation-aware bbox stays within the panel can't contribute a visible ghost pixel (the exterior clip rejects everything it paints), so drawing it here would just re-render it — and, for a path layer, rebuild its `Path2D` — a second time per repaint for zero visual effect, costly on a large trace with hundreds of path layers.
 
 ## mm↔px only exists at the transform boundary
 

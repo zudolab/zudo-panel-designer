@@ -34,6 +34,7 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     doc: { panelHp: 12, layers: [] },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
+    selectedIds: [],
     selectedId: null,
     selectedLayer: null,
     toMm: (p: Pt) => p,
@@ -44,6 +45,7 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     undo: vi.fn(),
     redo: vi.fn(),
     select: vi.fn(),
+    selectIds: vi.fn(),
     setCamera: vi.fn(),
     setActiveTool: vi.fn(),
     requestRepaint: vi.fn(),
@@ -122,7 +124,7 @@ describe('public registry API — throwaway inspector', () => {
         height: 10,
         color: 1,
       };
-      render(<InspectorHost ctx={stubCtx()} layer={layer} />);
+      render(<InspectorHost ctx={stubCtx()} layer={layer} selectedIds={[layer.id]} />);
       expect(screen.getByText('DEMO-INSPECTOR')).toBeTruthy();
     } finally {
       // restore the real inspector so we don't leak into other assertions

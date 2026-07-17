@@ -15,9 +15,10 @@ afterEach(cleanup);
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    doc: { panelHp: 12, layers: [] },
+    doc: { panelHp: 12, guides: [], layers: [] },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
+    selectedIds: [],
     selectedId: null,
     selectedLayer: null,
     toMm: (p: Pt) => p,
@@ -28,6 +29,7 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     undo: vi.fn(),
     redo: vi.fn(),
     select: vi.fn(),
+    selectIds: vi.fn(),
     setCamera: vi.fn(),
     setActiveTool: vi.fn(),
     requestRepaint: vi.fn(),
@@ -54,7 +56,7 @@ describe('trace dialog', () => {
   });
 
   it('mounts against a real image layer without crashing', () => {
-    const ctx = stubCtx({ doc: { panelHp: 12, layers: [IMAGE_LAYER] } });
+    const ctx = stubCtx({ doc: { panelHp: 12, guides: [], layers: [IMAGE_LAYER] } });
     const Dialog = getDialog('trace')!.component;
     render(<Dialog props={{ layerId: 'img-1' }} close={vi.fn()} ctx={ctx} />);
 
@@ -64,7 +66,7 @@ describe('trace dialog', () => {
   });
 
   it('shows a fallback + Close when the layer id no longer exists, without crashing', () => {
-    const ctx = stubCtx({ doc: { panelHp: 12, layers: [] } });
+    const ctx = stubCtx({ doc: { panelHp: 12, guides: [], layers: [] } });
     const Dialog = getDialog('trace')!.component;
     const close = vi.fn();
     render(<Dialog props={{ layerId: 'missing' }} close={close} ctx={ctx} />);
