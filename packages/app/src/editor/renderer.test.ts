@@ -57,6 +57,21 @@ describe('selectionBboxes', () => {
     const combined = mergeBboxes(selectionBboxes(layers, ['a', 'b'], PANEL));
     expect(combined).toEqual({ x: 0, y: 0, width: 50, height: 40 });
   });
+
+  it('normalizes a mirrored member (negative width) to its visual rect', () => {
+    // x 20, width -30 spans -10..20 visually → normalized bbox x -10, width 30.
+    const layers: Layer[] = [shape('m', 20, 0, { width: -30 })];
+    expect(selectionBboxes(layers, ['m'], PANEL)).toEqual([
+      { x: -10, y: 0, width: 30, height: 10 },
+    ]);
+  });
+
+  it('the combined bbox stays correct when a member is mirrored', () => {
+    // Without normalization the mirrored member would collapse/invert the union.
+    const layers: Layer[] = [shape('m', 20, 0, { width: -30 }), shape('b', 40, 0)];
+    const combined = mergeBboxes(selectionBboxes(layers, ['m', 'b'], PANEL));
+    expect(combined).toEqual({ x: -10, y: 0, width: 60, height: 10 });
+  });
 });
 
 // --- oriented chrome geometry (#51) -----------------------------------------

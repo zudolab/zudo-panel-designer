@@ -16,6 +16,21 @@ export interface Rect {
 // alias for call sites that read more naturally as "bbox" than "rect"
 export type Bbox = Rect;
 
+// Flip negative width/height to positive, shifting the origin so the rect still
+// covers the same region. Mirrored geometry — a negative width/height, which
+// the numeric inspectors permit and the renderer paints as a flip — otherwise
+// corrupts any consumer that assumes min=origin/max=origin+size: union bounds,
+// scale/anchor corners, and panel-boundary tests. Normalize at the point a rect
+// enters that kind of math.
+export function normalizeRect(rect: Rect): Rect {
+  return {
+    x: Math.min(rect.x, rect.x + rect.width),
+    y: Math.min(rect.y, rect.y + rect.height),
+    width: Math.abs(rect.width),
+    height: Math.abs(rect.height),
+  };
+}
+
 export function rectCenter(rect: Rect): Pt {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
 }
@@ -67,18 +82,17 @@ export function rotatedRectAABB(rect: Rect, rotationDeg?: number): Rect {
 
 // AABB overlap test. Inclusive: rects that merely touch along an edge or at a
 // corner DO intersect — a marquee that grazes a layer's edge should pick it up.
-// Tolerates negative width/height (in-progress resize drags produce them) by
-// normalizing each axis to min/max first.
+// Tolerates negative width/height (in-progress resize drags produce them) via
+// normalizeRect.
 export function rectsIntersect(a: Rect, b: Rect): boolean {
-  const aMinX = Math.min(a.x, a.x + a.width);
-  const aMaxX = Math.max(a.x, a.x + a.width);
-  const aMinY = Math.min(a.y, a.y + a.height);
-  const aMaxY = Math.max(a.y, a.y + a.height);
-  const bMinX = Math.min(b.x, b.x + b.width);
-  const bMaxX = Math.max(b.x, b.x + b.width);
-  const bMinY = Math.min(b.y, b.y + b.height);
-  const bMaxY = Math.max(b.y, b.y + b.height);
-  return aMinX <= bMaxX && bMinX <= aMaxX && aMinY <= bMaxY && bMinY <= aMaxY;
+  const na = normalizeRect(a);
+  const nb = normalizeRect(b);
+  return (
+    na.x <= nb.x + nb.width &&
+    nb.x <= na.x + na.width &&
+    na.y <= nb.y + nb.height &&
+    nb.y <= na.y + na.height
+  );
 }
 
 export function unionBbox(a: Rect, b: Rect): Rect {

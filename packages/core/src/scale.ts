@@ -36,7 +36,12 @@ function scalePathPoint(point: PathPoint, anchorPt: Pt, factor: number): PathPoi
 function clampFactor(factor: number, dimensions: number[], minSize: number): number {
   let clamped = factor;
   for (const dimension of dimensions) {
-    if (dimension > 0) clamped = Math.max(clamped, minSize / dimension);
+    // Floor from the MAGNITUDE: a mirrored layer (negative width/height, which
+    // the inspectors permit) has the same visual size as its positive twin and
+    // must clamp identically. scaleLayer multiplies the signed dimension by the
+    // returned factor, so the sign is preserved downstream.
+    const size = Math.abs(dimension);
+    if (size > 0) clamped = Math.max(clamped, minSize / size);
   }
   return clamped;
 }

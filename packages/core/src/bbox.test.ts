@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   boundsOfPoints,
   mergeBboxes,
+  normalizeRect,
   rectCenter,
   rectCorners,
   rectsIntersect,
@@ -123,5 +124,48 @@ describe('unionBbox / mergeBboxes', () => {
       { x: -3, y: 1, width: 1, height: 1 },
     ];
     expect(mergeBboxes(rects)).toEqual({ x: -3, y: 0, width: 10, height: 7 });
+  });
+});
+
+describe('normalizeRect', () => {
+  it('leaves a positive-dimension rect unchanged', () => {
+    expect(normalizeRect({ x: 2, y: 3, width: 10, height: 20 })).toEqual({
+      x: 2,
+      y: 3,
+      width: 10,
+      height: 20,
+    });
+  });
+
+  it('flips a negative width, moving the origin so it covers the same span', () => {
+    // x 10, width -20 spans -10..10 → normalized to x -10, width 20.
+    expect(normalizeRect({ x: 10, y: 5, width: -20, height: 4 })).toEqual({
+      x: -10,
+      y: 5,
+      width: 20,
+      height: 4,
+    });
+  });
+
+  it('flips both axes when both are negative', () => {
+    expect(normalizeRect({ x: 10, y: 8, width: -6, height: -3 })).toEqual({
+      x: 4,
+      y: 5,
+      width: 6,
+      height: 3,
+    });
+  });
+
+  it('keeps a mirrored box correct through mergeBboxes when normalized first', () => {
+    // Un-normalized, {x:10,width:-20} corrupts the union (its "max" 10-20=-10
+    // is less than its "min" 10). Normalizing first yields the visual span.
+    const mirrored = { x: 10, y: 0, width: -20, height: 4 };
+    const other = { x: 30, y: 0, width: 5, height: 4 };
+    expect(mergeBboxes([normalizeRect(mirrored), other])).toEqual({
+      x: -10,
+      y: 0,
+      width: 45,
+      height: 4,
+    });
   });
 });

@@ -78,6 +78,17 @@ describe('scaleLayer — shape', () => {
     scaleLayer(shape, 2, anchor);
     expect(shape).toEqual(before);
   });
+
+  it('clamps a mirrored shape (negative width) by its magnitude, preserving the sign', () => {
+    // width -10 has the same visual size as +10, so a shrink to factor 0.01
+    // with minSize 2 clamps to the same 0.2 effective factor. The clamped
+    // width keeps its negative sign: -10 * 0.2 = -2 (magnitude at the floor).
+    const mirrored: ShapeLayer = { ...shape, width: -10 };
+    const result = scaleLayer(mirrored, 0.01, anchor, 2) as ShapeLayer;
+    expect(result.width).toBe(-2);
+    expect(result.height).toBe(4);
+    expect(Math.abs(result.width)).toBe(2);
+  });
 });
 
 describe('scaleLayer — image', () => {

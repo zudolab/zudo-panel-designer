@@ -6,6 +6,7 @@
 import {
   buildPath2D,
   mergeBboxes,
+  normalizeRect,
   PALETTE,
   pathBbox,
   rectCenter,
@@ -561,7 +562,12 @@ export function selectionBboxes(
     if (!layer || layer.hidden) continue;
     const raw = layerBbox(layer, panel);
     if (!raw) continue;
-    boxes.push(rotatedRectAABB(raw, layerRotation(layer)));
+    // normalizeRect: a mirrored shape/image (negative width/height) reaches
+    // here as a negative-sized rect when unrotated (rotatedRectAABB only
+    // normalizes via min/max when it actually rotates). mergeBboxes, the
+    // corner handles, and the scale anchor all assume min=origin, so an
+    // un-normalized negative box yields a wrong combined outline and anchor.
+    boxes.push(normalizeRect(rotatedRectAABB(raw, layerRotation(layer))));
   }
   return boxes;
 }

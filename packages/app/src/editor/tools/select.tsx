@@ -393,7 +393,12 @@ function bboxCorner(rect: Rect, handle: ResizeHandle, opposite = false): Pt {
 function groupFactorFloor(targets: readonly MoveTarget[], bbox: Rect): number {
   let floor = 1e-6;
   const consider = (dim: number) => {
-    if (dim > 0) floor = Math.max(floor, MIN_RESIZE_MM / dim);
+    // Magnitude floor: a mirrored member (negative width/height) has the same
+    // visual size as its positive twin, so scaleLayer's clampFactor floors it
+    // the same way — this pre-clamp must match, or the per-layer clamp would
+    // still fire and break group rigidity at the min-size boundary.
+    const size = Math.abs(dim);
+    if (size > 0) floor = Math.max(floor, MIN_RESIZE_MM / size);
   };
   for (const { orig } of targets) {
     if (orig.type === 'shape' || orig.type === 'image') {

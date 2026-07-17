@@ -5,7 +5,7 @@
 // see outside-panel-region.test.ts for the ON/OFF/pattern-skip coverage and
 // editor-view.spec.ts for the pixel-level proof that the canvas clip itself
 // behaves (this module can't prove that on its own).
-import { rotatedRectAABB, type Layer } from '@zpd/core';
+import { normalizeRect, rotatedRectAABB, type Layer } from '@zpd/core';
 import type { Camera } from './camera';
 import { layerBbox, layerRotation } from './renderer';
 import type { PanelDims } from './types';
@@ -43,13 +43,33 @@ export interface OutsidePanelRegion {
   ghostLayers: Layer[];
 }
 
-// A layer whose bbox stays fully within [0,0]..[panel.widthMm,
+// A layer whose PAINTED bbox stays fully within [0,0]..[panel.widthMm,
 // panel.heightMm] can never contribute a visible ghost pixel — see the
-// perf-cull note on ghostLayers above.
+// perf-cull note on ghostLayers above. "Painted" is load-bearing: the cull
+// decides whether a layer is drawn at all, so it must use the extent the layer
+// actually paints, not the geometric centerline. A stroked path centered inside
+// the panel but whose stroke half-width crosses an edge WOULD paint a ghost
+// sliver — culling it on the centerline bbox would wrongly drop that sliver.
 function crossesPanelBoundary(layer: Layer, panel: PanelDims): boolean {
   const rawBbox = layerBbox(layer, panel);
   if (!rawBbox) return false;
-  const bbox = rotatedRectAABB(rawBbox, layerRotation(layer));
+  // normalizeRect: a mirrored shape/image (negative width/height) is inside-out
+  // through the raw boundary test (x + negativeWidth < x), so an off-panel
+  // mirror would read as contained. rotatedRectAABB already normalizes when it
+  // rotates; normalize covers the unrotated case.
+  let bbox = normalizeRect(rotatedRectAABB(rawBbox, layerRotation(layer)));
+  // Include the painted stroke extent: pathBbox is the centerline, so a stroked
+  // path's paint reaches half its stroke width beyond it on every side. (Only
+  // PathLayer carries a stroke in the model; paths never rotate.)
+  if (layer.type === 'path' && layer.stroke !== null && layer.strokeWidth > 0) {
+    const half = layer.strokeWidth / 2;
+    bbox = {
+      x: bbox.x - half,
+      y: bbox.y - half,
+      width: bbox.width + layer.strokeWidth,
+      height: bbox.height + layer.strokeWidth,
+    };
+  }
   return (
     bbox.x < 0 || bbox.y < 0 || bbox.x + bbox.width > panel.widthMm || bbox.y + bbox.height > panel.heightMm
   );
