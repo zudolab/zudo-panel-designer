@@ -70,6 +70,24 @@ Keep any cross-event gesture state (a pen draft, a drag origin) in **module scop
 - `ctx.select(id)`, `ctx.setActiveTool(id)`, `ctx.setCamera(next)`.
 - `ctx.openDialog(id, props)` / `ctx.closeDialog()`.
 
+## Tool descriptions
+
+`ToolModule` carries an optional `description` field — a 2–4 sentence, human-readable explanation of what the tool does, its key pointer interactions, and its shortcut. The [sidebar Help panel](./tools.mdx#discoverability-tooltips-the-help-panel) renders it for whichever tool is active.
+
+```ts
+registerTool({
+  id: 'my-tool',
+  label: 'My Tool',
+  shortcut: 'm',
+  description:
+    'Click to do the primary thing; drag to do the continuous thing. ' +
+    'Modifier notes and the shortcut go here. Shortcut: M.',
+  // …handlers
+});
+```
+
+It is a purely **additive** contract field: it has no default and nothing about tool routing depends on it, so tools that predate it (or don't want a blurb) simply omit it and the Help panel falls back to a generic "No description available" line. Adding the field to an existing tool needs no other change — the same self-registration surface as every other tool property. Keep the prose short and imperative, matching the built-in tools' entries; it is UI copy, not reference documentation.
+
 ## Adding an inspector
 
 Create `inspectors/my-type.tsx` and call `registerInspector('shape', MyInspector)`. The inspector receives `{ layer, onChange, ctx }`; call `onChange(patch, { commit })` — `commit: false` while scrubbing a slider, `commit: true` (the default) for a discrete edit. See [Inspectors](./inspectors.mdx).

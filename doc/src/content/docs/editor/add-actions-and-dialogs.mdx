@@ -57,7 +57,9 @@ Because the store lives outside React (`openDialog`/`closeDialog` in `registry/d
 
 #### Shortcuts dialog
 
-A static reference table of every keyboard/mouse shortcut in the app (tool letters, zoom keys, undo/redo, delete, nudge, Esc) — the concrete example the README points to for how a dialog is built.
+A static reference table of every keyboard/mouse shortcut in the app (tool letters, zoom keys, undo/redo, delete, nudge, Esc) — the concrete example the README points to for how a dialog is built. It is opened the same way as before, from the header's **?** button, and its contents are unchanged.
+
+The [sidebar Help panel](./interface.mdx#right-sidebar) **complements** this dialog rather than replacing it: the Help panel explains the one tool that is currently active (its per-tool `description`), while the Shortcuts dialog stays the always-available, at-a-glance reference for the app's keyboard and mouse shortcuts. Reach for the dialog when you want the shortcut table; glance at the Help footer when you want to know what the tool in your hand does.
 
 #### Pattern picker dialog
 
