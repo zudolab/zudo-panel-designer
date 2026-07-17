@@ -112,6 +112,15 @@ export function Toast({ id, variant, message, description, duration, onDismiss }
     if (e.key === 'Escape') {
       e.stopPropagation();
       dismiss();
+      return;
+    }
+    // Editor's global window keydown handler arms the pan tool on Space for
+    // any non-input/textarea/select target — including this toast and its
+    // close button — which both hijacks focus for panning and preventDefaults
+    // the close button's native Space-activation. Stop it here so Space
+    // behaves normally while a toast has focus.
+    if (e.key === ' ' || e.code === 'Space') {
+      e.stopPropagation();
     }
   };
 
@@ -133,7 +142,7 @@ export function Toast({ id, variant, message, description, duration, onDismiss }
       onMouseLeave={handleMouseLeave}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-sm font-medium leading-snug">{message}</span>
+        <span className="break-words text-sm font-medium leading-snug">{message}</span>
         {description && (
           <span className="break-words text-xs leading-snug opacity-80">{description}</span>
         )}

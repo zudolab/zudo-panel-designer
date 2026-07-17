@@ -173,6 +173,32 @@ describe('dismissal', () => {
     renderToast({ variant: 'error' });
     expect(screen.getByRole('alert').getAttribute('tabindex')).toBe('0');
   });
+
+  it('Space does not dismiss and does not bubble past the toast (would otherwise arm the app-wide pan-tool shortcut)', () => {
+    const { onDismiss } = renderToast({ variant: 'error' });
+    const documentHandler = vi.fn();
+    document.addEventListener('keydown', documentHandler);
+    act(() => {
+      fireEvent.keyDown(screen.getByRole('alert'), { key: ' ', code: 'Space' });
+    });
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(documentHandler).not.toHaveBeenCalled();
+    document.removeEventListener('keydown', documentHandler);
+  });
+
+  it('Space on the close button does not bubble past the toast either', () => {
+    renderToast({ variant: 'error' });
+    const documentHandler = vi.fn();
+    document.addEventListener('keydown', documentHandler);
+    act(() => {
+      fireEvent.keyDown(screen.getByRole('button', { name: /dismiss/i }), {
+        key: ' ',
+        code: 'Space',
+      });
+    });
+    expect(documentHandler).not.toHaveBeenCalled();
+    document.removeEventListener('keydown', documentHandler);
+  });
 });
 
 describe('content', () => {
