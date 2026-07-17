@@ -41,7 +41,7 @@ test('@smoke app loads clean and boots the default document', async ({ page }) =
 test('@smoke add rectangle, drag it, then undo restores its position', async ({ page }) => {
   await openEditor(page);
 
-  await page.getByTitle('Add rectangle').click();
+  await page.getByLabel('Add rectangle').click();
   const rectId = await bridge(page).getSelectedId();
   expect(rectId).not.toBeNull();
 
