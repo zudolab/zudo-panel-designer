@@ -139,6 +139,13 @@ export const RESIZE_HANDLE_IDS: readonly ResizeHandle[] = [
   'w',
 ];
 
+// Multi-resize (#52): a multi-selection's combined bbox wears CORNER handles
+// only. Uniform scale is the only group transform the model can express
+// (core scale.ts — non-uniform scale of a rotated member would need a shear),
+// so edge handles, which promise a one-axis stretch, are deliberately NOT
+// offered for a multi-selection.
+export const CORNER_HANDLE_IDS: readonly ResizeHandle[] = ['nw', 'ne', 'se', 'sw'];
+
 export interface HandleRect {
   id: ResizeHandle;
   x: number;
@@ -173,6 +180,50 @@ export function resizeHandleRects(bbox: Rect, cam: Camera, rotationDeg = 0): Han
     at('sw', x0, y1),
     at('w', x0, ym),
   ];
+}
+
+// The 4 corner handles of an (axis-aligned) bbox — the multi-resize
+// affordance (#52). Same squares/screen-space contract as resizeHandleRects.
+export function cornerHandleRects(bbox: Rect, cam: Camera): HandleRect[] {
+  return resizeHandleRects(bbox, cam).filter((h) => CORNER_HANDLE_IDS.includes(h.id));
+}
+
+// Whether core's scaleLayer can change this layer at all (#52): patterns are
+// panel-wide and pass through unchanged (the epic's eligibility matrix), and
+// a path with no points anywhere (the parser accepts them; pathBbox gives it
+// a 0×0 box, not null) has no coordinates to scale.
+function layerCanScale(layer: Layer): boolean {
+  switch (layer.type) {
+    case 'pattern':
+      return false;
+    case 'path':
+      return (
+        layer.points.length > 0 || (layer.extraSubpaths?.some((s) => s.length > 0) ?? false)
+      );
+    default:
+      return true;
+  }
+}
+
+// The combined bbox that offers multi-resize corner handles, or null when the
+// selection doesn't qualify (#52). Gates BOTH the chrome pass and the select
+// tool's handle grab — the one source of eligibility, so what is drawn is
+// exactly what is grabbable. Qualification: >1 visible selection bboxes (the
+// same set the combined-bbox chrome unions over) AND at least one visible
+// member scaleLayer can actually change — otherwise the handles would promise
+// a gesture that cannot affect the doc (and would write a phantom undo entry).
+export function multiResizeBbox(
+  layers: readonly Layer[],
+  selectedIds: readonly string[],
+  panel: PanelDims,
+): Rect | null {
+  if (selectedIds.length < 2) return null;
+  const boxes = selectionBboxes(layers, selectedIds, panel);
+  if (boxes.length < 2) return null;
+  const scalable = layers.some(
+    (l) => selectedIds.includes(l.id) && !l.hidden && layerCanScale(l),
+  );
+  return scalable ? mergeBboxes(boxes) : null;
 }
 
 // The rotate handle floats a fixed SCREEN distance beyond the top-edge
@@ -475,6 +526,18 @@ function strokeOrientedMmRect(
   ctx.stroke();
 }
 
+// White squares with the selection-blue border — the one handle style, shared
+// by single-selection resize handles and the multi-selection corners (#52).
+function drawHandleSquares(ctx: CanvasRenderingContext2D, rects: readonly HandleRect[]): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = SELECT_COLOR;
+  ctx.lineWidth = 1;
+  for (const h of rects) {
+    ctx.fillRect(h.x, h.y, h.size, h.size);
+    ctx.strokeRect(h.x, h.y, h.size, h.size);
+  }
+}
+
 function drawSelectionChrome(
   ctx: CanvasRenderingContext2D,
   layers: Layer[],
@@ -516,6 +579,11 @@ function drawSelectionChrome(
   ctx.setLineDash([]);
 
   if (!selected) {
+    // Multi-resize affordance (#52): corner handles on the combined bbox.
+    // multiResizeBbox is the shared eligibility gate — the select tool grabs
+    // exactly the rects drawn here.
+    const multiBbox = multiResizeBbox(layers, extras.selectedIds, panel);
+    if (multiBbox) drawHandleSquares(ctx, cornerHandleRects(multiBbox, cam));
     ctx.restore();
     return;
   }
@@ -526,13 +594,7 @@ function drawSelectionChrome(
   // types with free width/height.
   const resizable = selected.type === 'shape' || selected.type === 'image';
   if (resizable && rawBbox) {
-    ctx.fillStyle = '#ffffff';
-    ctx.strokeStyle = SELECT_COLOR;
-    ctx.lineWidth = 1;
-    for (const h of resizeHandleRects(rawBbox, cam, rotation)) {
-      ctx.fillRect(h.x, h.y, h.size, h.size);
-      ctx.strokeRect(h.x, h.y, h.size, h.size);
-    }
+    drawHandleSquares(ctx, resizeHandleRects(rawBbox, cam, rotation));
   }
 
   // Rotate handle (#51): shape/text only — the types layerRotation reads. A
