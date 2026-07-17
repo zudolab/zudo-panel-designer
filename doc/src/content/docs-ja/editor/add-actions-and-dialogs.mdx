@@ -1,0 +1,79 @@
+---
+title: 追加アクションとダイアログ
+sidebar_position: 5
+---
+
+さらに 2 種類の自己登録型の拡張が、ツールバーを補完します。**追加アクション**（左ツールバー下部の「Add …」ボタン）と、それら（およびインスペクタ）が開くモーダル表面である **ダイアログ** です。どちらもそれぞれ `packages/app/src/editor/add-actions/` と `packages/app/src/editor/dialogs/` から検出されます（[拡張アーキテクチャ](./extension-architecture.mdx)を参照）。
+
+## 追加アクション
+
+追加アクションは最もシンプルな拡張の種類です。
+
+```ts
+interface AddAction {
+  id: string;
+  label: string;
+  icon?: string;
+  run(ctx: ToolContext): void;
+}
+```
+
+`components/toolbar.tsx` は、登録されたアクションごとに 1 つのボタンを、ツールボタンの下の区切り線の下に、登録順でレンダリングします。ボタンをクリックすると `action.run(ctx)` を呼ぶだけです。
+
+| 追加アクション | File | 挙動 |
+|---|---|---|
+| 矩形を追加 | `add-actions/add-rect.ts` | パネルに対して相対的にサイズと位置を決めた新しい `shape` レイヤー（矩形）をコミットし、選択する。 |
+| 楕円を追加 | `add-actions/add-ellipse.ts` | 上と同じで `shape: 'ellipse'`。 |
+| パターンを追加… | `add-actions/add-pattern.ts` | props なしで [パターンピッカーダイアログ](#ダイアログ-組み込みダイアログ-パターンピッカーダイアログ)を開く。パターンが選ばれると、ダイアログ自身がレイヤーを追加する。 |
+| 画像を追加… | `add-actions/add-image.ts` | 一時的な `<input type="file">` を開き、ファイルをデータ URL として読み込み、その本来のサイズを調べてパネルに収める（幅 80% / 高さ 50% を上限）。その後 `image` レイヤーをコミットする。 |
+
+矩形/楕円の追加はどちらも、初期ジオメトリを 0.1mm グリッドにスナップし、デフォルトの幅を `min(20mm, panelWidth/2)` に制限します。そのため、追加したばかりの形状が、置かれたパネルより大きくなることはありません。
+
+## ダイアログ
+
+ダイアログは、登録された `{ id, component }` のペアで、`components/dialog-host.tsx` によってレンダリングされます。これは Editor のルートに一度だけマウントされ、開閉を管理する小さな observable ストアを購読します。
+
+```ts
+interface DialogModule<P = unknown> {
+  id: string;
+  component: ComponentType<DialogProps<P>>;
+}
+interface DialogProps<P = unknown> {
+  props: P;
+  close(): void;
+  ctx: ToolContext;
+}
+```
+
+ストアは React の外（`registry/dialogs.ts` の `openDialog` / `closeDialog`）にあるため、React コンポーネントではないツールのポインタハンドラを含め、あらゆるものがダイアログを開けます。`DialogHost` は、開いているダイアログのコンポーネントを `role="dialog" aria-modal="true"` のバックドロップ内にレンダリングします。バックドロップ（ただし伝播を止めるダイアログ本体は除く）をクリックすると閉じます。
+
+### 組み込みダイアログ
+
+| Dialog id | File | 開く場所 |
+|---|---|---|
+| `shortcuts` | `dialogs/shortcuts.tsx` | ヘッダーの **?** ボタン。 |
+| `pattern-picker` | `dialogs/pattern-picker.tsx` | パターンインスペクタの **Browse…**、または **パターンを追加…** の追加アクション。 |
+| `trace` | `dialogs/trace.tsx` | 画像インスペクタの **Convert to vector…**。 |
+
+#### ショートカットダイアログ
+
+アプリ内のすべてのキーボード/マウスショートカット（ツールの文字、ズームのキー、undo/redo、削除、ナッジ、Esc）を並べた静的なリファレンステーブルです。README がダイアログの作り方の具体例として指し示しているものです。
+
+#### パターンピッカーダイアログ
+
+パターンのサムネイルをレスポンシブに並べたグリッドで、`PATTERN_GENERATORS` の各エントリ（[パターン → 組み込みカタログ](../patterns/built-in-patterns.mdx)を参照）ごとに 1 枚のカードを、`renderPatternThumb` で描画します。開き方は 2 通りあり、どちらも閉じる前に 1 回の `ctx.commit()`（1 つの undo エントリ）に解決されます。
+
+- **`{ layerId }` を伴う場合**（パターンインスペクタから） — カードをクリックすると、その既存のパターンレイヤーの `patternType` を差し替え、`params` を新しいパターンのデフォルトにリセットします。
+- **props なしの場合**（パターンを追加… の追加アクションから） — カードをクリックすると、スタックの一番上に真新しいパターンレイヤーを作成して選択します。
+
+各サムネイルは `useEffect` ではなく `useLayoutEffect` で描画されるため、ブラウザの最初の描画フレームより前にサイズが決まり描かれます。そうでなければ、`<canvas>` がデフォルトの 300×150 のボックスを 1 フレームだけちらつかせ、グリッドが目に見えて飛んでしまいます。
+
+#### トレースダイアログ
+
+画像からベクターへのワークフローです。それが駆動するパイプライン全体については [画像のトレース](./image-tracing.mdx)を参照してください。概要としては、ソースの画像レイヤーをデコードし、ダウンスケールして SVG にトレースし（オプション変更後 250ms のデバウンス）、その SVG を `<img>` でプレビューし（決して `dangerouslySetInnerHTML` は使わないため、悪意あるトレース結果が埋め込みスクリプトを実行することはありません）、**Apply** で SVG を `PathLayer` に変換し、ソース画像のすぐ上に挿入し、ソース画像を（削除するのではなく）非表示にして（隠れたデザイン時の参照として残します）、最初のトレース後レイヤーを選択します。これらすべてが 1 回の `ctx.commit()` です。
+
+ダイアログで公開されるトレースオプション: **3-color palette** トグル（固定のパネルパレットにそのまま量子化するか、自由な 2〜8 色に量子化するか）、**min shape outline**（このピクセルしきい値を下回る小さなトレース領域を除外する）、**blur radius**（トレース前にあらかじめブラーをかけ、ノイズの多いソースラスタを滑らかにする）。
+
+:::tip
+パターンインスペクタと画像インスペクタはどちらも、対応するダイアログの登録（`getDialog('pattern-picker')` / `getDialog('trace')`）を確認し、まだ登録されていなければトリガーボタンを — 説明ツールチップ付きで — 無効化します。これにより、ダイアログより先にインスペクタを出荷しても、ボタンが壊れることはありません。
+:::
