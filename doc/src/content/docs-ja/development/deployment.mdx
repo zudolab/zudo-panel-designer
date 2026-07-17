@@ -50,6 +50,13 @@ custom_domain = true
 一方を止めることはありません。`cancel-in-progress: false` を伴う `concurrency: production-deploy`
 により、デプロイは競合したり途中でキャンセルされたりするのではなく、キューに並びます。
 
+どちらのジョブも、次のガード条件を持ちます——
+`if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'`
+——そのため、手動の `workflow_dispatch` 実行は `main` からディスパッチされた場合にのみ
+デプロイを行います。それ以外のブランチやタグからディスパッチした場合は、デプロイせずに
+ジョブがスキップされます（`push` はもともと `main` でのみ発火するため、この条件が実質的に
+影響するのは `workflow_dispatch` の挙動のみです）。
+
 どちらのジョブも次を行います。
 
 1. ビルド（アプリはリポジトリルートで `pnpm build`、ドキュメントサイトは `doc/` 内で

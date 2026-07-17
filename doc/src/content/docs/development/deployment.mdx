@@ -53,6 +53,13 @@ between them, so a failure in one does not block the other. `concurrency:
 production-deploy` with `cancel-in-progress: false` ensures deploys queue
 rather than race or get cancelled mid-flight.
 
+Both jobs also carry a guard —
+`if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'`
+— so a manual `workflow_dispatch` run only deploys when dispatched from
+`main`; dispatching from any other branch or tag skips the job instead of
+deploying it (`push` already only fires on `main`, so this only changes
+`workflow_dispatch` behavior).
+
 Both jobs:
 
 1. Build (`pnpm build` at the repo root for the app; `pnpm install
