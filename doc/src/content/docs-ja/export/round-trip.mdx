@@ -1,0 +1,65 @@
+---
+title: ラウンドトリップ
+sidebar_position: 3
+---
+
+エディタの **Download panel config JSON** ボタン（`packages/app/src/editor/download.ts`）は、
+現在のステージ 1 アプリで唯一のエクスポート経路です——アプリ内にはまだ **Open File**／
+インポートの UI はありません。ここでの「ラウンドトリップ」とは、ダウンロードした JSON を
+`parsePanelConfig()` に通し直すと、画面上のドキュメントが再現されることを意味します。
+この保証こそが、このファイルを注文成果物として、また将来のツール間の交換フォーマットとして
+信頼できるものにしています。
+
+## ダウンロードのステップ
+
+`downloadPanelConfig(doc)` は `serializePanelConfig(doc)` を呼び、それを整形して出力し
+（`JSON.stringify(config, null, 2)`）、`zpd-panel-<hp>hp.json` という名前でブラウザの
+ダウンロードを開始します。純粋なシリアライズのステップ——`panelConfigJson(doc)`——は、
+DOM／Blob の仕組みから切り離されており、実際にダウンロードしなくても正確な JSON 文字列を
+ユニットテストできるようになっています。
+
+## 正確に保持されるもの
+
+`packages/core/src/serialize.test.ts` と `packages/app/src/editor/download.test.ts` は
+どちらも、5 つのレイヤータイプすべてを含むドキュメントについて、完全なラウンドトリップの
+忠実性をアサートします。
+
+```
+doc → serializePanelConfig → JSON.stringify → JSON.parse → parsePanelConfig → doc
+```
+
+`parsePanelConfig(JSON.parse(JSON.stringify(serializePanelConfig(doc))))` は、
+次を検証するフィクスチャに対して、元の `doc` と deep-equal になります。
+
+- すべてのレイヤータイプ（`shape`、`pattern`、`path`、`text`、`image`）
+- 非表示のレイヤー（`hidden: true`）
+- 一部の点にはベジェハンドル（`hin`／`hout`）があり、他の点にはない `path` レイヤー
+- `path` レイヤーの `extraSubpaths`（画像トレースによる複数の閉じたサブパス）
+- 一部のレイヤーには `rotation` があり、他のレイヤーにはない状態
+
+上記のすべては、ラウンドトリップを経ても変わらずに残ります。
+
+## 意図的に保持されないもの
+
+- **未知・余分なフィールド** — `PanelConfig` の形に含まれないもの（余計なトップレベルの
+  キーや、レイヤーごとの追加プロパティ）は、インポート時に破棄されます。
+  [防御的パース](./defensive-parsing.mdx) を参照。
+- **`panel.widthMm` / `panel.heightMm`** — たとえファイルが手編集で食い違っていても、
+  読み込み時には常に `hp` から再計算されます。これらは参考用の出力であり、正式な入力では
+  ありません。[PanelConfig フォーマット](./panel-config-format.mdx#エンベロープの形) を参照。
+- **不正な値** — 範囲外の `color`、有限でない座標、不正な `hp` などは、そのまま再現される
+  のではなく、クランプまたはデフォルト化されます（当然です——入力が不正だったのですから）。
+  [防御的パース](./defensive-parsing.mdx#レイヤー-レイヤータイプ別のフィールドごとのフォールバック) を参照。
+- **`patternType` の妥当性** — 認識できない `patternType` 文字列は不透明なデータとして
+  ラウンドトリップします（そのまま保持されます）が、そのパターンの*描画*については何も
+  保証されません——core はパターンレジストリに依存していないため、ある `patternType` が
+  何かに描画されるかどうかを知っているのは app／patterns のレイヤーだけです。
+
+## ブラウザレベルでも検証済み
+
+Playwright の `@smoke` スイートは、純粋な関数だけでなく、ブラウザ上の実際のダウンロードも
+検証します。ダウンロードボタンをクリックし、生成されたファイルをディスクから読み込み、
+`parsePanelConfig(downloaded)` が `parsePanelConfig(onScreen)` に等しいことをアサートします。
+ここで `onScreen` は、`window.__zpdTest` テストブリッジ経由でライブドキュメントから
+取得されます。このスイートの構成については、
+[テスト](../development/testing.mdx#playwright-による-e2e) を参照してください。

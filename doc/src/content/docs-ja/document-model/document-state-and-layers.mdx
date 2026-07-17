@@ -1,0 +1,146 @@
+---
+title: ドキュメントの状態とレイヤー
+description: DocState、Layer のユニオン型、mm 座標空間、そしてドキュメントが PanelConfig へシリアライズされる仕組み。
+sidebar_position: 1
+---
+
+## 座標空間: ミリメートル、原点は左上
+
+ドキュメントモデル内のすべての幾何学的な値——レイヤーの `x`/`y`、`width`/`height`、パスのアンカーとベジェハンドル、ストローク幅——は、パネルの**左上**の角を原点として、**ミリメートル**単位で保存されます。これは意図的な設計です。PCB の製造データは mm ベースであるため、`@zpd/core` 全体を通じて mm を唯一の保存空間としています。ピクセルはレンダリングの境界にのみ存在し、そこでアプリのカメラが表示のために mm を画面上の px へ変換します。ドキュメントモデル自体には、ピクセルベースのものは一切ありません。
+
+## `DocState`
+
+```ts
+interface DocState {
+  panelHp: number;
+  layers: Layer[]; // bottom -> top (index 0 renders first)
+}
+```
+
+- `panelHp` — HP で表したパネルの幅（[パネルサイズ](./panel-sizing.mdx)を参照）。
+- `layers` — フラットで順序付けされた配列。インデックス `0` がスタックの**最下層**で最初にレンダリングされ、後ろの要素ほど前の要素の上に重ねて描画されます。
+
+## `Layer` ユニオン型
+
+レイヤーは 5 つのバリアントのいずれかであり、`type` によって判別されます。すべてのバリアントは `LayerBase` を共有します。
+
+```ts
+interface LayerBase {
+  id: string;
+  name: string;
+  hidden?: boolean;
+}
+```
+
+| Type | Manufacturable? | 概要 |
+| --- | --- | --- |
+| `shape` | Yes | 長方形または楕円。パレットの 1 色で塗りつぶされます。 |
+| `pattern` | Yes | `@zpd/patterns` の名前付き・パラメータ化されたパターン（core からは不透明な値）。 |
+| `path` | Yes | ベジェパス。塗り・線・その両方のいずれか。ペンツールまたは画像トレースから生成されます。 |
+| `text` | Yes | 固定のフォント／サイズで描画されるテキスト。パレットの 1 色で塗りつぶされます。 |
+| `image` | No（設計時のみ） | ラスターの参照画像。パネルはラスターそのものではなく、そこからトレースされたベクターレイヤーをもとに製造されます。 |
+
+### Shape レイヤー
+
+```ts
+interface ShapeLayer extends LayerBase {
+  type: 'shape';
+  shape: 'rect' | 'ellipse';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number; // deg clockwise around bbox center
+  color: ColorIndex;
+}
+```
+
+### Pattern レイヤー
+
+```ts
+interface PatternLayer extends LayerBase {
+  type: 'pattern';
+  patternType: string;
+  params: Record<string, number>;
+  color: ColorIndex;
+}
+```
+
+`patternType` と `params` は、`@zpd/core` がそのパターンを認識できない場合でも不透明なデータとして保持されます。パターンのレジストリはアプリレベルの関心事であり、core の依存対象ではありません。パターンレイヤーがヒットテストで特別な扱いを受けるのもこのためです。[ジオメトリと編集の契約](./geometry-and-editing.mdx)を参照してください。
+
+### Path レイヤー
+
+```ts
+interface PathPoint {
+  x: number; // anchor, mm
+  y: number;
+  hin?: { x: number; y: number }; // absolute bezier handle coords, mm
+  hout?: { x: number; y: number };
+}
+
+interface PathLayer extends LayerBase {
+  type: 'path';
+  points: PathPoint[]; // primary subpath (pen tool edits this one)
+  extraSubpaths?: PathPoint[][];
+  closed: boolean;
+  fill: ColorIndex | null;
+  stroke: ColorIndex | null;
+  strokeWidth: number; // mm
+}
+```
+
+`extraSubpaths` は、画像トレースによって生成される追加の閉じたサブパス——ある 1 つの色領域の穴や島——を保持します。これらはプライマリのサブパスと一緒に even-odd（偶奇）フィルで描画されるため、穴は穴として残ります。
+
+### Text レイヤー
+
+```ts
+interface TextLayer extends LayerBase {
+  type: 'text';
+  content: string; // may contain newlines
+  fontFamily: string;
+  sizeMm: number; // font size in mm (canvas font px == mm in doc space)
+  x: number; // bbox top-left, mm
+  y: number;
+  rotation?: number;
+  color: ColorIndex;
+}
+```
+
+### Image レイヤー
+
+```ts
+interface ImageLayer extends LayerBase {
+  type: 'image';
+  src: string; // dataURL
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+```
+
+`src` は設計時のソースにすぎません——ラスターはパネル上に製造できません。最終的なパネルは、このレイヤーではなく、そこからトレースされたベクターレイヤーを使用します。
+
+## `PanelConfig` へのシリアライズ
+
+`DocState` はメモリ上の作業ドキュメントです。`PanelConfig` は、ユーザーがダウンロードして製造に引き渡す、バージョン付きのエクスポート形式です。
+
+```ts
+const PANEL_CONFIG_VERSION = 1;
+
+interface PanelConfig {
+  version: 1;
+  app: 'zpd';
+  panel: { hp: number; widthMm: number; heightMm: number };
+  palette: string[];
+  layers: Layer[];
+}
+```
+
+`hp` と `layers` は正式なデータであり、ラウンドトリップします。`panel.widthMm`、`panel.heightMm`、`palette` は、人間や注文の読み手のための**派生的で参考用の出力**であり、エクスポート時に `hp` と固定パレットから計算されます。ファイルを読み込み直す際には、これらの値が再び信頼されることはありません。
+
+<Warning title="parsePanelConfig は決して例外を投げない">
+  `parsePanelConfig` には、ユーザーが手で編集した JSON、古いエクスポート、あるいは別のツールが生成した JSON など、あらゆるものが渡されます。そのため、1 つの不正なフィールドがドキュメント全体を失敗させないよう、各フィールドは個別に防御されます。`hp` が不正または欠落している場合はデフォルトのパネルサイズにフォールバックし、不正な `color` インデックスは `0`（黒）にクランプされ、認識できない `type` を持つレイヤーは黙って破棄されます。壊れた入力やオブジェクトでない入力は、デフォルトのドキュメントになります。
+</Warning>
+
+フィールドごとのパースルールの全容は、`packages/core/src/serialize.ts` のソースを参照してください。

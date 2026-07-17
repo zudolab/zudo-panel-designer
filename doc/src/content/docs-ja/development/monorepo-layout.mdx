@@ -1,0 +1,30 @@
+---
+title: モノレポの構成
+sidebar_position: 1
+---
+
+zudo-panel-designer は、リポジトリ内に配置された 3 つのパッケージと、このドキュメント
+サブプロジェクトからなる pnpm ワークスペースです。
+
+## パッケージ
+
+| Path | Package name | 何を置くか |
+|---|---|---|
+| `packages/core` | `@zpd/core` | ドキュメントモデル: `DocState`、`Layer` 型、ジオメトリ、レイヤー操作、アンドゥ／リドゥ履歴、`PanelConfig` のシリアライザ／パーサー。UI なし、DOM なし。 |
+| `packages/patterns` | `@zpd/patterns` | アプリのパターンピッカーから利用されるパネルパターンの定義（例: ドットグリッド、斜めストライプ）。 |
+| `packages/app` | `@zpd/app`（private） | Vite + React 製のシングルページエディタアプリ: キャンバスの描画、ツール、ダイアログ、`window.__zpdTest` e2e ブリッジ。 |
+| `doc/` | —（独立したサブプロジェクト） | このドキュメントサイト。ルートの pnpm ワークスペースには含まれない——独自の `pnpm-workspace.yaml` と `pnpm-lock.yaml` を持ち、その依存解決がリポジトリのルートに及ぶことはない。 |
+
+`packages/app` は `@zpd/core` と `@zpd/patterns` に `workspace:*` 依存として依存します。
+`@zpd/core` は `@zpd/patterns` にもアプリにも依存しません——とりわけ、`PanelConfig` の
+`patternType` フィールドは、まさにその依存の向きを避けるために、パターンレジストリに対して
+検証されるのではなく、core 内では不透明な文字列データとして保持されます
+（[PanelConfig フォーマット](../export/panel-config-format.mdx#レイヤーのフィールド-pattern) を参照）。
+
+## ルートレベルの設定
+
+ルートの設定ファイル（`eslint.config.js`、`.prettierignore`、`vitest.config.ts`、
+`tsconfig` の参照）は `packages/*` にのみ適用されます。`doc/` はそのすべてから意図的に
+除外されています——`doc/` は独立して Lint・フォーマット・型チェック・テストを行い、
+（pnpm ワークスペースを反復する）ルートの `pnpm -r` スクリプトは、`doc/` がルート
+ワークスペースのメンバーでないため、これに一切触れません。

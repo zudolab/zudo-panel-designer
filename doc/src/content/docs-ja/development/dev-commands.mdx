@@ -1,0 +1,42 @@
+---
+title: 開発コマンドとポート
+sidebar_position: 2
+---
+
+## アプリ（リポジトリルート）
+
+これらはリポジトリのルートで実行します——`packages/*` ワークスペースを対象に動作します。
+
+| Command | 内容 |
+|---|---|
+| `pnpm install` | ワークスペースの全依存関係をインストールします。 |
+| `pnpm dev` | アプリの開発サーバーを **http://localhost:15200** で起動します。 |
+| `pnpm build` | 全パッケージをビルドします（`pnpm -r build`）。 |
+| `pnpm typecheck` | 全パッケージの型チェックを行います（`pnpm -r typecheck`）。 |
+| `pnpm lint` | ESLint でリポジトリ全体を Lint します。 |
+| `pnpm format` | Prettier でリポジトリ全体をフォーマットします。 |
+| `pnpm test` | Vitest でユニットテストスイートを実行します（[テスト](./testing.mdx) を参照）。 |
+| `pnpm test:e2e` | Playwright の `@smoke` e2e スイートを実行します（[テスト](./testing.mdx#playwright-による-e2e) を参照）。 |
+| `pnpm deploy` | `packages/app/dist` を Cloudflare Workers にデプロイします（`wrangler deploy --env production`）——事前にビルドが存在している必要があります。 |
+| `pnpm deploy:dry` | デプロイせずにルートの `wrangler.toml` を検証します——Cloudflare の認証情報は不要です。 |
+
+## ドキュメント（`doc/`）
+
+`doc/` は独立したサブプロジェクトです——これらはリポジトリのルートではなく、`doc/` の内部で
+実行します。
+
+| Command | 内容 |
+|---|---|
+| `pnpm install` | このサブプロジェクト自身の依存関係をインストールします（独自のロックファイル）。 |
+| `pnpm dev` | ドキュメントの開発サーバーを **http://localhost:15210** で起動します。 |
+| `pnpm build` | `doc/dist/` へ静的エクスポートします（Cloudflare Workers のエントリ `dist/_worker.js` も出力します）。 |
+| `pnpm check` | TypeScript の型チェック。 |
+| `pnpm preview` | ビルド済みの `doc/dist/` を配信します。 |
+
+## ポートの規約
+
+このプロジェクトは、自身の開発サーバー用に `152xx` の範囲を予約しています。アプリ用に
+**15200**、ドキュメントサイト用に **15210** です。これにより、両方の開発サーバーを衝突なく
+並行して起動でき、他のツール（例えば Playwright スイート自身のプレビューサーバー——
+[テスト](./testing.mdx#playwright-による-e2e) を参照——は、すでに起動している `pnpm dev` と
+衝突しないよう、あえて別のポートで動作します）とも区別できます。
