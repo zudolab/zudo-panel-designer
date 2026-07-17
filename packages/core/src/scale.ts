@@ -26,24 +26,19 @@ function scalePathPoint(point: PathPoint, anchorPt: Pt, factor: number): PathPoi
   return scaled;
 }
 
-interface RectLike {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-// Scales the rect's CENTER about the anchor, then clamps width/height at
-// minSize (same clamp floor semantics as resize.ts). While unclamped this is
-// identical to scaling the top-left directly; once a dimension clamps, keeping
-// the scaled center fixed is what preserves the visual position — rotation
-// pivots on the center, so a clamped rotated rect stays visually put.
-function scaleRectLike(rect: RectLike, factor: number, anchorPt: Pt, minSize: number): RectLike {
-  const cx = scaleCoord(rect.x + rect.width / 2, anchorPt.x, factor);
-  const cy = scaleCoord(rect.y + rect.height / 2, anchorPt.y, factor);
-  const width = Math.max(minSize, rect.width * factor);
-  const height = Math.max(minSize, rect.height * factor);
-  return { x: cx - width / 2, y: cy - height / 2, width, height };
+// Min-size clamping must not break uniformity: clamping width/height
+// independently after scaling would change the aspect ratio at the minSize
+// floor (and drift positions scaled by the unclamped factor). Instead the
+// FACTOR itself is raised just enough that the smallest dimension lands
+// exactly on minSize, and that one effective factor drives every coordinate
+// and dimension of the layer. Same clamp floor as resize.ts, applied
+// uniform-scale-wise.
+function clampFactor(factor: number, dimensions: number[], minSize: number): number {
+  let clamped = factor;
+  for (const dimension of dimensions) {
+    if (dimension > 0) clamped = Math.max(clamped, minSize / dimension);
+  }
+  return clamped;
 }
 
 // Pure uniform scale of a single layer about anchorPt (mm). factor must be
@@ -59,14 +54,19 @@ export function scaleLayer(
 ): Layer {
   switch (layer.type) {
     case 'shape':
-    case 'image':
-      return { ...layer, ...scaleRectLike(layer, factor, anchorPt, minSize) };
-    case 'text':
+    case 'image': {
+      const f = clampFactor(factor, [layer.width, layer.height], minSize);
       return {
         ...layer,
-        ...scalePt(layer, anchorPt, factor),
-        sizeMm: Math.max(minSize, layer.sizeMm * factor),
+        ...scalePt(layer, anchorPt, f),
+        width: layer.width * f,
+        height: layer.height * f,
       };
+    }
+    case 'text': {
+      const f = clampFactor(factor, [layer.sizeMm], minSize);
+      return { ...layer, ...scalePt(layer, anchorPt, f), sizeMm: layer.sizeMm * f };
+    }
     case 'path': {
       const scaled: PathLayer = {
         ...layer,

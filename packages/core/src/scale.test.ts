@@ -46,19 +46,31 @@ describe('scaleLayer — shape', () => {
     expect(result.y + result.height / 2).toBeCloseTo(100);
   });
 
-  it('clamps width/height at minSize, keeping the scaled center fixed', () => {
+  it('preserves the aspect ratio through the min-size clamp', () => {
+    const result = scaleLayer(shape, 0.0001, anchor, 2) as ShapeLayer;
+    expect(result.height / result.width).toBeCloseTo(shape.height / shape.width);
+  });
+
+  it('clamps the FACTOR so the smallest dimension bottoms out at minSize, staying uniform', () => {
+    // 10x20 at factor 0.01 with minSize 2: effective factor is 2/10 = 0.2,
+    // so width lands exactly on minSize and height keeps the 1:2 aspect ratio.
     const result = scaleLayer(shape, 0.01, anchor, 2) as ShapeLayer;
     expect(result.width).toBe(2);
-    expect(result.height).toBe(2);
-    // center (25, 40) scaled about (10, 10) by 0.01 -> (10.15, 10.3)
-    expect(result.x + result.width / 2).toBeCloseTo(10.15);
-    expect(result.y + result.height / 2).toBeCloseTo(10.3);
+    expect(result.height).toBe(4);
+    expect(result.x).toBeCloseTo(12); // 10 + (20 - 10) * 0.2
+    expect(result.y).toBeCloseTo(14); // 10 + (30 - 10) * 0.2
+  });
+
+  it('position uses the clamped factor too — the layer does not drift toward the anchor once clamped', () => {
+    const clamped = scaleLayer(shape, 0.01, anchor, 2) as ShapeLayer;
+    const atFloor = scaleLayer(shape, 0.2, anchor, 2) as ShapeLayer;
+    expect(clamped).toEqual(atFloor);
   });
 
   it('uses DEFAULT_MIN_SIZE_MM (1) when minSize is omitted', () => {
     const result = scaleLayer(shape, 0.001, anchor) as ShapeLayer;
     expect(result.width).toBe(1);
-    expect(result.height).toBe(1);
+    expect(result.height).toBe(2);
   });
 
   it('does not mutate the input layer', () => {
@@ -105,9 +117,12 @@ describe('scaleLayer — text', () => {
     expect(result).toEqual({ ...text, x: 50, y: 90, sizeMm: 8, rotation: 90 });
   });
 
-  it('clamps sizeMm at minSize', () => {
+  it('clamps the factor so sizeMm bottoms out at minSize, and x/y use the same clamped factor', () => {
+    // sizeMm 4 at factor 0.01 with minSize 2: effective factor is 2/4 = 0.5.
     const result = scaleLayer(text, 0.01, anchor, 2) as TextLayer;
     expect(result.sizeMm).toBe(2);
+    expect(result.x).toBeCloseTo(20); // 10 + (30 - 10) * 0.5
+    expect(result.y).toBeCloseTo(30); // 10 + (50 - 10) * 0.5
   });
 });
 
