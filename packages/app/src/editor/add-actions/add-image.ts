@@ -16,7 +16,11 @@ registerAddAction({
     input.accept = 'image/*';
     input.addEventListener('change', () => {
       const file = input.files?.[0];
-      if (file) void importImageFile(file, ctx);
+      // importImageFile rejects on an unreadable/undecodable file — catch
+      // here so a corrupt/mislabeled image logs instead of surfacing as an
+      // unhandled promise rejection (the pre-extraction handler had no error
+      // path either, so this stays a no-op layer-wise, just observable).
+      if (file) importImageFile(file, ctx).catch((err) => console.error('add-image:', err));
     });
     input.click();
   },
