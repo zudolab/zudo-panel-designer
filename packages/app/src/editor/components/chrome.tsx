@@ -20,20 +20,22 @@ export function ChromeButton({
         active
           ? 'border-sky-500 bg-sky-500/20 text-sky-200'
           : 'border-neutral-700 bg-neutral-800 text-neutral-200 hover:bg-neutral-700'
-      } ${className}`}
+      } ${tooltip ? 'peer' : ''} ${className}`}
     />
   );
 
   if (!tooltip) return button;
 
   return (
-    // group-focus-visible doesn't fire when the child button (not the
-    // wrapper) receives focus — group-focus-within is the workaround.
-    <span className="group/tt relative inline-block">
+    // `peer` + `peer-focus-visible` (not group-focus-within) so a mouse
+    // click that leaves the button focused doesn't leave the tooltip stuck
+    // open — :focus-visible only fires for keyboard-style focus.
+    <span className="relative inline-block">
       {button}
       <span
         role="tooltip"
-        className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 opacity-0 shadow transition-opacity delay-300 group-hover/tt:opacity-100 group-focus-within/tt:opacity-100"
+        aria-hidden="true"
+        className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 opacity-0 shadow transition-opacity delay-300 peer-hover:opacity-100 peer-focus-visible:opacity-100"
       >
         {tooltip}
       </span>
