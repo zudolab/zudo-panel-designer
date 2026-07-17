@@ -3,7 +3,7 @@ title: Inspectors
 sidebar_position: 4
 ---
 
-An inspector is the property panel shown in the sidebar's **Properties** section for the currently selected layer. Each layer `type` has exactly one registered inspector component, discovered from `packages/app/src/editor/inspectors/` (see [Extension architecture](./extension-architecture.mdx)). This page covers the inspector contract and the five built-in inspectors, one per layer type.
+An inspector is the property panel shown in the sidebar's **Properties** section for the currently selected layer. That section is one of the sidebar's [collapsible card panels](./interface.mdx#right-sidebar) — its header can be folded shut like the others, and its title names the selected layer's type (e.g. **Properties — path**). Each layer `type` has exactly one registered inspector component, discovered from `packages/app/src/editor/inspectors/` (see [Extension architecture](./extension-architecture.mdx)). This page covers the inspector contract and the five built-in inspectors, one per layer type.
 
 ## The inspector contract
 

@@ -49,6 +49,13 @@ The whole multi-click gesture never touches `ctx.doc` until the path is finished
 
 `tools/zoom.tsx` zooms by a fixed factor (1.5× in, 1/1.5× out) anchored at the click point via `camera.zoomAt` — the mm point under the pointer stays stationary. Alt-click zooms out instead of in.
 
+## Discoverability: tooltips & the Help panel
+
+Two surfaces make a tool's purpose legible without opening the docs — both fed straight from the `ToolModule` data:
+
+- **Toolbar tooltips.** Each toolbar button (`components/toolbar.tsx` → `ChromeButton`) shows a hover tooltip built from the tool's `label` and `shortcut` — e.g. `Select (V)`, `Pen (P)`. The tooltip text is also the button's `aria-label`, so it is the button's accessible name too. It appears on hover after a short delay and, because it keys off `:focus-visible` (not plain focus), a mouse click that leaves the button focused doesn't leave the tooltip stuck open. Add-action buttons get the same treatment from their `label` (they have no shortcut).
+- **The sidebar Help panel.** The pinned Help footer (`components/help-panel.tsx`) shows the currently active tool's name, a shortcut badge, and its longer `description` — a 2–4 sentence explanation of what the tool does, its key pointer interactions, and its shortcut. Each built-in tool supplies one via the optional `ToolModule.description` field (see [Extension architecture → Tool descriptions](./extension-architecture.mdx#tool-descriptions)); a tool that omits it falls back to a generic "No description available" line. Because the panel follows `activeToolId`, holding Space for a transient pan does not swap the shown description.
+
 ## The pointer/keyboard event contract
 
 The Editor shell (`Editor.tsx`) owns exactly one rule for routing input: **the active tool gets first refusal, then app-level fallbacks run.**

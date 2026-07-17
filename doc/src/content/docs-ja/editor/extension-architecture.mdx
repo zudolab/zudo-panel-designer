@@ -70,6 +70,24 @@ registerTool({
 - `ctx.select(id)`、`ctx.setActiveTool(id)`、`ctx.setCamera(next)`。
 - `ctx.openDialog(id, props)` / `ctx.closeDialog()`。
 
+## ツールの説明文
+
+`ToolModule` は任意項目の `description` フィールドを持ちます。これは、そのツールが何をするか、主要なポインタ操作、そしてショートカットを説明する、人間が読むための 2〜4 文です。[サイドバーの Help パネル](./tools.mdx)が、そのときアクティブなツールについてこれを表示します。
+
+```ts
+registerTool({
+  id: 'my-tool',
+  label: 'My Tool',
+  shortcut: 'm',
+  description:
+    'Click to do the primary thing; drag to do the continuous thing. ' +
+    'Modifier notes and the shortcut go here. Shortcut: M.',
+  // …handlers
+});
+```
+
+これは純粋に **追加的** な契約フィールドです。デフォルト値を持たず、ツールのルーティングがこれに依存することもありません。そのため、このフィールドより前からあるツール（あるいは説明文を付けたくないツール）は単に省略でき、Help パネルは汎用的な「No description available」の行にフォールバックします。既存のツールにこのフィールドを追加するのに、ほかの変更は要りません。ほかのツールプロパティと同じ自己登録の表面です。文章は短く命令形で、組み込みツールのエントリに揃えてください。これはリファレンス文書ではなく UI のコピーです。
+
 ## インスペクタの追加
 
 `inspectors/my-type.tsx` を作成し、`registerInspector('shape', MyInspector)` を呼び出します。インスペクタは `{ layer, onChange, ctx }` を受け取ります。`onChange(patch, { commit })` を呼び出してください。スライダーをスクラブしている間は `commit: false`、個別の編集では `commit: true`（デフォルト）です。[インスペクタ](./inspectors.mdx)を参照してください。

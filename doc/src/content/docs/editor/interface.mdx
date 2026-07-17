@@ -19,18 +19,27 @@ The editor (`Editor.tsx`) is a single full-screen shell with four regions: a hea
 
 `components/toolbar.tsx` is entirely data-driven: it renders one button per entry in the [tool registry](./extension-architecture.mdx), in registration order, followed by a divider and one button per entry in the [add-action registry](./add-actions-and-dialogs.mdx#add-actions). Clicking a tool button calls `ctx.setActiveTool(tool.id)`; clicking an add-action button calls `action.run(ctx)`. Neither list is hand-maintained — a new file dropped into `tools/` or `add-actions/` appears here automatically. See [Tools](./tools.mdx) for the built-in tool set.
 
-## Canvas viewport
+## Canvas viewport & rulers
 
 `components/canvas-viewport.tsx` is a purely presentational wrapper around a single `<canvas>`: it exposes a `containerRef` (measured with a `ResizeObserver` so the camera can re-fit on resize) and forwards pointer events to the Editor shell. The `<canvas>` itself has `touch-action: none` so drags aren't hijacked as scroll/pinch gestures on touch devices. All actual painting happens in the Editor's repaint effect — see [Rendering & camera](./rendering-and-camera.mdx).
 
+The viewport sits inside a fixed **ruler frame** (`components/ruler.tsx`): a 20px millimeter ruler strip along the top, a matching strip down the left, and a small **`mm`** corner box where they meet. The strips redraw their ticks and labels whenever the camera pans or zooms, but they **never move in layout** — only the canvas content transforms underneath them. See [Rendering & camera → The mm rulers](./rendering-and-camera.mdx#the-mm-rulers) for the tick math.
+
 ## Right sidebar
 
-`components/sidebar.tsx` scrolls independently (`overflow-y-auto overscroll-contain`, so the list bottoming out never scrolls the canvas underneath) and stacks four sections:
+`components/sidebar.tsx` is a vertical stack of **collapsible card panels**. The top four share a scrolling inner column (`overflow-y-auto overscroll-contain`, so the list bottoming out never scrolls the canvas underneath); the **Help** panel is pinned below them as a non-scrolling footer that stays visible even when the stack above overflows.
+
+Each panel is a `CollapsibleSection` (`components/collapsible-section.tsx`) — a bordered card whose header is a button that toggles the body open or closed (`aria-expanded` on the button, a `▾`/`▸` affordance). The open/closed state is per-session and deliberately not persisted; there is no reordering or animation.
 
 - **Panel** — a `<select>` of the real Eurorack HP sizes (`PANEL_SIZES` from `@zpd/core`), each labeled `{hp}HP — {widthMm}×{heightMm}mm`. Changing it commits a new `panelHp` on the document, which re-fits the camera.
 - **Palette (fixed)** — a read-only legend of the three panel colors (black/soldermask, gold/exposed copper, white/silkscreen). This list is fixed because it mirrors a physical PCB finish, not a user preference.
 - **Layers** — `components/layer-list.tsx`, the visual layer stack (top of the list = top of the stack = last array index). Each row supports select (click), rename (double-click the name), reorder (▲/▼), show/hide (👁), and delete (✕), all routed through `@zpd/core`'s layer-ops so ordering and immutability rules live in one place.
-- **Properties** — `components/inspector-host.tsx`, which renders the registered [inspector](./inspectors.mdx) for the selected layer's type, or a placeholder when nothing is selected.
+- **Properties** — `components/inspector-host.tsx`, which renders the registered [inspector](./inspectors.mdx) for the selected layer's type, or a placeholder when nothing is selected. The card title also names the selected layer's type (e.g. **Properties — shape**).
+- **Help** (footer) — `components/help-panel.tsx`, pinned at the very bottom of the sidebar and starting collapsed. It describes the currently **active** tool: its name, a keyboard-shortcut badge, and the tool's `description` text (see [Tools](./tools.mdx) and [Extension architecture → Tool descriptions](./extension-architecture.mdx#tool-descriptions)). It follows `activeToolId`, so the transient Space-held pan override never changes what it shows.
+
+## App-wide text selection
+
+The editor shell's root element carries `select-none`, so click-dragging anywhere in the chrome or on the canvas never starts a native text selection. This keeps drag gestures — moving a layer, panning, drawing a pen path — from accidentally highlighting UI labels mid-interaction. The editable fields opt back in explicitly with `select-text` (the layer-rename input, the inspector number/text fields, the text inspector's `<textarea>`), so you can still select and edit their contents normally.
 
 ## Download trigger
 
