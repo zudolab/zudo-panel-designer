@@ -1,0 +1,95 @@
+---
+title: ジオメトリと編集の契約
+description: bbox の計算、ヒットテストのルール、レイヤーリスト操作、パスのジオメトリ、リサイズの制御、グリッドスナップ。
+sidebar_position: 10
+---
+
+## bbox の計算
+
+`packages/core/src/bbox.ts` には、他のジオメトリモジュール間で共有される矩形／bbox の計算処理が置かれています。ドキュメント空間の単位はミリメートルであり、回転は常に**矩形自身の中心を軸とした時計回りの度数**です——これは `@zpd/core` 全体で用いられているのと同じ規約です。
+
+| Function | 目的 |
+| --- | --- |
+| `rectCenter(rect)` | 矩形の中心点。 |
+| `rectCorners(rect)` | 4 つの角を `[Pt, Pt, Pt, Pt]` として返す。 |
+| `boundsOfPoints(points)` | 点の集合を囲む軸並行の境界。 |
+| `rotatedRectAABB(rect, rotationDeg)` | 矩形の 4 つの角を自身の中心を軸に回転させ、その min/max を取った回転後のバウンディングボックス。`rotationDeg` が `0`/`undefined` の場合は高速に何もしない no-op となる。結果は常に新しいコピーであり、入力の矩形を参照として返すことはない。 |
+| `unionBbox(a, b)` | `a` と `b` の両方を含む最小の矩形。 |
+| `mergeBboxes(rects)` | リストに対して `unionBbox` を畳み込んだもの——選択範囲全体を囲む bbox。 |
+
+## ヒットテスト
+
+`packages/core/src/hit-test.ts` は、mm 空間でのキャンバスのヒットテストを実装します。`hitTestDoc(doc, mmX, mmY)` はレイヤーを**最前面から順に**（最大のインデックスから `0` へ向かって）走査し、非表示のレイヤーをスキップしながら、タイプごとのテストに最初に一致したレイヤーを返します。一致するものがなければ `null` を返します。
+
+| Layer type | ヒットテスト |
+| --- | --- |
+| `shape` | 回転した矩形への点内包判定。`shape === 'ellipse'` のときは楕円の分岐（正規化した楕円方程式）を用いる。 |
+| `image` | 回転した矩形への点内包判定（矩形のみ。楕円の分岐はなし）。 |
+| `text` | *推定した* bbox に対する、回転矩形への点内包判定。`@zpd/core` にはキャンバス／DOM のフォントメトリクスがないため、`estimateTextBbox` は実際のグリフ計測ではなく、おおまかな等幅フォント寄りの推定（`TEXT_CHAR_WIDTH_FACTOR = 0.6`、`TEXT_LINE_HEIGHT_FACTOR = 1.2`）を用いる。クリックで選択するには十分だが、レイアウトの正確な根拠にはならない。 |
+| `path` | フラット化した塗り領域に対する even-odd（偶奇）の点内包判定（`closed` のときのみ）に加え、余裕を持たせたつかみ幅の下限（`Math.max(layer.strokeWidth, 1.5) / 2`、`MIN_STROKE_GRAB_MM = 1.5`）でのストローク距離判定。これにより、細い線でもクリックしやすいままになる。 |
+| `pattern` | 常に `false`。 |
+
+<Warning title="パターンレイヤーはキャンバスからはヒットテストできない">
+  `hitTestLayer` は `type === 'pattern'` に対して無条件で `false` を返します。パターンレイヤーはパネル全体を覆うため、キャンバスをクリックしても決してそれを対象にできません——パターンレイヤーはレイヤーリストからのみ選択でき、キャンバスのクリックでは選択できません。これは機能の欠落ではなく、意図的なものです。
+</Warning>
+
+素の Node/Vitest にはブラウザの `Path2D` が存在しないため、パスのヒットテストは `isPointInPath`/`isPointInStroke` を使いません——ベジェをポリライン（折れ線）にフラット化し（下記参照）、独自に even-odd のレイキャスティングと点から線分への距離計算を行います。これにより `@zpd/core` は依存関係を持たず、ブラウザの外でもテスト可能なままになっています。
+
+## レイヤーリスト操作
+
+`packages/core/src/layer-ops.ts` は、下から上へ並んだフラットなレイヤー配列に対して操作を行います。すべての関数は純粋かつイミュータブルで、入力を変更するのではなく**新しい**配列を返します。そのため、呼び出し側は[履歴](./history.mdx)のリデューサーに対して安価に差分／アンドゥを行えます。
+
+| Function | 効果 |
+| --- | --- |
+| `addLayer(layers, layer, index?)` | `index`（配列の範囲にクランプされる）に挿入する。`index` を省略した場合は末尾に追加する。 |
+| `removeLayer(layers, id)` | 指定した `id` のレイヤーを除外する。 |
+| `duplicateLayer(layers, id, newId, nameSuffix = ' copy')` | 元のレイヤーのすぐ上にコピーを挿入する。`id: newId` を持ち、`name` にはサフィックスが付く。 |
+| `reorderLayer(layers, fromIndex, toIndex)` | splice でレイヤーを移動する。範囲外や同一のインデックスでは何もしない。 |
+| `toggleLayerHidden(layers, id)` | 該当レイヤーの `hidden` を反転する。 |
+| `renameLayer(layers, id, name)` | 該当レイヤーの `name` を設定する。 |
+
+すべての関数は、自前で ID を生成するのではなく、**呼び出し側から渡された** `id`（`duplicateLayer` の場合は呼び出し側から渡された `newId`）を受け取ります。ID の生成はドキュメントモデルの関心事であり（`mintId`、[ドキュメントの状態とレイヤー](./document-state-and-layers.mdx)を参照）、こうすることでこれらの操作は入力に対する純粋な関数として保たれます。
+
+## パスのジオメトリ
+
+`packages/core/src/path-geometry.ts` には、ベジェパスのヘルパーが置かれています。いずれも純粋な TypeScript で、ブラウザのランタイム依存はありません。
+
+- **`PathPointLike`** — アンカー（`x`、`y`）と、オプションの絶対座標ハンドル `hin`/`hout`（mm）。
+- **`flattenSubpath(points, closed, segments = 24)`** — アンカーからアンカーへの各ベジェセグメントを走査し、ポリラインへとサンプリングする（`DEFAULT_FLATTEN_SEGMENTS = 24`、セグメントあたり 24 点）。これがブラウザ外でのヒットテストや bbox 計算を支えている。
+- **`flattenPath(points, closed, extraSubpaths?)`** — プライマリのサブパスに加え、あらゆる `extraSubpaths`（常に閉じているものとして扱われる）をフラット化する。
+- **`pathBbox(points, extraSubpaths?)`** — フラット化した曲線ではなく、生のアンカー＋ハンドルに対する近似。安価で、選択の装飾や bbox 表示には十分だが、描画された曲線に対してピクセル単位で正確ではない。
+- **`buildPath2D(...)`** — 実際のブラウザの `Path2D` を構築する。アプリ／レンダリング用途専用で、Node ではグローバルの `Path2D` がないため `null` を返す。core 自身のヒットテスト／bbox ロジックとテストは、どこでも動作する `flattenPath` を代わりに用いる。
+- **`translatePoints` / `translatePathLayer`** — サブパス（とそのハンドル）を `dx`/`dy` だけ移動する。
+- **`movePathAnchor(points, index, x, y)`** — 1 つのアンカーを移動し、そのハンドルも一緒に移動させて、アンカーからのオフセットを保つ。
+- **`movePathHandle(points, index, which, x, y, mirror)`** — 1 つのハンドルを移動する。`mirror: true` の場合、反対側のハンドルをアンカーを軸に反射させ、曲線が滑らかなまま保たれる（一般的なベジェエディタの挙動）。
+
+## リサイズの制御
+
+`packages/core/src/resize.ts` は、軸並行・8 ハンドルのリサイズ計算（`'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'`）を実装します。
+
+```ts
+function isResizable(rotation: number | undefined): boolean {
+  return !rotation;
+}
+```
+
+<Note title="回転したレイヤーはステージ 1 ではリサイズできない">
+  リサイズは回転していないレイヤーにのみ提供されます——回転した bbox のハンドルはその見た目上の辺と一致しないため、`isResizable` は、アプリの UI がリサイズハンドルを表示するかどうかを判定するための 1 行のガードです。
+</Note>
+
+`resizeRect(rect, handle, dx, dy, minSize = DEFAULT_MIN_SIZE_MM)` は、ドラッグの差分をハンドルの軸に沿って適用します。矩形が `minSize`（`DEFAULT_MIN_SIZE_MM = 1` mm）より小さくなったり反転したりしないようクランプされます。各ハンドルは*反対側*の辺を固定したまま動きます——例えば `'e'` をドラッグすると西の辺が固定され、`'w'` をドラッグすると東の辺が固定されます。
+
+## グリッドスナップ
+
+`packages/core/src/snap.ts` は、mm 座標をグリッドにスナップします。
+
+```ts
+const DEFAULT_SNAP_MM = 0.1;
+
+function snapToGrid(value: number, gridMm: number = DEFAULT_SNAP_MM): number {
+  const snapped = Math.round(value / gridMm) * gridMm;
+  return Number(snapped.toFixed(6));
+}
+```
+
+デフォルトのグリッドは `0.1` mm です。固定小数桁の文字列（`toFixed(6)`）を経由するラウンドトリップは意図的なもので、`0.1 + 0.2 !== 0.3` のような浮動小数点のノイズが、スナップした mm 座標に漏れ込むのを防ぎます。`snapPoint(pt, gridMm)` は、点の `x` と `y` の両方に `snapToGrid` を適用します。

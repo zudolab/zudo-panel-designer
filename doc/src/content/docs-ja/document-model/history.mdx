@@ -1,0 +1,58 @@
+---
+title: アンドゥ／リドゥ履歴
+description: スナップショットベースの履歴リデューサー、ジェスチャーのバッチ化、50 エントリの上限（history.ts より）。
+sidebar_position: 4
+---
+
+## スナップショットベースのリデューサー
+
+アンドゥ／リドゥは、差分／パッチのログではなく、ドキュメントの完全な状態スナップショットに対する、素の・React に依存しないリデューサーです。
+
+```ts
+interface HistoryState<T> {
+  past: T[];
+  present: T;
+  future: T[];
+}
+```
+
+`createHistory(initial)` は、空の `past`/`future` と `present = initial` で開始します。このリデューサーは React 依存のない素の関数であるため、`@zpd/core` は単体でテストしたり使ったりできます。アプリのウェーブでは、これを自身が使う任意の状態コンテナに配線します。
+
+## `commit` と `replace`
+
+| Function | 効果 |
+| --- | --- |
+| `commit(state, next)` | 現在の `present` を新しいアンドゥエントリとして `past` に積み、`next` を新しい `present` に設定し、**リドゥのブランチを破棄する**（`future` がクリアされる）。 |
+| `replace(state, next)` | `present` をその場で更新する——**新しいアンドゥエントリは作られない**。 |
+
+`replace` は、連続的で進行中の更新——例えばドラッグ中のすべての `pointermove`——を、直近の `commit`/`beginGesture` が開いたエントリにまとめるために存在します。動きの 1 ピクセルごとにアンドゥのステップを作るのを避けるためです。
+
+## ジェスチャーのバッチ化
+
+```ts
+function beginGesture<T>(state: HistoryState<T>): HistoryState<T> {
+  // Same as committing the current present onto itself
+  return commit(state, state.present);
+}
+```
+
+`beginGesture` は、`present` をまだ変えずに新しいアンドゥエントリを開きます。呼び出しのパターンは次のとおりです。ドラッグ／リサイズ／ノード編集の操作が始まったときに `beginGesture` を一度呼び、そのジェスチャーの残りの中間更新すべてで `replace` を呼びます。その結果、1 つのジェスチャー全体——それがどれだけ多くのポインタイベントを生み出そうと——が**ちょうど 1 つ**のアンドゥエントリに畳み込まれます。
+
+## 50 エントリの上限
+
+```ts
+const MAX_HISTORY = 50;
+```
+
+`commit`（したがって、`commit` 経由で実装されている `beginGesture` も）は、積むたびに `past` を直近 50 エントリに切り詰めます（`past: [...state.past, state.present].slice(-MAX_HISTORY)`）。履歴の深さには上限があり、長い編集セッションでもアンドゥが無制限に増えることはありません。
+
+## アンドゥ、リドゥ、can-* ガード
+
+| Function | 効果 |
+| --- | --- |
+| `undo(state)` | `past` の最後のエントリを `present` に移し、それまでの `present` を `future` の先頭に積む。`past` が空なら no-op。 |
+| `redo(state)` | `future` の最初のエントリを `present` に移し、それまでの `present` を `past` に積む。`future` が空なら no-op。 |
+| `canUndo(state)` | `past.length > 0` のとき `true`。 |
+| `canRedo(state)` | `future.length > 0` のとき `true`。 |
+
+`commit` は常に `future` をクリアするため、リドゥはアンドゥの直後にのみ利用できます。アンドゥ後に新しい編集を行うと、放棄されたリドゥのブランチは破棄されます——これは標準的なアンドゥ／リドゥのセマンティクスです。

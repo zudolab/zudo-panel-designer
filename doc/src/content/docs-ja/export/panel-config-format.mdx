@@ -1,0 +1,129 @@
+---
+title: PanelConfig フォーマット
+sidebar_position: 1
+---
+
+`PanelConfig` は、エディタがパネルの注文成果物としてダウンロードする、バージョン付きの
+JSON エンベロープです。`serializePanelConfig()` によって生成され、
+`parsePanelConfig()` によって読み込まれます。どちらも `@zpd/core` からエクスポートされています
+（ソース: `packages/core/src/serialize.ts`）。
+
+## エンベロープの形
+
+```json
+{
+  "version": 1,
+  "app": "zpd",
+  "panel": { "hp": 12, "widthMm": 60.6, "heightMm": 128.5 },
+  "palette": ["black", "gold", "white"],
+  "layers": []
+}
+```
+
+| Field | Type | 備考 |
+|---|---|---|
+| `version` | `1` | `PANEL_CONFIG_VERSION`。下記の [バージョニング](#バージョニング) を参照。 |
+| `app` | `"zpd"` | 生成元のアプリを識別する固定のリテラル。 |
+| `panel.hp` | `number` | Eurorack HP でのパネル幅。ライブドキュメント（`doc.panelHp`）から取得。 |
+| `panel.widthMm` | `number` | `panelWidthMm()` を介して `hp` から導出される——**参考用の出力**であり、インポート時には再び信頼されない（下記参照）。 |
+| `panel.heightMm` | `number` | `PANEL_HEIGHT_MM`、固定の 3U Eurorack パネル高さ（128.5mm）。 |
+| `palette` | `string[]` | 固定の 3 色の名前を、インデックス順に並べたもの: `["black", "gold", "white"]`。 |
+| `layers` | `Layer[]` | ドキュメントのレイヤースタック（下から上へ）。[レイヤーのフィールド](#レイヤーのフィールド) を参照。 |
+
+:::note
+`panel.widthMm`、`panel.heightMm`、`palette` は、**人間や注文システムの読み手のための派生的・参考用の出力**です——これらは、人や下流の製造ツールが `hp` から寸法を再計算しなくてもファイルを読めるように存在します。読み込み時には、`parsePanelConfig` は手編集された値を信頼せず、`hp` からこれらを再計算します。`panel.hp` と `layers` が正式なソースデータです。
+:::
+
+## レイヤーのフィールド
+
+5 つのレイヤータイプはすべて、共通のベース構造に加えてタイプ固有のフィールドを持ちます。
+
+### すべてのレイヤーに共通
+
+| Field | Type | 備考 |
+|---|---|---|
+| `id` | `string` | 安定したレイヤー id。インポート時に欠落している場合は `mintId('layer')` で生成される。 |
+| `name` | `string` | 表示名。欠落している場合は `""` がデフォルト。 |
+| `hidden` | `boolean`（任意） | レイヤーが一度も非表示にされていない間は省略される。表示状態が一度でも切り替えられると、このフィールドは明示的に書き込まれる——偶数回切り替えた後の `false` も含めて——トグル操作は既にある値を反転させるため。 |
+| `type` | `'shape' \| 'pattern' \| 'path' \| 'text' \| 'image'` | 以下のフィールドを判別する。 |
+
+### `shape`
+
+| Field | Type | 備考 |
+|---|---|---|
+| `shape` | `'rect' \| 'ellipse'` | |
+| `x`, `y`, `width`, `height` | `number` | ミリメートル、ドキュメント空間。 |
+| `rotation` | `number`（任意） | bbox の中心を軸にした時計回りの度数。未設定のときは省略される。 |
+| `color` | `0 \| 1 \| 2` | [ColorIndex](#colorindex-パレット) を参照。 |
+
+### `pattern`
+
+| Field | Type | 備考 |
+|---|---|---|
+| `patternType` | `string` | 自由形式の識別子（例: `"dot-grid"`）。認識できなくてもそのまま保持される——core は、それを検証するパターンレジストリに依存していない。 |
+| `params` | `Record<string, number>` | パターン固有の数値パラメータ（例: `pitch`、`radius`）。 |
+| `color` | `0 \| 1 \| 2` | |
+
+### `path`
+
+| Field | Type | 備考 |
+|---|---|---|
+| `points` | `PathPoint[]` | プライマリのサブパス——ペンツールが編集するもの。[PathPoint](#レイヤーのフィールド-path-pathpoint) を参照。 |
+| `extraSubpaths` | `PathPoint[][]`（任意） | 追加の閉じたサブパス。例えば画像トレースで生成される穴や島。存在・非存在（空配列であっても）はラウンドトリップのために正確に保持される。 |
+| `closed` | `boolean` | |
+| `fill` | `0 \| 1 \| 2 \| null` | `null` は塗りなしを意味する。 |
+| `stroke` | `0 \| 1 \| 2 \| null` | `null` は線なしを意味する。 |
+| `strokeWidth` | `number` | ミリメートル。 |
+
+#### PathPoint
+
+| Field | Type | 備考 |
+|---|---|---|
+| `x`, `y` | `number` | アンカー点、ミリメートル。 |
+| `hin` | `{ x: number, y: number }`（任意） | 絶対座標のベジェ handle-in。 |
+| `hout` | `{ x: number, y: number }`（任意） | 絶対座標のベジェ handle-out。 |
+
+### `text`
+
+| Field | Type | 備考 |
+|---|---|---|
+| `content` | `string` | 改行を含んでもよい。 |
+| `fontFamily` | `string` | |
+| `sizeMm` | `number` | ミリメートル単位のフォントサイズ（キャンバスのフォント px は、ドキュメント空間では mm に等しい）。 |
+| `x`, `y` | `number` | バウンディングボックスの左上、ミリメートル。 |
+| `rotation` | `number`（任意） | 時計回りの度数。未設定のときは省略される。 |
+| `color` | `0 \| 1 \| 2` | |
+
+### `image`
+
+| Field | Type | 備考 |
+|---|---|---|
+| `src` | `string` | データ URL。設計時の参照のみ——ラスターは製造できず、最終的なパネルはそこからトレースされたベクターレイヤーを使う。 |
+| `x`, `y`, `width`, `height` | `number` | ミリメートル。 |
+
+## ColorIndex + パレット
+
+すべてのレイヤーの `color`（および `path` レイヤーの `fill`／`stroke`）は
+`ColorIndex`（`0`、`1`、`2` のいずれか）です。このインデックスは、
+`packages/core/src/palette.ts` で一度だけ定義される固定の 3 色パネル仕上げに対応します。
+
+| Index | Name | 意味 |
+|---|---|---|
+| `0` | `black` | ソルダーマスク |
+| `1` | `gold` | 露出銅（ENIG メッキ） |
+| `2` | `white` | シルクスクリーン |
+
+エンベロープ内の `palette` 配列（`["black", "gold", "white"]`）は、これらの名前を
+インデックス順に並べたものです——JSON の読み手が、インデックスと名前の対応を暗記していなくても
+済むように存在します。パレットは固定であり、ドキュメントごとにユーザーが設定できるものではありません。
+
+## バージョニング
+
+`PANEL_CONFIG_VERSION` は現在 `1` で、`PanelConfig` の TypeScript 型は `version: 1` に
+固定されています——これまでのところフォーマットの世代は 1 つだけです。このフィールドは、
+将来フォーマットが変わったときに、それを知らせる場所を確保しておくために存在します。
+後のパーサーは、古いファイルを扱うために `version` で分岐したり、認識できないバージョンの
+ファイルを拒否・マイグレーションしたりできます。現時点では、`parsePanelConfig` は入力の
+`version` フィールドを実際には読み込みも検証もしません——パーサーがエンベロープの形に対して
+厳格ではなく、あえて寛容に設計されている理由については、[防御的パース](./defensive-parsing.mdx)
+を参照してください。
