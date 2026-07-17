@@ -1,16 +1,18 @@
 // Built-in select tool (V) — the reference tool for Wave 5 to copy. It shows
 // every part of the contract: hit-testing, one-undo-entry gestures
 // (beginGesture + streamed replace), reading LIVE ctx state mid-gesture, and
-// screen<->mm conversion. Move / resize (8 handles) / path node editing all
-// live here; a later wave refines this ONE file without touching the registry.
+// screen<->mm conversion. Move / resize (8 handles, rotation-aware) / rotate /
+// path node editing all live here; a later wave refines this ONE file without
+// touching the registry.
 import {
   duplicateLayersAbove,
   hitTestLayer,
   mintId,
   movePathAnchor,
   movePathHandle,
+  rectCenter,
   rectsIntersect,
-  resizeRect,
+  resizeRotatedRect,
   rotatedRectAABB,
   snapToGrid,
   translatePathLayer,
@@ -20,7 +22,14 @@ import {
   type Rect,
   type ResizeHandle,
 } from '@zpd/core';
-import { drawHoverOutline, layerBbox, layerRotation, resizeHandleRects } from '../renderer';
+import {
+  canRotate,
+  drawHoverOutline,
+  layerBbox,
+  layerRotation,
+  resizeHandleRects,
+  rotateHandleScreenPos,
+} from '../renderer';
 import { registerTool } from '../registry/tools';
 import type { DraftRenderContext, PanelDims, ToolContext, ToolPointerEvent } from '../types';
 
@@ -28,6 +37,7 @@ const SNAP_MM = 0.1;
 const MIN_RESIZE_MM = 0.5;
 const ANCHOR_GRAB_PX = 7;
 const HANDLE_GRAB_PX = 6;
+const ROTATE_GRAB_PX = 8;
 // Click-vs-drag threshold (#47): 4 CSS px measured in CLIENT (screen) space so
 // it is zoom-invariant — at any zoom, a sub-4px press-and-release is a click.
 // Mouse only; the 8px touch threshold is a deliberate, recorded exclusion
@@ -62,7 +72,23 @@ type Drag =
       // CLICK (never crossed the threshold), collapse to this id on release.
       collapseTo: string | null;
     }
-  | { kind: 'resize'; layerId: string; handle: ResizeHandle; orig: Rect; startMm: Pt }
+  | {
+      kind: 'resize';
+      layerId: string;
+      handle: ResizeHandle;
+      orig: Rect;
+      startMm: Pt;
+      // Layer rotation latched at pointerdown — the whole gesture resolves in
+      // this one frame (mid-drag the rect changes, the rotation doesn't).
+      rotation: number;
+    }
+  | {
+      kind: 'rotate';
+      layerId: string;
+      centerMm: Pt; // bbox center at pointerdown — the rotation pivot
+      startPointerDeg: number; // pointer angle about the center at pointerdown
+      startRotation: number; // layer rotation at pointerdown
+    }
   | { kind: 'anchor'; layerId: string; index: number }
   | { kind: 'handle'; layerId: string; index: number; which: 'hin' | 'hout' };
 
@@ -143,6 +169,19 @@ function addMm(a: number, b: number): number {
   return Number((a + b).toFixed(6));
 }
 
+const roundMm = (v: number) => Number(v.toFixed(6));
+
+// Pointer angle about a center, degrees. atan2 in a y-down space is
+// clockwise-positive — the same convention as layer rotation (bbox.ts).
+function pointerDeg(mm: Pt, center: Pt): number {
+  return (Math.atan2(mm.y - center.y, mm.x - center.x) * 180) / Math.PI;
+}
+
+// Keep streamed rotations inspector-friendly: [-180, 180), 0.1° resolution.
+function normalizeDeg(v: number): number {
+  return Number((((v % 360) + 540) % 360 - 180).toFixed(1));
+}
+
 function topmostHit(doc: DocState, mm: Pt): Layer | null {
   for (let i = doc.layers.length - 1; i >= 0; i -= 1) {
     const layer = doc.layers[i];
@@ -176,11 +215,15 @@ function tryGrabNode(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): bo
 
 function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): boolean {
   if (selected.type !== 'shape' && selected.type !== 'image') return false;
-  if (layerRotation(selected)) return false; // rotated bboxes aren't axis-resizable
   const bbox = layerBbox(selected, ctx.panel);
   if (!bbox) return false;
-  const aabb = rotatedRectAABB(bbox, 0);
-  for (const h of resizeHandleRects(aabb, ctx.camera)) {
+  // Rotated shapes resize too (#51): handles sit at the ROTATED corners and
+  // the drag resolves in the layer's local frame via resizeRotatedRect (#48).
+  // The type gate above is the whole eligibility check (core's isResizable
+  // was deleted in #48); images have no rotation field so they stay axis-
+  // aligned through layerRotation() === 0.
+  const rotation = layerRotation(selected);
+  for (const h of resizeHandleRects(bbox, ctx.camera, rotation)) {
     if (e.screen.x >= h.x && e.screen.x <= h.x + h.size && e.screen.y >= h.y && e.screen.y <= h.y + h.size) {
       drag = {
         kind: 'resize',
@@ -188,11 +231,30 @@ function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolCont
         handle: h.id,
         orig: { x: selected.x, y: selected.y, width: selected.width, height: selected.height },
         startMm: e.mm,
+        rotation,
       };
       return true;
     }
   }
   return false;
+}
+
+function tryGrabRotateHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): boolean {
+  if (!canRotate(selected)) return false; // shape/text only — never invent rotation
+  const bbox = layerBbox(selected, ctx.panel);
+  if (!bbox) return false;
+  const rotation = layerRotation(selected);
+  const knob = rotateHandleScreenPos(bbox, rotation, ctx.camera);
+  if (Math.hypot(knob.x - e.screen.x, knob.y - e.screen.y) > ROTATE_GRAB_PX) return false;
+  const centerMm = rectCenter(bbox);
+  drag = {
+    kind: 'rotate',
+    layerId: selected.id,
+    centerMm,
+    startPointerDeg: pointerDeg(e.mm, centerMm),
+    startRotation: rotation,
+  };
+  return true;
 }
 
 registerTool({
@@ -207,8 +269,10 @@ registerTool({
     'toggles one layer, and a plain empty-space click deselects. Dragging any member of a ' +
     'multi-selection moves the whole selection; hold Alt as the drag starts to duplicate it instead, ' +
     'and hold Shift while dragging to constrain movement to one axis. With one layer selected, drag ' +
-    'its handles to resize (shapes/images) or its anchors and bezier handles to reshape a path. Arrow ' +
-    'keys nudge the selection (Shift = ×10); Delete/Backspace removes it. Shortcut: V.',
+    'its handles to resize (shapes/images, rotated shapes included) or its anchors and bezier ' +
+    'handles to reshape a path, and drag the round handle above a shape or text layer to rotate it ' +
+    'about its center (Shift snaps to 45° steps). Arrow keys nudge the selection (Shift = ×10); ' +
+    'Delete/Backspace removes it. Shortcut: V.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
     hoveredId = null; // pointer engaged — hover chrome resumes after release
     // Right (or middle) click PRESERVES the selection: a future context menu
@@ -219,6 +283,7 @@ registerTool({
     const selected = ctx.selectedLayer;
     // node/handle drags on the current selection win over a fresh hit-test
     if (selected && tryGrabNode(selected, e, ctx)) return;
+    if (selected && tryGrabRotateHandle(selected, e, ctx)) return;
     if (selected && tryGrabResizeHandle(selected, e, ctx)) return;
 
     const hit = topmostHit(ctx.doc, e.mm);
@@ -383,8 +448,14 @@ registerTool({
       case 'resize': {
         const dx = e.mm.x - drag.startMm.x;
         const dy = e.mm.y - drag.startMm.y;
-        const r = resizeRect(drag.orig, drag.handle, dx, dy, MIN_RESIZE_MM);
-        const patch = { x: snap(r.x), y: snap(r.y), width: snap(r.width), height: snap(r.height) };
+        const r = resizeRotatedRect(drag.orig, drag.rotation, drag.handle, dx, dy, MIN_RESIZE_MM);
+        // Grid-snap only the axis-aligned case: resizeRotatedRect's anchor
+        // compensation is exact trig, so independently grid-snapping x/y/w/h
+        // of a rotated rect would visibly detach the anchored corner. Rotated
+        // resize keeps float hygiene only.
+        const patch = drag.rotation
+          ? { x: roundMm(r.x), y: roundMm(r.y), width: roundMm(r.width), height: roundMm(r.height) }
+          : { x: snap(r.x), y: snap(r.y), width: snap(r.width), height: snap(r.height) };
         if (
           !gestureOpen &&
           patch.x === drag.orig.x &&
@@ -396,6 +467,18 @@ registerTool({
         }
         ensureGesture(ctx);
         updateLayer(ctx, drag.layerId, patch, false);
+        break;
+      }
+      case 'rotate': {
+        let delta = pointerDeg(e.mm, drag.centerMm) - drag.startPointerDeg;
+        // Shift snaps to 45° increments measured FROM the drag-start rotation,
+        // not from 0 (#51): a layer already at 30° snaps to 75°, 120°, … so
+        // the snap stays relative to where the gesture began.
+        if (e.shiftKey) delta = Math.round(delta / 45) * 45;
+        const next = normalizeDeg(drag.startRotation + delta);
+        if (!gestureOpen && next === normalizeDeg(drag.startRotation)) break;
+        ensureGesture(ctx);
+        updateLayer(ctx, drag.layerId, { rotation: next }, false);
         break;
       }
       case 'anchor': {

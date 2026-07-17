@@ -25,6 +25,7 @@ import {
   type ShapeLayer,
 } from '@zpd/core';
 import { normalizeSelectedIds } from '../selection';
+import { rotateHandleScreenPos } from '../renderer';
 import type { PanelDims, ToolContext, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
 
@@ -562,6 +563,133 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
     expect(getBeginGestureCalls()).toBe(0);
     expect(getHistory().past).toHaveLength(0);
     expect(getHistory().present.layers[0]).toMatchObject({ id: 's1', x: 10, y: 10 });
+  });
+});
+
+// --- rotate handle + rotated resize (#51) -----------------------------------
+
+describe('select tool — rotate handle (#51)', () => {
+  // Identity camera: rotateHandleScreenPos returns screen px == mm, so the
+  // same point feeds ptr() for both spaces.
+  const handleAt = (shape: ShapeLayer): Pt =>
+    rotateHandleScreenPos(
+      { x: shape.x, y: shape.y, width: shape.width, height: shape.height },
+      shape.rotation ?? 0,
+      CAMERA,
+    );
+
+  it('a rotate drag is exactly ONE undo entry and rotates about the bbox center', () => {
+    const shape = rectAt('s1', 10, 10); // bbox center (20, 15)
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [shape],
+    });
+    ctx.select('s1');
+
+    // handle sits 20px above the top-edge midpoint: (20, -10)
+    select.onPointerDown?.(ptr(handleAt(shape)), ctx);
+    // pointer at 45° below-right of the center: start angle was -90°, so this
+    // streams through +90+45 … final position is due east → delta +90°
+    select.onPointerMove?.(ptr({ x: 30, y: -5 }), ctx);
+    select.onPointerMove?.(ptr({ x: 45, y: 15 }), ctx); // atan2(0, 25) = 0°
+    select.onPointerUp?.(ptr({ x: 45, y: 15 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(1);
+    expect(getHistory().past).toHaveLength(1);
+    expect((layerById('s1') as ShapeLayer).rotation).toBe(90);
+
+    ctx.undo();
+    expect((layerById('s1') as ShapeLayer).rotation).toBeUndefined();
+  });
+
+  it('Shift snaps to 45° increments measured FROM the drag-start rotation', () => {
+    const shape: ShapeLayer = { ...rectAt('s1', 10, 10), rotation: 30 };
+    const { ctx, getHistory, layerById } = makeHarness({ panelHp: 12, layers: [shape] });
+    ctx.select('s1');
+
+    // The handle direction is always (rotation − 90°) from the center, so the
+    // start pointer angle here is −60°. Move to −10° (delta 50°) with Shift:
+    // snapped to +45° FROM the start rotation → 30 + 45 = 75, not a multiple
+    // of 45 from zero.
+    const center = { x: 20, y: 15 };
+    const r = 25;
+    const rad = (-10 * Math.PI) / 180;
+    const end = { x: center.x + r * Math.cos(rad), y: center.y + r * Math.sin(rad) };
+    select.onPointerDown?.(ptr(handleAt(shape)), ctx);
+    select.onPointerMove?.(ptr(end, { shiftKey: true }), ctx);
+    select.onPointerUp?.(ptr(end, { shiftKey: true }), ctx);
+
+    expect(getHistory().past).toHaveLength(1);
+    expect((layerById('s1') as ShapeLayer).rotation).toBe(75);
+  });
+
+  it('a pure click on the rotate handle writes NO history and keeps the selection', () => {
+    const shape = rectAt('s1', 10, 10);
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [shape],
+    });
+    ctx.select('s1');
+
+    const h = handleAt(shape);
+    select.onPointerDown?.(ptr(h), ctx);
+    select.onPointerMove?.(ptr({ x: h.x + 1, y: h.y + 1 }), ctx); // sub-threshold jiggle
+    select.onPointerUp?.(ptr({ x: h.x + 1, y: h.y + 1 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(0);
+    expect(getHistory().past).toHaveLength(0);
+    expect((layerById('s1') as ShapeLayer).rotation).toBeUndefined();
+    expect(ctx.selectedIds).toEqual(['s1']);
+  });
+
+  it('image layers get NO rotate handle — the grab point is plain empty space', () => {
+    const image: Layer = {
+      id: 'i1',
+      name: 'Img',
+      type: 'image',
+      src: 'data:,',
+      x: 10,
+      y: 10,
+      width: 20,
+      height: 10,
+    };
+    const { ctx, getHistory } = makeHarness({ panelHp: 12, layers: [image] });
+    ctx.select('i1');
+
+    // where a rotate handle WOULD sit for this bbox: (20, -10) — pressing
+    // there must fall through to the empty-space path (deselect + marquee arm)
+    select.onPointerDown?.(ptr({ x: 20, y: -10 }), ctx);
+    select.onPointerUp?.(ptr({ x: 20, y: -10 }), ctx);
+
+    expect(ctx.selectedIds).toEqual([]);
+    expect(getHistory().past).toHaveLength(0);
+  });
+});
+
+describe('select tool — rotated-shape resize (#51, math from #48)', () => {
+  it('resizes a 90°-rotated shape from its ROTATED se handle, one undo entry', () => {
+    const shape: ShapeLayer = { ...rectAt('s1', 10, 10), rotation: 90 };
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [shape],
+    });
+    ctx.select('s1');
+
+    // raw se corner (30, 20) rotated 90° cw about the center (20, 15) lands
+    // at (15, 25) — the handle rides the oriented chrome, not the AABB.
+    select.onPointerDown?.(ptr({ x: 15, y: 25 }), ctx);
+    // screen drag (0, +5) → local frame (+5, 0): width grows by 5, and the
+    // anchored nw corner stays visually fixed via resizeRotatedRect (#48)
+    select.onPointerMove?.(ptr({ x: 15, y: 30 }), ctx);
+    select.onPointerUp?.(ptr({ x: 15, y: 30 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(1);
+    expect(getHistory().past).toHaveLength(1);
+    const resized = layerById('s1') as ShapeLayer;
+    expect(resized).toMatchObject({ x: 7.5, y: 12.5, width: 25, height: 10, rotation: 90 });
+
+    ctx.undo();
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 10, width: 20, height: 10 });
   });
 });
 
