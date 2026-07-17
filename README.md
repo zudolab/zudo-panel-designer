@@ -9,6 +9,8 @@ finishes: **black**, **gold**, and **white**.
 - `packages/core` (`@zpd/core`) — document model, geometry/ops/history. No UI.
 - `packages/patterns` (`@zpd/patterns`) — panel pattern definitions.
 - `packages/app` (`@zpd/app`, private) — the Vite + React one-page app.
+- `doc/` — the documentation site, an isolated pnpm sub-project with its own
+  lockfile (not part of the root workspace). See the Deployment section below.
 
 ## Requirements
 
@@ -36,12 +38,37 @@ lint/format/test/typecheck tooling and is not part of the workspace.
 
 ## Deployment
 
-The app is deployed as **Cloudflare Workers static assets** (not Cloudflare
-Pages) — the same model as the takazudomodular.com main site. Config lives in
-`wrangler.toml` at the repo root; `.github/workflows/production-deploy.yml`
-builds and runs `wrangler deploy --env production` on every push to `main`.
-`.github/workflows/pr-checks.yml` also runs a secret-free `wrangler deploy
---dry-run --env production` on every PR to catch config mistakes early.
+Both the app and the docs site are deployed as **Cloudflare Workers static
+assets** (not Cloudflare Pages) — the same model as the takazudomodular.com
+main site:
+
+- **App** — `https://zudo-panel-designer.takazudomodular.com/`. Config lives
+  in `wrangler.toml` at the repo root (Worker `zudo-panel-designer`).
+- **Doc site** — `https://doc-zudo-panel-designer.takazudomodular.com/`.
+  Config lives in `doc/wrangler.toml` (Worker `doc-zudo-panel-designer`).
+
+`.github/workflows/production-deploy.yml` runs two independent jobs
+(`deploy-app`, `deploy-doc`) on every push to `main` — each builds and runs
+`wrangler deploy --env production` for its own Worker, with a retry-guarded
+deploy step and a post-deploy smoke check. It can also be triggered manually
+via `workflow_dispatch` for a redeploy without a new commit.
+
+### The `doc/` sub-site
+
+`doc/` is an isolated pnpm sub-project with its own lockfile — it is not part
+of the root pnpm workspace and is built and deployed independently of
+`packages/*`. It is a [zudo-doc](https://github.com/zudolab/zudo-doc)
+documentation site (see `doc/CLAUDE.md`), built with `pnpm build` from inside
+`doc/` and deployed to the `doc-zudo-panel-designer` Worker.
+
+### PR previews
+
+`.github/workflows/pr-checks.yml` runs a secret-free `wrangler deploy
+--dry-run --env production` on every PR to catch config mistakes early, and
+also publishes a live preview: `wrangler versions upload --env preview
+--preview-alias pr-N` uploads a preview version aliased to the PR number
+(`zudo-panel-designer-preview`), and a sticky PR comment is updated with the
+resulting preview URL on every push to the PR branch.
 
 ### One-time manual setup (repo owner only)
 
@@ -51,13 +78,15 @@ settings and the Cloudflare dashboard:
 1. **Add repo secrets** (Settings → Secrets and variables → Actions):
    - `CLOUDFLARE_API_TOKEN` — a Cloudflare API token with at least
      **Account → Workers Scripts → Edit** permission (and **Zone → Workers
-     Routes → Edit** for the custom-domain route below).
+     Routes → Edit** for the custom-domain routes below).
    - `CLOUDFLARE_ACCOUNT_ID` — the Cloudflare account ID that owns the
-     `zpd` Worker.
-2. **Confirm the custom domain** in the Cloudflare dashboard: the
-   `zpd.takazudomodular.com` hostname must resolve as a zone on the same
-   Cloudflare account referenced above. `wrangler.toml` sets
-   `custom_domain = true` for this route on the `production` environment, so
+     `zudo-panel-designer-production` and `doc-zudo-panel-designer-production`
+     Workers (and their `-preview` counterparts).
+2. **Confirm the custom domains** in the Cloudflare dashboard: both
+   `zudo-panel-designer.takazudomodular.com` and
+   `doc-zudo-panel-designer.takazudomodular.com` must resolve as zones on the
+   same Cloudflare account referenced above. Each `wrangler.toml` sets
+   `custom_domain = true` for its route on the `production` environment, so
    Cloudflare creates and manages the DNS record and TLS certificate
    automatically on the first successful `wrangler deploy --env production`
    — no manual DNS record needs to be created ahead of time, but the domain
