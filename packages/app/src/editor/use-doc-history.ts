@@ -11,6 +11,7 @@ import {
   createHistory,
   redo as coreRedo,
   replace as coreReplace,
+  reset as coreReset,
   undo as coreUndo,
   type DocState,
   type HistoryState,
@@ -19,6 +20,7 @@ import {
 type Action =
   | { type: 'commit'; state: DocState }
   | { type: 'replace'; state: DocState }
+  | { type: 'reset'; state: DocState }
   | { type: 'beginGesture' }
   | { type: 'undo' }
   | { type: 'redo' };
@@ -29,6 +31,8 @@ function reducer(state: HistoryState<DocState>, action: Action): HistoryState<Do
       return coreCommit(state, action.state);
     case 'replace':
       return coreReplace(state, action.state);
+    case 'reset':
+      return coreReset(action.state);
     case 'beginGesture':
       return coreBeginGesture(state);
     case 'undo':
@@ -44,6 +48,9 @@ export interface DocHistory {
   canRedo: boolean;
   commit(next: DocState): void;
   replace(next: DocState): void;
+  // Whole-document replacement — clears past/future instead of pushing an
+  // undo entry (see replace-doc.ts).
+  reset(next: DocState): void;
   beginGesture(): void;
   undo(): void;
   redo(): void;
@@ -54,6 +61,7 @@ export function useDocHistory(initial: DocState): DocHistory {
 
   const commit = useCallback((next: DocState) => dispatch({ type: 'commit', state: next }), []);
   const replace = useCallback((next: DocState) => dispatch({ type: 'replace', state: next }), []);
+  const reset = useCallback((next: DocState) => dispatch({ type: 'reset', state: next }), []);
   const beginGesture = useCallback(() => dispatch({ type: 'beginGesture' }), []);
   const undo = useCallback(() => dispatch({ type: 'undo' }), []);
   const redo = useCallback(() => dispatch({ type: 'redo' }), []);
@@ -64,6 +72,7 @@ export function useDocHistory(initial: DocState): DocHistory {
     canRedo: coreCanRedo(state),
     commit,
     replace,
+    reset,
     beginGesture,
     undo,
     redo,

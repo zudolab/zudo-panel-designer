@@ -349,6 +349,26 @@ function drawLayer(
   ctx.restore();
 }
 
+// Evicts cache entries not backed by a same-id, SAME-SRC image layer in
+// `layers` (#69). The asset-loading effect that populates this cache only
+// ADDS entries keyed by id (`!imagesRef.current.has(layer.id)`), so on a
+// whole-document replace a fresh doc that happens to reuse an id — with a
+// DIFFERENT src — would otherwise keep painting the stale bitmap forever.
+// Typed structurally over `{ src }` (not HTMLImageElement) so this stays
+// DOM-free and unit-testable; Editor.tsx's real cache satisfies it as-is.
+export function reconcileImageCache(
+  cache: Map<string, { src: string }>,
+  layers: readonly Layer[],
+): void {
+  const nextSrcById = new Map<string, string>();
+  for (const layer of layers) {
+    if (layer.type === 'image') nextSrcById.set(layer.id, layer.src);
+  }
+  for (const [id, img] of cache) {
+    if (nextSrcById.get(id) !== img.src) cache.delete(id);
+  }
+}
+
 export function renderScene(
   canvas: HTMLCanvasElement,
   doc: { layers: Layer[] },
