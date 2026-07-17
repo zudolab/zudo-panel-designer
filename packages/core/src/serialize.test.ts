@@ -339,8 +339,8 @@ describe('tryParsePanelConfig — strict envelope validator', () => {
     expect(result.ok).toBe(false);
   });
 
-  it.each([0, -1, 999, NaN, Infinity, '2', null, undefined])(
-    'rejects an out-of-range or non-numeric version (%s)',
+  it.each([0, -1, 999, 1.5, NaN, Infinity, '2', null, undefined])(
+    'rejects an out-of-range, fractional, or non-numeric version (%s)',
     (version) => {
       const result = tryParsePanelConfig({ app: 'zpd', version, layers: [] });
       expect(result).toEqual({ ok: false, reason: expect.any(String) });

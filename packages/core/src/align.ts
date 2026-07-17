@@ -37,6 +37,22 @@ interface Bounds {
   maxY: number;
 }
 
+// A mirrored shape/image (negative w/h, permitted by the numeric inspectors —
+// see bbox.ts's normalizeRect) would otherwise treat x/y as the min and
+// x+w/y+h as the max, corrupting both the selection bbox and the distribution
+// sums below. Normalize at the point rects enter this module's math; the
+// resulting delta still applies unchanged to the caller's raw x/y, since it's
+// a pure translation (the mirror offset stays constant across the move).
+function normalizeAlignRect(r: AlignRect): AlignRect {
+  return {
+    id: r.id,
+    x: Math.min(r.x, r.x + r.w),
+    y: Math.min(r.y, r.y + r.h),
+    w: Math.abs(r.w),
+    h: Math.abs(r.h),
+  };
+}
+
 function selectionBounds(rects: readonly AlignRect[]): Bounds {
   let minX = Infinity;
   let minY = Infinity;
@@ -77,9 +93,10 @@ function alignOne(r: AlignRect, type: AlignType, bounds: Bounds): AlignResult {
 // align against) and is a no-op ([]) below that; 'panel' works from 1+.
 export function alignLayers(rects: readonly AlignRect[], type: AlignType, reference: AlignReference): AlignResult[] {
   if (rects.length === 0) return [];
-  if (reference.mode === 'selection' && rects.length < MIN_ALIGN_SELECTION) return [];
-  const bounds = reference.mode === 'selection' ? selectionBounds(rects) : panelBounds(reference.panel);
-  return rects.map((r) => alignOne(r, type, bounds));
+  const normalized = rects.map(normalizeAlignRect);
+  if (reference.mode === 'selection' && normalized.length < MIN_ALIGN_SELECTION) return [];
+  const bounds = reference.mode === 'selection' ? selectionBounds(normalized) : panelBounds(reference.panel);
+  return normalized.map((r) => alignOne(r, type, bounds));
 }
 
 // Distributes rects with equal gaps along the axis, sorted by their current
@@ -145,8 +162,9 @@ export function distributeLayers(
   reference: AlignReference = { mode: 'selection' },
 ): AlignResult[] {
   if (rects.length === 0) return [];
+  const normalized = rects.map(normalizeAlignRect);
   if (reference.mode === 'selection') {
-    return rects.length < MIN_DISTRIBUTE_SELECTION ? [] : distributeWithinSelection(rects, axis);
+    return normalized.length < MIN_DISTRIBUTE_SELECTION ? [] : distributeWithinSelection(normalized, axis);
   }
-  return distributeWithinPanel(rects, axis, reference.panel);
+  return distributeWithinPanel(normalized, axis, reference.panel);
 }

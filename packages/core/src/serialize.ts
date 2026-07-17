@@ -273,7 +273,7 @@ export function tryParsePanelConfig(input: unknown): TryParsePanelConfigResult {
   const version = input.version;
   if (
     typeof version !== 'number' ||
-    !Number.isFinite(version) ||
+    !Number.isInteger(version) ||
     version < MIN_PANEL_CONFIG_VERSION ||
     version > PANEL_CONFIG_VERSION
   ) {

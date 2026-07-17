@@ -129,6 +129,42 @@ describe('distributeLayers — selection reference', () => {
   });
 });
 
+describe('alignLayers / distributeLayers — mirrored rects (negative w/h)', () => {
+  // A mirrored shape/image at 0deg rotation has negative width/height (the
+  // numeric inspectors permit this — see bbox.ts's normalizeRect). Visual
+  // span is still x..x+w / y..y+h regardless of sign.
+  const mirroredA: AlignRect = { id: 'mA', x: 10, y: 0, w: -10, h: 10 }; // visual 0..10
+  const normalB: AlignRect = { id: 'nB', x: 30, y: 20, w: 20, h: 5 }; // visual 30..50
+
+  it('align-left treats the mirrored rect visual span (0..10), not the raw x (10)', () => {
+    const results = alignLayers([mirroredA, normalB], 'left', { mode: 'selection' });
+    // combined visual bbox minX = 0 -> mirroredA already flush left
+    expect(applied('mA', results).dx).toBe(0);
+    expect(applied('nB', results).dx).toBe(-30);
+  });
+
+  it('the returned dx still applies correctly to the caller raw x (preserving the mirror sign)', () => {
+    // align-right: combined visual bbox maxX = 50 -> mirroredA's right edge (10) should move to 50
+    const results = alignLayers([mirroredA, normalB], 'right', { mode: 'selection' });
+    const dx = applied('mA', results).dx;
+    const newRawX = mirroredA.x + dx;
+    // visual right edge after the move = newRawX + w (w is still negative, so this is min(newRawX, newRawX+w) + |w|)
+    const newVisualRight = Math.max(newRawX, newRawX + mirroredA.w);
+    expect(newVisualRight).toBe(50);
+  });
+
+  it('distribute sums the mirrored rect absolute width, not its signed width', () => {
+    const mid = { id: 'mid', x: 25, y: 0, w: -5, h: 5 }; // visual 20..25
+    const results = distributeLayers([mirroredA, mid, normalB], 'horizontal');
+    // visual spans: mA 0..10, mid 20..25, nB 30..50 -> normalized totalW = 10+5+20=35
+    // gap = (50 - 0 - 35) / 2 = 7.5; mid's normalized x should land at 0+10+7.5=17.5
+    const dx = applied('mid', results).dx;
+    const newRawX = mid.x + dx;
+    const newVisualX = Math.min(newRawX, newRawX + mid.w);
+    expect(newVisualX).toBeCloseTo(17.5);
+  });
+});
+
 describe('distributeLayers — panel reference', () => {
   it('spaces rects with equal gaps across the full panel span, including before/after', () => {
     const r1 = { id: 'r1', x: 0, y: 0, w: 10, h: 10 };
