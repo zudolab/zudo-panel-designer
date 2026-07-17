@@ -1,16 +1,21 @@
 // Shared dark-chrome button used across the header/toolbar. Outside the
 // globbed extension folders on purpose.
 import type { ButtonHTMLAttributes } from 'react';
-import { Tooltip } from './tooltip';
+import { Tooltip, type TooltipPlacement } from './tooltip';
 
 export function ChromeButton({
   active = false,
   className = '',
   tooltip,
+  placement = 'right',
   title,
   'aria-label': ariaLabel,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean; tooltip?: string }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  active?: boolean;
+  tooltip?: string;
+  placement?: TooltipPlacement;
+}) {
   const button = (
     <button
       type="button"
@@ -28,7 +33,7 @@ export function ChromeButton({
   if (!tooltip) return button;
 
   return (
-    <Tooltip content={tooltip} placement="right">
+    <Tooltip content={tooltip} placement={placement}>
       {button}
     </Tooltip>
   );

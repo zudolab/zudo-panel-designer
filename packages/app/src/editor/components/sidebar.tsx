@@ -5,6 +5,7 @@
 // the fold, even when the panel stack above overflows.
 import { PALETTE, PANEL_HEIGHT_MM, PANEL_SIZES, type Layer } from '@zpd/core';
 import type { ToolContext } from '../types';
+import { AlignPanel } from './align-panel';
 import { CollapsibleSection } from './collapsible-section';
 import { HelpPanel } from './help-panel';
 import { InspectorHost } from './inspector-host';
@@ -91,6 +92,10 @@ export function Sidebar({
 
         <CollapsibleSection title="Layers">
           <LayerList ctx={ctx} selectedIds={selectedIds} />
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Align & Distribute">
+          <AlignPanel ctx={ctx} selectedIds={selectedIds} />
         </CollapsibleSection>
 
         <CollapsibleSection title={selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}>
