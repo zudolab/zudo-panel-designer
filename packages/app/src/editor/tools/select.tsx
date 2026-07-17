@@ -135,16 +135,12 @@ function updateLayer(ctx: ToolContext, id: string, patch: Partial<Layer>, commit
   else ctx.replace(next);
 }
 
-// Multi-target variant: ONE replace applies every patch, so a multi-selection
-// move stays a single streamed state per pointermove (one undo entry, #49).
-function updateLayers(ctx: ToolContext, patches: ReadonlyMap<string, Partial<Layer>>): void {
-  ctx.replace({
-    ...ctx.doc,
-    layers: ctx.doc.layers.map((l) => {
-      const patch = patches.get(l.id);
-      return patch ? ({ ...l, ...patch } as Layer) : l;
-    }),
-  });
+// Adds a snapped delta to a coordinate with snapToGrid's float hygiene, but
+// WITHOUT re-snapping the absolute position: a multi-selection with off-grid
+// members (numeric inspectors allow them) must keep its relative spacing, so
+// one gesture delta applies to every target (#49 review).
+function addMm(a: number, b: number): number {
+  return Number((a + b).toFixed(6));
 }
 
 function topmostHit(doc: DocState, mm: Pt): Layer | null {
@@ -316,6 +312,12 @@ registerTool({
     // is open, keep streaming so a drag back toward the start still updates.
     switch (drag.kind) {
       case 'move': {
+        // Everything below composes into ONE ctx.replace. Two replace calls in
+        // the same event would lose the first one's changes: the Editor's
+        // ctx.doc getter reads a ref that only re-syncs after React renders
+        // (Editor.tsx), so the second replace would rebuild from the pre-clone
+        // layer list and silently drop the clones.
+        let layers = ctx.doc.layers;
         if (!drag.crossed) {
           // We're past the client-space threshold gate above, so THIS move is
           // the crossing moment — the one instant Alt is sampled (#49). An
@@ -326,19 +328,22 @@ registerTool({
             // Clone insertion is a real doc change: open the (single) undo
             // entry now even if the snapped move delta is still zero.
             ensureGesture(ctx);
-            const { layers, idMap } = duplicateLayersAbove(
-              ctx.doc.layers,
+            const dup = duplicateLayersAbove(
+              layers,
               drag.targets.map((t) => t.id),
               (source) => mintId(source.type),
             );
-            ctx.replace({ ...ctx.doc, layers });
+            layers = dup.layers;
             // Re-target the drag to the clones — the originals stay put. The
             // clone starts at its source's geometry, so keeping `orig` keeps
             // the delta math unchanged.
-            drag.targets = drag.targets.map((t) => ({ id: idMap.get(t.id) ?? t.id, orig: t.orig }));
+            drag.targets = drag.targets.map((t) => ({
+              id: dup.idMap.get(t.id) ?? t.id,
+              orig: t.orig,
+            }));
             // Selection follows the clones; non-cloned members (patterns)
             // keep their own id.
-            ctx.selectIds(ctx.selectedIds.map((id) => idMap.get(id) ?? id));
+            ctx.selectIds(ctx.selectedIds.map((id) => dup.idMap.get(id) ?? id));
             drag.collapseTo = null;
           }
         }
@@ -350,17 +355,29 @@ registerTool({
           if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
           else dx = 0;
         }
-        if (!gestureOpen && snap(dx) === 0 && snap(dy) === 0) break;
+        // ONE snapped gesture delta for every target: snapping each member's
+        // absolute position independently would give off-grid members
+        // different effective deltas and change the selection's relative
+        // spacing mid-drag.
+        const sdx = snap(dx);
+        const sdy = snap(dy);
+        if (!gestureOpen && sdx === 0 && sdy === 0) break;
         ensureGesture(ctx);
         const patches = new Map<string, Partial<Layer>>();
         for (const { id, orig } of drag.targets) {
           if (orig.type === 'path') {
-            patches.set(id, translatePathLayer(orig, snap(dx), snap(dy)));
+            patches.set(id, translatePathLayer(orig, sdx, sdy));
           } else if (orig.type !== 'pattern') {
-            patches.set(id, { x: snap(orig.x + dx), y: snap(orig.y + dy) });
+            patches.set(id, { x: addMm(orig.x, sdx), y: addMm(orig.y, sdy) });
           }
         }
-        updateLayers(ctx, patches);
+        ctx.replace({
+          ...ctx.doc,
+          layers: layers.map((l) => {
+            const patch = patches.get(l.id);
+            return patch ? ({ ...l, ...patch } as Layer) : l;
+          }),
+        });
         break;
       }
       case 'resize': {

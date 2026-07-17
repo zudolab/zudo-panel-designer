@@ -35,6 +35,7 @@ function makeHarness(initialDoc: DocState) {
   let history: HistoryState<DocState> = createHistory(initialDoc);
   let selectedIds: readonly string[] = [];
   let beginGestureCalls = 0;
+  let replaceCalls = 0;
 
   // Same derivation the Editor performs: selectedIds normalized against the
   // live doc; selectedId/selectedLayer non-null only for exactly one id.
@@ -69,6 +70,7 @@ function makeHarness(initialDoc: DocState) {
       history = coreCommit(history, next);
     },
     replace: (next) => {
+      replaceCalls += 1;
       history = coreReplace(history, next);
     },
     beginGesture: () => {
@@ -98,6 +100,7 @@ function makeHarness(initialDoc: DocState) {
     ctx,
     getHistory: () => history,
     getBeginGestureCalls: () => beginGestureCalls,
+    getReplaceCalls: () => replaceCalls,
     layerById: (id: string) => history.present.layers.find((l) => l.id === id) as Layer,
   };
 }
@@ -594,5 +597,43 @@ describe('select tool — Shift axis-constrain (#49)', () => {
 
     expect(layerById('s1')).toMatchObject({ x: 20, y: 13 }); // full (+10, +3)
     expect(getHistory().past).toHaveLength(1); // still one entry
+  });
+});
+
+describe('select tool — replace composition (#49 review)', () => {
+  it('the Alt-crossing move issues exactly ONE replace (clone + move composed)', () => {
+    // The real Editor's ctx.doc getter reads a ref that only re-syncs after
+    // React renders — a second replace in the same event would rebuild from
+    // the pre-clone layer list and silently drop the clones. Guard the
+    // invariant: clone insertion and the move are one composed replacement.
+    const { ctx, getReplaceCalls, getHistory } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }, { altKey: true }), ctx);
+    expect(getReplaceCalls()).toBe(0);
+    select.onPointerMove?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
+    expect(getReplaceCalls()).toBe(1);
+    expect(getHistory().present.layers).toHaveLength(2);
+    select.onPointerUp?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
+  });
+
+  it('one snapped gesture delta applies to every member — off-grid spacing is preserved', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10.03, 10), rectAt('s2', 50.08, 40)],
+    });
+    ctx.selectIds(['s1', 's2']);
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 25.06, y: 15 }), ctx); // dx 10.06 → snaps to 10.1
+    select.onPointerUp?.(ptr({ x: 25.06, y: 15 }), ctx);
+
+    // both members moved by the SAME snapped delta (10.1, 0) — per-member
+    // absolute re-snapping would have shifted them by different amounts
+    expect(layerById('s1')).toMatchObject({ x: 20.13, y: 10 });
+    expect(layerById('s2')).toMatchObject({ x: 60.18, y: 40 });
   });
 });
