@@ -8,6 +8,8 @@ import {
   mergeBboxes,
   PALETTE,
   pathBbox,
+  rectCenter,
+  rectCorners,
   rotatedRectAABB,
   type Layer,
   type Pt,
@@ -101,6 +103,31 @@ export function layerRotation(layer: Layer): number {
   return layer.type === 'shape' || layer.type === 'text' ? (layer.rotation ?? 0) : 0;
 }
 
+// Rotate-handle eligibility (#51): exactly the types whose `rotation` field
+// layerRotation reads. path/image/pattern have no rotation in the model — the
+// chrome must not invent one for them.
+export function canRotate(layer: Layer): boolean {
+  return layer.type === 'shape' || layer.type === 'text';
+}
+
+// Rotate a point about a center, degrees clockwise (same convention as
+// bbox.ts). rotationDeg 0 is an exact pass-through so unrotated geometry stays
+// bit-identical to the pre-#51 axis-aligned math.
+function rotateMmPoint(pt: Pt, center: Pt, rotationDeg: number): Pt {
+  if (!rotationDeg) return pt;
+  const rad = (rotationDeg * Math.PI) / 180;
+  const dx = pt.x - center.x;
+  const dy = pt.y - center.y;
+  return {
+    x: center.x + dx * Math.cos(rad) - dy * Math.sin(rad),
+    y: center.y + dx * Math.sin(rad) + dy * Math.cos(rad),
+  };
+}
+
+function mmToScreen(p: Pt, cam: Camera): Pt {
+  return { x: p.x * cam.pxPerMm + cam.offsetX, y: p.y * cam.pxPerMm + cam.offsetY };
+}
+
 export const RESIZE_HANDLE_IDS: readonly ResizeHandle[] = [
   'nw',
   'n',
@@ -120,19 +147,22 @@ export interface HandleRect {
 }
 
 // 8 resize handles in SCREEN px for an mm bbox (chrome lives in screen space).
-export function resizeHandleRects(bbox: Rect, cam: Camera): HandleRect[] {
-  const x0 = bbox.x * cam.pxPerMm + cam.offsetX;
-  const y0 = bbox.y * cam.pxPerMm + cam.offsetY;
-  const x1 = (bbox.x + bbox.width) * cam.pxPerMm + cam.offsetX;
-  const y1 = (bbox.y + bbox.height) * cam.pxPerMm + cam.offsetY;
-  const xm = (x0 + x1) / 2;
-  const ym = (y0 + y1) / 2;
-  const at = (id: ResizeHandle, x: number, y: number): HandleRect => ({
-    id,
-    x: x - HANDLE_SIZE / 2,
-    y: y - HANDLE_SIZE / 2,
-    size: HANDLE_SIZE,
-  });
+// `bbox` is the RAW (pre-rotation) rect; a non-zero rotationDeg (#51) places
+// each handle at the ROTATED corner/edge-midpoint so the handles ride the
+// oriented chrome. The squares themselves stay screen-axis-aligned — grab
+// hit-testing stays a plain point-in-rect check.
+export function resizeHandleRects(bbox: Rect, cam: Camera, rotationDeg = 0): HandleRect[] {
+  const x0 = bbox.x;
+  const y0 = bbox.y;
+  const x1 = bbox.x + bbox.width;
+  const y1 = bbox.y + bbox.height;
+  const xm = x0 + bbox.width / 2;
+  const ym = y0 + bbox.height / 2;
+  const center = rectCenter(bbox);
+  const at = (id: ResizeHandle, x: number, y: number): HandleRect => {
+    const p = mmToScreen(rotateMmPoint({ x, y }, center, rotationDeg), cam);
+    return { id, x: p.x - HANDLE_SIZE / 2, y: p.y - HANDLE_SIZE / 2, size: HANDLE_SIZE };
+  };
   return [
     at('nw', x0, y0),
     at('n', xm, y0),
@@ -143,6 +173,24 @@ export function resizeHandleRects(bbox: Rect, cam: Camera): HandleRect[] {
     at('sw', x0, y1),
     at('w', x0, ym),
   ];
+}
+
+// The rotate handle floats a fixed SCREEN distance beyond the top-edge
+// midpoint, along the layer's rotated "up" direction, so it tracks the
+// oriented chrome at any rotation and stays the same size at any zoom.
+export const ROTATE_HANDLE_OFFSET_PX = 20;
+const ROTATE_HANDLE_RADIUS_PX = 5;
+
+export function rotateHandleScreenPos(bbox: Rect, rotationDeg: number, cam: Camera): Pt {
+  const topMid = mmToScreen(
+    rotateMmPoint({ x: bbox.x + bbox.width / 2, y: bbox.y }, rectCenter(bbox), rotationDeg),
+    cam,
+  );
+  const rad = (rotationDeg * Math.PI) / 180;
+  return {
+    x: topMid.x + Math.sin(rad) * ROTATE_HANDLE_OFFSET_PX,
+    y: topMid.y - Math.cos(rad) * ROTATE_HANDLE_OFFSET_PX,
+  };
 }
 
 function drawLayer(
@@ -410,6 +458,23 @@ function strokeMmRect(ctx: CanvasRenderingContext2D, rect: Rect, cam: Camera): v
   );
 }
 
+// Oriented chrome outline (#51): the rect's 4 corners rotated about its
+// center, stroked as a closed polygon in screen space.
+function strokeOrientedMmRect(
+  ctx: CanvasRenderingContext2D,
+  rect: Rect,
+  rotationDeg: number,
+  cam: Camera,
+): void {
+  const center = rectCenter(rect);
+  const pts = rectCorners(rect).map((c) => mmToScreen(rotateMmPoint(c, center, rotationDeg), cam));
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i += 1) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+  ctx.stroke();
+}
+
 function drawSelectionChrome(
   ctx: CanvasRenderingContext2D,
   layers: Layer[],
@@ -420,42 +485,79 @@ function drawSelectionChrome(
   const boxes = selectionBboxes(layers, extras.selectedIds, panel);
   if (boxes.length === 0) return;
 
+  // Handles + rotate affordance + path nodes are single-selection concerns:
+  // multi-resize is #52. `selected` is defined iff EXACTLY one layer is
+  // selected — and boxes is then non-empty, so the layer is present + visible.
+  const selected =
+    extras.selectedIds.length === 1
+      ? layers.find((l) => l.id === extras.selectedIds[0])
+      : undefined;
+  const rotation = selected ? layerRotation(selected) : 0;
+  // RAW (pre-rotation) bbox: the oriented chrome + handles anchor to it, not
+  // to the axis-aligned AABB in `boxes`.
+  const rawBbox = selected ? layerBbox(selected, panel) : null;
+
   ctx.save();
   ctx.strokeStyle = SELECT_COLOR;
   ctx.lineWidth = 1.5;
   ctx.setLineDash([5, 4]);
-  // one dashed bbox per selected layer …
-  for (const b of boxes) strokeMmRect(ctx, b, cam);
-  // … plus the combined bbox that encloses them all when more than one is
-  // selected. mergeBboxes is the shared union (#45) — no bespoke union here.
-  if (boxes.length > 1) strokeMmRect(ctx, mergeBboxes(boxes), cam);
+  if (selected && rotation && rawBbox) {
+    // Oriented chrome (#51): a single rotated layer wears the ORIENTED rect
+    // outline. The old axis-aligned rotatedRectAABB box would be incoherent
+    // against a rotate handle and rotated-corner resize handles.
+    strokeOrientedMmRect(ctx, rawBbox, rotation, cam);
+  } else {
+    // one dashed bbox per selected layer …
+    for (const b of boxes) strokeMmRect(ctx, b, cam);
+    // … plus the combined bbox that encloses them all when more than one is
+    // selected. mergeBboxes is the shared union (#45) — no bespoke union here.
+    if (boxes.length > 1) strokeMmRect(ctx, mergeBboxes(boxes), cam);
+  }
   ctx.setLineDash([]);
 
-  // Handles + path nodes are single-selection affordances only: multi-resize is
-  // #52. Everything below runs iff EXACTLY one layer is selected — and boxes is
-  // then non-empty, so the layer is present and visible.
-  if (extras.selectedIds.length !== 1) {
-    ctx.restore();
-    return;
-  }
-  const selected = layers.find((l) => l.id === extras.selectedIds[0]);
   if (!selected) {
     ctx.restore();
     return;
   }
-  const rotation = layerRotation(selected);
-  const bbox = boxes[0];
 
-  // resize handles only when the layer is eligible (not rotated)
-  const resizable = (selected.type === 'shape' || selected.type === 'image') && !rotation;
-  if (resizable) {
+  // Resize handles: rotation no longer disqualifies a shape — the handles sit
+  // at the rotated corners and the drag resolves via resizeRotatedRect (#48).
+  // Type gate only (isResizable was deleted in #48): shape/image are the
+  // types with free width/height.
+  const resizable = selected.type === 'shape' || selected.type === 'image';
+  if (resizable && rawBbox) {
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = SELECT_COLOR;
     ctx.lineWidth = 1;
-    for (const h of resizeHandleRects(bbox, cam)) {
+    for (const h of resizeHandleRects(rawBbox, cam, rotation)) {
       ctx.fillRect(h.x, h.y, h.size, h.size);
       ctx.strokeRect(h.x, h.y, h.size, h.size);
     }
+  }
+
+  // Rotate handle (#51): shape/text only — the types layerRotation reads. A
+  // stem connects the rotated top-edge midpoint to a circular knob.
+  if (canRotate(selected) && rawBbox) {
+    const topMid = mmToScreen(
+      rotateMmPoint(
+        { x: rawBbox.x + rawBbox.width / 2, y: rawBbox.y },
+        rectCenter(rawBbox),
+        rotation,
+      ),
+      cam,
+    );
+    const knob = rotateHandleScreenPos(rawBbox, rotation, cam);
+    ctx.strokeStyle = SELECT_COLOR;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(topMid.x, topMid.y);
+    ctx.lineTo(knob.x, knob.y);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(knob.x, knob.y, ROTATE_HANDLE_RADIUS_PX, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
   }
 
   // path node anchors + bezier handles when node-editing

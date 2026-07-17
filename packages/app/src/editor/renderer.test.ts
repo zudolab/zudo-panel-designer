@@ -3,8 +3,15 @@
 // over. Text is deliberately excluded here — it needs Canvas metrics
 // (measureTextBbox), which jsdom/node lack; shapes and paths cover the rule.
 import { describe, expect, it } from 'vitest';
-import { mergeBboxes, type Layer, type ShapeLayer } from '@zpd/core';
-import { selectionBboxes } from './renderer';
+import { mergeBboxes, type Layer, type Rect, type ShapeLayer } from '@zpd/core';
+import {
+  canRotate,
+  resizeHandleRects,
+  ROTATE_HANDLE_OFFSET_PX,
+  rotateHandleScreenPos,
+  selectionBboxes,
+} from './renderer';
+import type { Camera } from './camera';
 import type { PanelDims } from './types';
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
@@ -46,5 +53,100 @@ describe('selectionBboxes', () => {
     const layers: Layer[] = [shape('a', 0, 0), shape('b', 40, 30)];
     const combined = mergeBboxes(selectionBboxes(layers, ['a', 'b'], PANEL));
     expect(combined).toEqual({ x: 0, y: 0, width: 50, height: 40 });
+  });
+});
+
+// --- oriented chrome geometry (#51) -----------------------------------------
+
+const IDENTITY: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
+const BBOX: Rect = { x: 10, y: 10, width: 20, height: 10 }; // center (20, 15)
+
+const handleCenter = (bbox: Rect, cam: Camera, rotation: number, id: string) => {
+  const h = resizeHandleRects(bbox, cam, rotation).find((r) => r.id === id)!;
+  return { x: h.x + h.size / 2, y: h.y + h.size / 2 };
+};
+
+describe('resizeHandleRects — rotation-aware (#51)', () => {
+  it('rotation 0 keeps the classic axis-aligned corner/edge positions', () => {
+    expect(handleCenter(BBOX, IDENTITY, 0, 'nw')).toEqual({ x: 10, y: 10 });
+    expect(handleCenter(BBOX, IDENTITY, 0, 'n')).toEqual({ x: 20, y: 10 });
+    expect(handleCenter(BBOX, IDENTITY, 0, 'se')).toEqual({ x: 30, y: 20 });
+    expect(handleCenter(BBOX, IDENTITY, 0, 'w')).toEqual({ x: 10, y: 15 });
+  });
+
+  it('a 90° rotation puts each handle at the ROTATED corner, not the AABB corner', () => {
+    // raw se corner (30,20): offset from the center (10,5) rotates cw to
+    // (-5,10) → lands at (15,25)
+    const se = handleCenter(BBOX, IDENTITY, 90, 'se');
+    expect(se.x).toBeCloseTo(15);
+    expect(se.y).toBeCloseTo(25);
+    const n = handleCenter(BBOX, IDENTITY, 90, 'n');
+    expect(n.x).toBeCloseTo(25);
+    expect(n.y).toBeCloseTo(15);
+  });
+
+  it('applies the camera transform after rotating', () => {
+    const cam: Camera = { pxPerMm: 2, offsetX: 5, offsetY: 7 };
+    const se = handleCenter(BBOX, cam, 90, 'se');
+    expect(se.x).toBeCloseTo(15 * 2 + 5);
+    expect(se.y).toBeCloseTo(25 * 2 + 7);
+  });
+});
+
+describe('rotateHandleScreenPos (#51)', () => {
+  it('sits a fixed screen offset above the top-edge midpoint when unrotated', () => {
+    const p = rotateHandleScreenPos(BBOX, 0, IDENTITY);
+    expect(p).toEqual({ x: 20, y: 10 - ROTATE_HANDLE_OFFSET_PX });
+  });
+
+  it('tracks the rotated top edge: at 90° it points due east of the center', () => {
+    // top-mid (20,10) rotates to (25,15); "up" rotates to +x → knob at
+    // (25 + OFFSET, 15)
+    const p = rotateHandleScreenPos(BBOX, 90, IDENTITY);
+    expect(p.x).toBeCloseTo(25 + ROTATE_HANDLE_OFFSET_PX);
+    expect(p.y).toBeCloseTo(15);
+  });
+
+  it('offset is screen px — zoom scales the bbox but not the stem length', () => {
+    const cam: Camera = { pxPerMm: 4, offsetX: 0, offsetY: 0 };
+    const p = rotateHandleScreenPos(BBOX, 0, cam);
+    expect(p).toEqual({ x: 80, y: 40 - ROTATE_HANDLE_OFFSET_PX });
+  });
+});
+
+describe('canRotate (#51 eligibility)', () => {
+  it('is true for exactly the types layerRotation reads: shape and text', () => {
+    expect(canRotate(shape('a', 0, 0))).toBe(true);
+    expect(
+      canRotate({
+        id: 't',
+        name: 't',
+        type: 'text',
+        content: 'x',
+        fontFamily: 'sans-serif',
+        sizeMm: 5,
+        x: 0,
+        y: 0,
+        color: 1,
+      }),
+    ).toBe(true);
+    expect(
+      canRotate({
+        id: 'p',
+        name: 'p',
+        type: 'path',
+        points: [],
+        closed: false,
+        fill: null,
+        stroke: 1,
+        strokeWidth: 1,
+      }),
+    ).toBe(false);
+    expect(
+      canRotate({ id: 'i', name: 'i', type: 'image', src: 'data:,', x: 0, y: 0, width: 1, height: 1 }),
+    ).toBe(false);
+    expect(
+      canRotate({ id: 'g', name: 'g', type: 'pattern', patternType: 'dot-grid', params: {}, color: 1 }),
+    ).toBe(false);
   });
 });
