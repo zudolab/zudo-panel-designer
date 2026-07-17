@@ -73,9 +73,26 @@ export interface ImageLayer extends LayerBase {
 
 export type Layer = ShapeLayer | PatternLayer | PathLayer | TextLayer | ImageLayer;
 
+export type GuideOrientation = 'horizontal' | 'vertical';
+
+// A ruler guide: an infinite straight line in document space.
+// - 'horizontal' is a horizontal line at y = position (spans the panel width)
+// - 'vertical'   is a vertical line at x = position (spans the panel height)
+// position is mm in document space. Hidden guides render faintly (ruler UI, #54)
+// and never participate in snapping (#55).
+export interface Guide {
+  id: string;
+  orientation: GuideOrientation;
+  position: number; // mm
+  hidden?: boolean;
+}
+
 export interface DocState {
   panelHp: number;
   layers: Layer[]; // bottom -> top (index 0 renders first)
+  // Required (never optional): read sites stay clean (no `doc.guides ?? []`),
+  // and the serialization boundary owns backward-compat (old configs -> []).
+  guides: Guide[];
 }
 
 let idCounter = 0;

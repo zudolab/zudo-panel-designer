@@ -14,6 +14,7 @@ import { mintId } from './types';
 import type {
   ColorIndex,
   DocState,
+  Guide,
   ImageLayer,
   Layer,
   PathLayer,
@@ -23,14 +24,20 @@ import type {
   TextLayer,
 } from './types';
 
-export const PANEL_CONFIG_VERSION = 1;
+// v2 adds the top-level `guides` array. v1 configs (and any config missing
+// `guides`) still parse cleanly — parsePanelConfig defaults them to []. The
+// version is emitted for the human/order reader; parsePanelConfig does not
+// branch on it (every field defends itself), so old files load without a
+// dedicated migration path.
+export const PANEL_CONFIG_VERSION = 2;
 
 export interface PanelConfig {
-  version: 1;
+  version: 2;
   app: 'zpd';
   panel: { hp: number; widthMm: number; heightMm: number };
   palette: string[];
   layers: Layer[];
+  guides: Guide[];
 }
 
 export function serializePanelConfig(doc: DocState): PanelConfig {
@@ -44,6 +51,7 @@ export function serializePanelConfig(doc: DocState): PanelConfig {
     },
     palette: PALETTE.map((entry) => entry.name),
     layers: doc.layers,
+    guides: doc.guides,
   };
 }
 
@@ -205,6 +213,32 @@ function parseLayer(value: unknown): Layer | null {
   }
 }
 
+// A guide needs a valid orientation and a finite numeric position; anything
+// else is dropped rather than defaulted, so a malformed `guides` entry can't
+// silently plant a bogus 0mm line. A missing id is stamped (same policy as
+// layers) so downstream UI can key on it.
+function parseGuide(value: unknown): Guide | null {
+  if (!isPlainObject(value)) return null;
+  const orientation =
+    value.orientation === 'horizontal' || value.orientation === 'vertical'
+      ? value.orientation
+      : null;
+  if (orientation === null) return null;
+  const position = optionalNum(value.position);
+  if (position === undefined) return null;
+  const id = typeof value.id === 'string' && value.id.length > 0 ? value.id : mintId('guide');
+  const hidden = optionalBool(value.hidden);
+  const guide: Guide = { id, orientation, position };
+  return hidden === undefined ? guide : { ...guide, hidden };
+}
+
+// Missing or non-array `guides` (v1 / hand-edited configs) -> []. Malformed
+// entries are individually dropped.
+function parseGuides(value: unknown): Guide[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(parseGuide).filter((guide): guide is Guide => guide !== null);
+}
+
 // Never throws: garbage/non-object input yields the safe default document;
 // every field below is defended individually so one bad value can't sink
 // the rest of the document.
@@ -218,5 +252,5 @@ export function parsePanelConfig(input: unknown): DocState {
     ? input.layers.map(parseLayer).filter((layer): layer is Layer => layer !== null)
     : [];
 
-  return { panelHp: hp, layers };
+  return { panelHp: hp, layers, guides: parseGuides(input.guides) };
 }

@@ -5,6 +5,8 @@ export const ZPD_CORE_VERSION = '0.0.0';
 export type {
   ColorIndex,
   DocState,
+  Guide,
+  GuideOrientation,
   ImageLayer,
   Layer,
   LayerBase,

@@ -144,6 +144,7 @@ describe('select tool — one gesture == one undo entry', () => {
     };
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [shape],
     });
     ctx.select('s1');
@@ -181,6 +182,7 @@ describe('select tool — one gesture == one undo entry', () => {
     };
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [shape],
     });
     ctx.select('s1');
@@ -212,6 +214,7 @@ describe('select tool — one gesture == one undo entry', () => {
     };
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [shape],
     });
     ctx.select('s1');
@@ -241,6 +244,7 @@ describe('select tool — one gesture == one undo entry', () => {
     };
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [shape],
     });
     ctx.select('s1');
@@ -281,6 +285,7 @@ describe('select tool — one gesture == one undo entry', () => {
     };
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [path],
     });
     ctx.select('p1');
@@ -317,6 +322,7 @@ describe('select tool — one gesture == one undo entry', () => {
     };
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [path],
     });
     ctx.select('p1');
@@ -346,6 +352,7 @@ describe('select tool — one gesture == one undo entry', () => {
     };
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [path],
     });
     ctx.select('p1');
@@ -389,6 +396,7 @@ describe('select tool — multi-selection move (#49)', () => {
   it('dragging one member moves the whole selection as ONE undo entry', () => {
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10, 10), rectAt('s2', 50, 40)],
     });
     ctx.selectIds(['s1', 's2']);
@@ -424,6 +432,7 @@ describe('select tool — multi-selection move (#49)', () => {
     };
     const { ctx, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10, 10), path],
     });
     ctx.selectIds(['s1', 'p1']);
@@ -439,6 +448,7 @@ describe('select tool — multi-selection move (#49)', () => {
   it('patterns in the selection are skipped — they stay put and stay selected', () => {
     const { ctx, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [gridPattern('g1'), rectAt('s1', 10, 10)],
     });
     ctx.selectIds(['g1', 's1']);
@@ -455,6 +465,7 @@ describe('select tool — multi-selection move (#49)', () => {
   it('a pure click (below threshold) on a member collapses the selection to it', () => {
     const { ctx, getHistory } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10, 10), rectAt('s2', 50, 40)],
     });
     ctx.selectIds(['s1', 's2']);
@@ -471,6 +482,7 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
   it('Alt held when the drag crosses the threshold clones the layer above its source and drags the clone', () => {
     const { ctx, getHistory, getBeginGestureCalls } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10, 10)],
     });
     ctx.select('s1');
@@ -501,6 +513,7 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
   it('Alt-drag on a multi-selection clones each member directly above its source', () => {
     const { ctx, getHistory, getBeginGestureCalls } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10, 10), rectAt('s2', 50, 40)],
     });
     ctx.selectIds(['s1', 's2']);
@@ -511,7 +524,10 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
 
     const layers = getHistory().present.layers;
     expect(layers).toHaveLength(4);
-    expect(layers.map((l) => l.id).filter((id) => id === 's1' || id === 's2')).toEqual(['s1', 's2']);
+    expect(layers.map((l) => l.id).filter((id) => id === 's1' || id === 's2')).toEqual([
+      's1',
+      's2',
+    ]);
     // interleaved: [s1, clone-of-s1, s2, clone-of-s2]
     expect(layers[0].id).toBe('s1');
     expect(layers[2].id).toBe('s2');
@@ -533,6 +549,7 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
   it('Alt is sampled AT the threshold crossing — pressing it later does not duplicate', () => {
     const { ctx, getHistory } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10, 10)],
     });
     ctx.select('s1');
@@ -549,6 +566,7 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
   it('an Alt-click that never crosses the threshold duplicates NOTHING and writes NO history', () => {
     const { ctx, getHistory, getBeginGestureCalls } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10, 10)],
     });
     ctx.select('s1');
@@ -582,6 +600,7 @@ describe('select tool — rotate handle (#51)', () => {
     const shape = rectAt('s1', 10, 10); // bbox center (20, 15)
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [shape],
     });
     ctx.select('s1');
@@ -604,7 +623,11 @@ describe('select tool — rotate handle (#51)', () => {
 
   it('Shift snaps to 45° increments measured FROM the drag-start rotation', () => {
     const shape: ShapeLayer = { ...rectAt('s1', 10, 10), rotation: 30 };
-    const { ctx, getHistory, layerById } = makeHarness({ panelHp: 12, layers: [shape] });
+    const { ctx, getHistory, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [],
+      layers: [shape],
+    });
     ctx.select('s1');
 
     // The handle direction is always (rotation − 90°) from the center, so the
@@ -627,6 +650,7 @@ describe('select tool — rotate handle (#51)', () => {
     const shape = rectAt('s1', 10, 10);
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [shape],
     });
     ctx.select('s1');
@@ -647,7 +671,11 @@ describe('select tool — rotate handle (#51)', () => {
     // drawn — pressing where the rotate knob WOULD be must fall through to
     // the empty-space path instead of rotating an invisible layer.
     const shape: ShapeLayer = { ...rectAt('s1', 10, 10), hidden: true };
-    const { ctx, getHistory, layerById } = makeHarness({ panelHp: 12, layers: [shape] });
+    const { ctx, getHistory, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [],
+      layers: [shape],
+    });
     ctx.select('s1');
 
     const h = handleAt(shape);
@@ -670,7 +698,7 @@ describe('select tool — rotate handle (#51)', () => {
       width: 20,
       height: 10,
     };
-    const { ctx, getHistory } = makeHarness({ panelHp: 12, layers: [image] });
+    const { ctx, getHistory } = makeHarness({ panelHp: 12, guides: [], layers: [image] });
     ctx.select('i1');
 
     // where a rotate handle WOULD sit for this bbox: (20, -10) — pressing
@@ -688,6 +716,7 @@ describe('select tool — rotated-shape resize (#51, math from #48)', () => {
     const shape: ShapeLayer = { ...rectAt('s1', 10, 10), rotation: 90 };
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [shape],
     });
     ctx.select('s1');
@@ -714,6 +743,7 @@ describe('select tool — Shift axis-constrain (#49)', () => {
   it('constrains the move to the dominant axis', () => {
     const { ctx, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10, 10)],
     });
     ctx.select('s1');
@@ -731,6 +761,7 @@ describe('select tool — Shift axis-constrain (#49)', () => {
   it('releasing Shift mid-drag returns to free movement', () => {
     const { ctx, getHistory, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10, 10)],
     });
     ctx.select('s1');
@@ -753,6 +784,7 @@ describe('select tool — replace composition (#49 review)', () => {
     // invariant: clone insertion and the move are one composed replacement.
     const { ctx, getReplaceCalls, getHistory } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10, 10)],
     });
     ctx.select('s1');
@@ -768,6 +800,7 @@ describe('select tool — replace composition (#49 review)', () => {
   it('one snapped gesture delta applies to every member — off-grid spacing is preserved', () => {
     const { ctx, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [rectAt('s1', 10.03, 10), rectAt('s2', 50.08, 40)],
     });
     ctx.selectIds(['s1', 's2']);
@@ -788,10 +821,12 @@ describe('select tool — replace composition (#49 review)', () => {
 // nw anchor (10,10), centre (35,25). The identity camera keeps handle grabs
 // at the literal mm corners.
 describe('select tool — multi-resize via the combined bbox (#52)', () => {
-  const twoRects = () => makeHarness({
-    panelHp: 12,
-    layers: [rectAt('s1', 10, 10), rectAt('s2', 40, 30)],
-  });
+  const twoRects = () =>
+    makeHarness({
+      panelHp: 12,
+      guides: [],
+      layers: [rectAt('s1', 10, 10), rectAt('s2', 40, 30)],
+    });
 
   it('dragging the se corner scales BOTH members uniformly about the nw corner, ONE undo entry', () => {
     const { ctx, getHistory, getBeginGestureCalls, layerById } = twoRects();
@@ -847,6 +882,7 @@ describe('select tool — multi-resize via the combined bbox (#52)', () => {
   it('patterns in the selection are unaffected and stay selected', () => {
     const { ctx, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [gridPattern('g1'), rectAt('s1', 10, 10), rectAt('s2', 40, 30)],
     });
     ctx.selectIds(['g1', 's1', 's2']);
@@ -915,7 +951,10 @@ describe('select tool — multi-resize via the combined bbox (#52)', () => {
       id,
       name: id,
       type: 'path',
-      points: [{ x, y: 10 }, { x, y: 20 }],
+      points: [
+        { x, y: 10 },
+        { x, y: 20 },
+      ],
       closed: false,
       fill: null,
       stroke: 1,
@@ -923,6 +962,7 @@ describe('select tool — multi-resize via the combined bbox (#52)', () => {
     });
     const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
       panelHp: 12,
+      guides: [],
       layers: [line('p1', 10), line('p2', 10.1)],
     });
     ctx.selectIds(['p1', 'p2']);
@@ -934,8 +974,14 @@ describe('select tool — multi-resize via the combined bbox (#52)', () => {
 
     expect(getBeginGestureCalls()).toBe(0);
     expect(getHistory().past).toHaveLength(0);
-    expect((layerById('p1') as PathLayer).points).toEqual([{ x: 10, y: 10 }, { x: 10, y: 20 }]);
-    expect((layerById('p2') as PathLayer).points).toEqual([{ x: 10.1, y: 10 }, { x: 10.1, y: 20 }]);
+    expect((layerById('p1') as PathLayer).points).toEqual([
+      { x: 10, y: 10 },
+      { x: 10, y: 20 },
+    ]);
+    expect((layerById('p2') as PathLayer).points).toEqual([
+      { x: 10.1, y: 10 },
+      { x: 10.1, y: 20 },
+    ]);
 
     // growing is still allowed — the cap only forbids shrinking below the floor
     select.onPointerDown?.(ptr({ x: 10.1, y: 20 }), ctx);

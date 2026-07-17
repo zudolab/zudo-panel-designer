@@ -203,9 +203,7 @@ describe('marquee hit math', () => {
 
   it('excludes panel-wide pattern layers even when fully covered', () => {
     const layers: Layer[] = [dotGrid, rect('r1', 10, 10)];
-    expect(marqueeHitIds(layers, { x: 0, y: 0, width: 100, height: 128.5 }, PANEL)).toEqual([
-      'r1',
-    ]);
+    expect(marqueeHitIds(layers, { x: 0, y: 0, width: 100, height: 128.5 }, PANEL)).toEqual(['r1']);
     // marquee over ONLY the pattern selects nothing
     expect(marqueeHitIds(layers, { x: 60, y: 60, width: 20, height: 20 }, PANEL)).toEqual([]);
   });
@@ -233,6 +231,7 @@ describe('marquee hit math', () => {
 describe('marquee gesture', () => {
   const threeRects = (): DocState => ({
     panelHp: 12,
+    guides: [],
     layers: [dotGrid, rect('r1', 10, 10), rect('r2', 30, 10), rect('r3', 10, 40)],
   });
 
@@ -309,6 +308,7 @@ describe('marquee gesture', () => {
 describe('modifier clicks on layers', () => {
   const doc = (): DocState => ({
     panelHp: 12,
+    guides: [],
     layers: [rect('r1', 10, 10), rect('r2', 30, 10)],
   });
 
@@ -347,7 +347,10 @@ describe('click-vs-drag threshold (4 CSS px, client space)', () => {
   it('is zoom-invariant: a 3px client move at low zoom commits nothing despite a 30mm delta', () => {
     // pxPerMm 0.1 — heavily zoomed out, so tiny client jitter spans many mm
     const zoomedOut: Camera = { pxPerMm: 0.1, offsetX: 0, offsetY: 0 };
-    const h = makeHarness({ panelHp: 12, layers: [rect('r1', 10, 10, 20, 20)] }, zoomedOut);
+    const h = makeHarness(
+      { panelHp: 12, guides: [], layers: [rect('r1', 10, 10, 20, 20)] },
+      zoomedOut,
+    );
 
     // plain click inside r1 selects it at pointerdown and starts the move drag
     select.onPointerDown?.(h.ptr({ x: 20, y: 20 }), h.ctx);
@@ -369,6 +372,7 @@ describe('click-vs-drag threshold (4 CSS px, client space)', () => {
 describe('hover', () => {
   const doc = (): DocState => ({
     panelHp: 12,
+    guides: [],
     layers: [rect('r1', 10, 10), rect('r2', 30, 10)],
   });
 
