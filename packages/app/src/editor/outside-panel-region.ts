@@ -5,8 +5,9 @@
 // see outside-panel-region.test.ts for the ON/OFF/pattern-skip coverage and
 // editor-view.spec.ts for the pixel-level proof that the canvas clip itself
 // behaves (this module can't prove that on its own).
-import type { Layer } from '@zpd/core';
+import { rotatedRectAABB, type Layer } from '@zpd/core';
 import type { Camera } from './camera';
+import { layerBbox, layerRotation } from './renderer';
 import type { PanelDims } from './types';
 
 export interface PxRect {
@@ -32,8 +33,26 @@ export interface OutsidePanelRegion {
   // gutter with dot-grid. Patterns are semantically panel-bound (see
   // hit-test.ts: "pattern layers are panel-wide") — not bbox-bound, so
   // layerBbox() returning the panel rect for a pattern must not be read as
-  // "patterns can't paint outside it".
+  // "patterns can't paint outside it". Beyond that, a layer whose
+  // (rotation-aware) bbox stays fully inside the panel is also excluded —
+  // it's a pure performance cull (see crossesPanelBoundary): the exterior
+  // clip rejects every pixel such a layer paints anyway, so drawing it here
+  // would just re-render (and, for path layers, rebuild the Path2D) the
+  // whole layer a second time per repaint for zero visual effect — costly on
+  // a large trace with hundreds of path layers.
   ghostLayers: Layer[];
+}
+
+// A layer whose bbox stays fully within [0,0]..[panel.widthMm,
+// panel.heightMm] can never contribute a visible ghost pixel — see the
+// perf-cull note on ghostLayers above.
+function crossesPanelBoundary(layer: Layer, panel: PanelDims): boolean {
+  const rawBbox = layerBbox(layer, panel);
+  if (!rawBbox) return false;
+  const bbox = rotatedRectAABB(rawBbox, layerRotation(layer));
+  return (
+    bbox.x < 0 || bbox.y < 0 || bbox.x + bbox.width > panel.widthMm || bbox.y + bbox.height > panel.heightMm
+  );
 }
 
 // Returns null when the toggle is off, so renderer.ts can skip the whole
@@ -54,6 +73,8 @@ export function outsidePanelRegion(
       width: panel.widthMm * cam.pxPerMm,
       height: panel.heightMm * cam.pxPerMm,
     },
-    ghostLayers: layers.filter((layer) => !layer.hidden && layer.type !== 'pattern'),
+    ghostLayers: layers.filter(
+      (layer) => !layer.hidden && layer.type !== 'pattern' && crossesPanelBoundary(layer, panel),
+    ),
   };
 }
