@@ -33,6 +33,7 @@ export * from './bbox';
 export * from './path-geometry';
 export * from './hit-test';
 export * from './resize';
+export * from './scale';
 export * from './snap';
 export * from './layer-ops';
 export * from './history';
