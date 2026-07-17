@@ -80,8 +80,11 @@ async function main() {
     };
   });
 
-  // Sort alphabetically
-  catalog.sort((a, b) => a.family.localeCompare(b.family));
+  // Sort alphabetically. Plain code-unit comparison (not localeCompare) so
+  // the order is identical regardless of the machine's ICU locale — a
+  // locale-sensitive sort would make `fonts:catalog` non-idempotent and
+  // could desync the committed JSON from a re-run on a different machine.
+  catalog.sort((a, b) => (a.family < b.family ? -1 : a.family > b.family ? 1 : 0));
 
   mkdirSync(dirname(OUTPUT_PATH), { recursive: true });
   writeFileSync(OUTPUT_PATH, JSON.stringify(catalog, null, 2) + '\n');

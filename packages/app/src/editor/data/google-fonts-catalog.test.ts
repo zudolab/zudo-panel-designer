@@ -11,9 +11,9 @@ describe('google-fonts-catalog.json', () => {
     expect(catalog.length).toBeGreaterThan(1500);
   });
 
-  it('is sorted alphabetically by family', () => {
+  it('is sorted alphabetically by family (locale-independent comparator)', () => {
     const families = catalog.map((entry) => entry.family);
-    const sorted = [...families].sort((a, b) => a.localeCompare(b));
+    const sorted = [...families].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     expect(families).toEqual(sorted);
   });
 
