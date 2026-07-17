@@ -6,5 +6,20 @@ allowBuilds:
   # to function; both official (Cloudflare/lovell), not third-party.
   sharp: true
   workerd: true
+# Age-gate off: the release-age window blocks adopting freshly-published
+# first-party @takazudo/* bumps for ~2 days, and pnpm's exclude list below
+# can't exempt @takazudo/zudo-doc's deeply peer-nested lockfile key. Disabled
+# by choice so first-party dependency bumps land immediately (CI included).
+minimumReleaseAge: 0
 minimumReleaseAgeExclude:
   - '@takazudo/zudo-doc@4.0.0'
+  - '@takazudo/zfb-adapter-cloudflare@0.1.0-next.89'
+  - '@takazudo/zfb-darwin-arm64@0.1.0-next.89'
+  - '@takazudo/zfb-darwin-x64@0.1.0-next.89'
+  - '@takazudo/zfb-linux-arm64-gnu@0.1.0-next.89'
+  - '@takazudo/zfb-linux-x64-gnu@0.1.0-next.89'
+  - '@takazudo/zfb-md-wasm@0.1.0-next.89'
+  - '@takazudo/zfb-runtime@0.1.0-next.89'
+  - '@takazudo/zfb-win32-x64-msvc@0.1.0-next.89'
+  - '@takazudo/zfb@0.1.0-next.89'
+  - '@takazudo/zudo-doc@4.1.0'
