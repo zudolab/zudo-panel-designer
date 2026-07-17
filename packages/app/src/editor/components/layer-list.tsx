@@ -96,7 +96,7 @@ export function LayerList({ ctx, selectedId }: LayerListProps) {
                   setRenamingId(null);
                 }
               }}
-              className="min-w-0 flex-1 rounded border border-sky-500 bg-neutral-950 px-1 text-neutral-100"
+              className="min-w-0 flex-1 select-text rounded border border-sky-500 bg-neutral-950 px-1 text-neutral-100"
             />
           ) : (
             <span

@@ -98,7 +98,7 @@ export function NumberField({
           stepBy(e.key === 'ArrowUp' ? 1 : -1, e.currentTarget.value);
         }
       }}
-      className="w-full rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-right text-neutral-100"
+      className="w-full select-text rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-right text-neutral-100"
     />
   );
 }

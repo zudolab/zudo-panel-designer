@@ -161,7 +161,7 @@ export interface PenHintBarProps {
 
 export function PenHintBar({ draft, onClosePath, onFinishOpen, onCancel }: PenHintBarProps) {
   return (
-    <div className="pointer-events-none fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded border border-neutral-700 bg-neutral-900/90 px-3 py-1.5 text-xs whitespace-nowrap text-neutral-300 shadow-lg backdrop-blur">
+    <div className="pointer-events-none fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded border border-neutral-700 bg-neutral-900/90 px-3 py-1.5 text-xs whitespace-nowrap text-neutral-300 shadow-lg backdrop-blur select-none">
       <span>
         click: add anchor · drag: curve · click first anchor: close · Enter: finish open · Esc:
         cancel
