@@ -16,6 +16,9 @@ permissions:
 jobs:
   deploy-app:
     name: Build and deploy app to Cloudflare Workers
+    # A manual workflow_dispatch from a non-main branch/tag must not deploy —
+    # only main is allowed to reach production. (push already fires on main only.)
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -79,6 +82,9 @@ jobs:
 
   deploy-doc:
     name: Build and deploy doc site to Cloudflare Workers
+    # A manual workflow_dispatch from a non-main branch/tag must not deploy —
+    # only main is allowed to reach production. (push already fires on main only.)
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
