@@ -19,6 +19,7 @@ import {
   PANEL_HEIGHT_MM,
   panelWidthMm,
   translatePathLayer,
+  type DocState,
   type Layer,
 } from '@zpd/core';
 import { fit, project, unproject, zoomAt, type Camera } from './camera';
@@ -27,8 +28,10 @@ import { reconcileImageCache, renderScene } from './renderer';
 import { getTool, toolByShortcut } from './registry';
 import { closeDialog, openDialog } from './registry/dialogs';
 import { createDemoDoc } from './demo-doc';
+import { readDoc } from './doc-store';
 import { normalizeSelectedIds } from './selection';
 import { installTestBridge } from './test-bridge';
+import { useAutosave } from './use-autosave';
 import { useDocHistory } from './use-doc-history';
 import { useGuideDrag, type GuideDragDeps } from './use-guide-drag';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from './types';
@@ -50,8 +53,13 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export function Editor() {
+  // Boot restore (#72): the stored doc when present, else the first-visit
+  // demo doc. Lazy useState initializer — readDoc() does a synchronous
+  // localStorage read + parse, and this form guarantees it runs only once.
+  const [initialDoc] = useState<DocState>(() => readDoc() ?? createDemoDoc());
   const { doc, canUndo, canRedo, commit, replace, reset, beginGesture, undo, redo } =
-    useDocHistory(createDemoDoc());
+    useDocHistory(initialDoc);
+  const saveStatus = useAutosave(doc);
   // Selection state (#44): the stored ids are RAW (exactly what select() /
   // selectIds() was given); every read derives the normalized view (de-duped,
   // doc-order, stale ids dropped) via normalizeSelectedIds. Lazy on purpose —
@@ -61,11 +69,12 @@ export function Editor() {
   const [camera, setCameraState] = useState<Camera | null>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   const [spaceDown, setSpaceDown] = useState(false);
-  // "Show content outside the panel" (issue #43) — default ON, no
-  // persistence (matches the house style: no storage layer in this app).
+  // "Show content outside the panel" (issue #43) — default ON, not persisted
+  // (view-only state, unlike the doc itself which autosaves — see #72).
   const [showOutsidePanel, setShowOutsidePanel] = useState(true);
-  // "Show guides" master toggle (issue #54) — default ON, no persistence (house
-  // style). When OFF, guides neither render nor accept drag interaction.
+  // "Show guides" master toggle (issue #54) — default ON, not persisted
+  // (view-only state; see showOutsidePanel above). When OFF, guides neither
+  // render nor accept drag interaction.
   const [showGuides, setShowGuides] = useState(true);
   const [, setAssetVersion] = useState(0); // bump repaints when an image loads
   const [, setRepaintNonce] = useState(0); // tools ask for repaints via ctx
@@ -450,6 +459,7 @@ export function Editor() {
         zoomPercent={zoomPercent}
         canUndo={canUndo}
         canRedo={canRedo}
+        saveStatus={saveStatus}
         onFit={fitView}
         onZoomStep={onZoomStep}
       />
