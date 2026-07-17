@@ -38,6 +38,7 @@ import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from './t
 import { CanvasViewport } from './components/canvas-viewport';
 import { RulerCorner, RulerStrip } from './components/ruler';
 import { DialogHost } from './components/dialog-host';
+import { DropImport } from './components/drop-import';
 import { Header } from './components/header';
 import { Sidebar } from './components/sidebar';
 import { Toolbar } from './components/toolbar';
@@ -507,6 +508,7 @@ export function Editor() {
       </div>
       <DialogHost ctx={ctx} />
       <ToastContainer />
+      <DropImport ctx={ctx} />
     </div>
   );
 }
