@@ -128,18 +128,37 @@ export function useGuideDrag(deps: GuideDragDeps): GuideDragController {
         // create: only if released over the canvas; off-canvas cancels
         if (overCanvas) deps.commit(addGuide(doc, createGuide(drag.orientation, position)));
       } else if (overCanvas) {
-        deps.commit(updateGuidePosition(doc, drag.movingId, position));
+        // Only commit a move that actually changed the position — a press+release
+        // with no effective drag would otherwise push a no-op undo entry.
+        const current = doc.guides.find((g) => g.id === drag.movingId);
+        if (current && current.position !== position) {
+          deps.commit(updateGuidePosition(doc, drag.movingId, position));
+        }
       } else {
         // dragged back off the canvas (onto a ruler) -> delete
         deps.commit(removeGuide(doc, drag.movingId));
       }
     };
 
+    // pointercancel / window blur end the gesture WITHOUT committing: the OS or
+    // browser took the pointer (touch cancel, window switch), so no drop was
+    // ever made. Clearing dragRef stops a later unrelated move/up from being
+    // mistaken for this drag and mutating the guide it was carrying.
+    const onCancel = () => {
+      if (!dragRef.current) return;
+      dragRef.current = null;
+      setDraft(null);
+    };
+
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('blur', onCancel);
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('blur', onCancel);
     };
   }, [deps]);
 
@@ -154,12 +173,14 @@ export function useGuideDrag(deps: GuideDragDeps): GuideDragController {
 
   const startCreate = (orientation: GuideOrientation, e: ReactPointerEvent) => {
     if (!deps.isEnabled()) return;
+    if (e.button !== 0 || e.isPrimary === false) return; // primary (left) button only
     e.preventDefault();
     begin({ orientation, movingId: null }, e);
   };
 
   const tryGrabOnCanvas = (e: ReactPointerEvent): boolean => {
     if (!deps.isEnabled()) return false;
+    if (e.button !== 0 || e.isPrimary === false) return false; // primary (left) button only
     const cam = deps.getCamera();
     const rect = deps.getCanvasRect();
     if (!cam || !rect) return false;

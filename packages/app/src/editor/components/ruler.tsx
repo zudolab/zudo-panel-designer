@@ -134,7 +134,14 @@ export function RulerStrip({
     <div
       data-testid={horizontal ? 'ruler-h' : 'ruler-v'}
       className="overflow-hidden bg-neutral-900"
-      style={guidesEnabled ? { cursor: horizontal ? 'row-resize' : 'col-resize' } : undefined}
+      // touchAction:none so a touch drag from the strip isn't stolen by the
+      // browser as a pan/zoom gesture before it reaches the canvas (mirrors the
+      // editor canvas's touch-none).
+      style={
+        guidesEnabled
+          ? { cursor: horizontal ? 'row-resize' : 'col-resize', touchAction: 'none' }
+          : undefined
+      }
       onPointerDown={guidesEnabled ? onGuidePointerDown : undefined}
     >
       <canvas ref={canvasRef} className="block" />
