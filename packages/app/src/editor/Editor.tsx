@@ -38,6 +38,7 @@ import { DialogHost } from './components/dialog-host';
 import { Header } from './components/header';
 import { Sidebar } from './components/sidebar';
 import { Toolbar } from './components/toolbar';
+import { ToastContainer } from './components/toast/toast-container';
 
 const FALLBACK_CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
 
@@ -492,6 +493,7 @@ export function Editor() {
         />
       </div>
       <DialogHost ctx={ctx} />
+      <ToastContainer />
     </div>
   );
 }
