@@ -111,6 +111,11 @@ registerTool({
   shortcut: 'v',
   icon: '⬚',
   cursor: 'default',
+  description:
+    'Click a layer to select it, then drag to move it. Click empty space and drag to marquee-select. ' +
+    'With a layer selected, drag its handles to resize (shapes/images) or its anchors and bezier ' +
+    'handles to reshape a path. Arrow keys nudge the selection (Shift = ×10); Delete/Backspace removes ' +
+    'it. Shortcut: V.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
     const selected = ctx.selectedLayer;
     // node/handle drags on the current selection win over a fresh hit-test

@@ -91,6 +91,10 @@ export interface ToolModule {
   shortcut?: string; // single key, matched case-insensitively
   icon?: string;
   cursor?: string; // CSS cursor while this tool is active
+  // 2-4 sentences for the sidebar Help panel (#36): what the tool does, key
+  // pointer interactions, the shortcut. Optional — keeps the extension
+  // contract backward-compatible for tools that don't supply one.
+  description?: string;
   onActivate?(ctx: ToolContext): void;
   onDeactivate?(ctx: ToolContext): void;
   onPointerDown?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;

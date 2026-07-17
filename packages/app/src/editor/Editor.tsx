@@ -386,7 +386,12 @@ export function Editor() {
             onDoubleClick={onDoubleClick}
           />
         </div>
-        <Sidebar ctx={ctx} selectedId={selectedId} selectedLayer={selectedLayer} />
+        <Sidebar
+          ctx={ctx}
+          selectedId={selectedId}
+          selectedLayer={selectedLayer}
+          activeToolId={activeToolId}
+        />
       </div>
       <DialogHost ctx={ctx} />
     </div>
