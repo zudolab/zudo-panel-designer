@@ -163,7 +163,7 @@ describe('shell smoke', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     render(<App />);
     // the toolbar renders the discovered tools
-    expect(screen.getAllByTitle(/Select/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText(/Select/i).length).toBeGreaterThan(0);
     expect(errorSpy).not.toHaveBeenCalled();
     errorSpy.mockRestore();
   });

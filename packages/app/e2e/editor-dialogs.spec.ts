@@ -17,7 +17,7 @@ test('@smoke image import + trace-to-vector produces path layers', async ({ page
   // access to the (non-existent, in-DOM) input element.
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.getByTitle('Add image…').click(),
+    page.getByLabel('Add image…').click(),
   ]);
   await chooser.setFiles(FIXTURE_PNG);
 
@@ -45,7 +45,7 @@ test('@smoke pattern picker adds a new pattern layer', async ({ page }) => {
   await openEditor(page);
   const before = await bridge(page).getLayerCount();
 
-  await page.getByTitle('Add pattern…').click();
+  await page.getByLabel('Add pattern…').click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: 'Diagonal Stripes' }).click();
 
