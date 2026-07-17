@@ -1,21 +1,32 @@
+// @vitest-environment jsdom
+//
 // Selection-chrome bounds (#45). selectionBboxes is the pure set the chrome
 // pass strokes (one dashed box per selected layer) and the combined bbox unions
 // over. Text is deliberately excluded here — it needs Canvas metrics
 // (measureTextBbox), which jsdom/node lack; shapes and paths cover the rule.
-import { describe, expect, it } from 'vitest';
-import { mergeBboxes, type Layer, type Rect, type ShapeLayer } from '@zpd/core';
+// jsdom is also what the loading-dim block below needs for HTMLCanvasElement.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mergeBboxes, type Layer, type Rect, type ShapeLayer, type TextLayer } from '@zpd/core';
 import {
   canRotate,
   CORNER_HANDLE_IDS,
   cornerHandleRects,
   multiResizeBbox,
+  renderScene,
   resizeHandleRects,
   ROTATE_HANDLE_OFFSET_PX,
   rotateHandleScreenPos,
   selectionBboxes,
 } from './renderer';
+import { ensureFont, isFontLoading } from './fonts';
 import type { Camera } from './camera';
 import type { PanelDims } from './types';
+
+vi.mock('./fonts', () => ({
+  ensureFont: vi.fn(() => Promise.resolve()),
+  isFontLoaded: vi.fn(() => false),
+  isFontLoading: vi.fn(() => false),
+}));
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
@@ -246,5 +257,120 @@ describe('cornerHandleRects (#52 — corner handles ONLY for multi-selections)',
     expect(center('ne')).toEqual({ x: 30, y: 10 });
     expect(center('se')).toEqual({ x: 30, y: 20 });
     expect(center('sw')).toEqual({ x: 10, y: 20 });
+  });
+});
+
+// --- text layer loading-dim + repaint-on-load (#67) --------------------------
+//
+// jsdom has no real 2D canvas, so getContext is stubbed with a Proxy that
+// records every property assignment (globalAlpha, fillStyle, …) onto a plain
+// object — the same technique pattern-picker.test.tsx uses. Unset properties
+// fall back to a no-op function (so arbitrary Canvas method calls don't
+// throw), EXCEPT globalAlpha, which real CanvasRenderingContext2D defaults to
+// 1 — the renderer reads it as an "inherited alpha" baseline (to combine with
+// the ghost pass's dim), so the fake must mirror that real default. `ensureFont`
+// / `isFontLoading` are mocked (google-font-loader.ts and fonts.ts already
+// have their own unit tests for the loading pipeline itself); this block only
+// proves renderer.ts's wiring: it dims while loading, combines with an
+// inherited alpha instead of overwriting it, and reads the layer's content as
+// the sample text passed to ensureFont.
+describe('renderScene — text loading-dim + repaint-on-load (#67)', () => {
+  let store: Record<string, unknown>;
+  // A layer entirely outside the panel is drawn by BOTH the ghost pass and
+  // the (clip-away) main pass, so the fake ctx's single `store.globalAlpha`
+  // gets overwritten by whichever pass ran last — every assignment is
+  // recorded here instead so the ghost-combining test can check the specific
+  // value the ghost pass set, not just the final one.
+  let alphaHistory: unknown[];
+  const originalGetContext = HTMLCanvasElement.prototype.getContext;
+  const CAM: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
+
+  const textLayer: TextLayer = {
+    id: 't1',
+    name: 'Text',
+    type: 'text',
+    content: 'HELLO',
+    fontFamily: 'Some Google Font',
+    sizeMm: 6,
+    x: 0,
+    y: 0,
+    color: 1,
+  };
+
+  beforeEach(() => {
+    alphaHistory = [];
+    HTMLCanvasElement.prototype.getContext = ((): CanvasRenderingContext2D => {
+      store = {};
+      return new Proxy(store, {
+        get: (t, p: string) => {
+          if (p in t) return t[p];
+          if (p === 'globalAlpha') return 1;
+          // outsidePanelRegion's boundary check measures every layer's bbox
+          // (including text, via measureTextBbox) regardless of layer type —
+          // a bare no-op would return undefined and crash on `.width`.
+          if (p === 'measureText') return () => ({ width: 0 });
+          return () => undefined;
+        },
+        set: (t, p: string, v) => {
+          if (p === 'globalAlpha') alphaHistory.push(v);
+          t[p] = v;
+          return true;
+        },
+      }) as unknown as CanvasRenderingContext2D;
+    }) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+  });
+
+  afterEach(() => {
+    HTMLCanvasElement.prototype.getContext = originalGetContext;
+    vi.clearAllMocks();
+  });
+
+  function renderWith(
+    layer: TextLayer,
+    options: { requestRepaint?: () => void; showOutsidePanel?: boolean } = {},
+  ): void {
+    const canvas = document.createElement('canvas');
+    canvas.width = 100;
+    canvas.height = 100;
+    renderScene(canvas, { layers: [layer] }, PANEL, CAM, {
+      selectedIds: [],
+      images: new Map(),
+      showNodes: false,
+      showOutsidePanel: options.showOutsidePanel ?? false,
+      requestRepaint: options.requestRepaint ?? vi.fn(),
+    });
+  }
+
+  it('dims a loading text layer to 30% opacity', () => {
+    vi.mocked(isFontLoading).mockReturnValue(true);
+    renderWith(textLayer);
+    expect(store.globalAlpha).toBe(0.3);
+  });
+
+  it('paints at full opacity once the font is no longer loading', () => {
+    vi.mocked(isFontLoading).mockReturnValue(false);
+    renderWith(textLayer);
+    expect(store.globalAlpha).toBe(1);
+  });
+
+  it('combines the loading dim with the outside-panel ghost alpha instead of overwriting it', () => {
+    // a layer positioned entirely outside the panel is eligible for the
+    // ghost pass, which pre-sets globalAlpha to OUTSIDE_GHOST_ALPHA (0.35)
+    // before drawLayer runs
+    const offPanelLayer: TextLayer = { ...textLayer, x: 1000, y: 1000 };
+    vi.mocked(isFontLoading).mockReturnValue(true);
+    renderWith(offPanelLayer, { showOutsidePanel: true });
+    expect(alphaHistory).toContain(0.35 * 0.3);
+  });
+
+  it('kicks off ensureFont with the layer content as sample text, and repaints once it resolves', async () => {
+    const requestRepaint = vi.fn();
+    vi.mocked(ensureFont).mockReturnValue(Promise.resolve());
+    renderWith(textLayer, { requestRepaint });
+
+    expect(ensureFont).toHaveBeenCalledWith('Some Google Font', 'HELLO');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(requestRepaint).toHaveBeenCalledTimes(1);
   });
 });
