@@ -34,6 +34,36 @@ test('@smoke marquee drag selects 2 of 3 layers via getSelectedIds()', async ({ 
   expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
 });
 
+test('@smoke alt-drag duplicates the selection — +N layers via getLayerCount()', async ({ page }) => {
+  await openEditor(page);
+
+  // Same marquee as above: selects demo-rect + demo-ellipse (N = 2).
+  await marqueeDrag(page, { x: 4, y: 10 }, { x: 56, y: 50 });
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  const before = await bridge(page).getLayerCount();
+
+  // Alt-drag from inside demo-rect (spans x 8..32 / y 14..30): the whole
+  // 2-layer selection is cloned at the threshold crossing and the drag is
+  // re-targeted at the clones (#49).
+  const start = await toScreenPoint(page, { x: 20, y: 22 });
+  const end = await toScreenPoint(page, { x: 40, y: 30 });
+  await page.keyboard.down('Alt');
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 10 });
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+
+  expect(await bridge(page).getLayerCount()).toBe(before + 2);
+  // the ORIGINALS stayed put in the list; the selection moved to the clones
+  const layers = await bridge(page).getLayers();
+  expect(layers.map((l) => l.id)).toEqual(expect.arrayContaining(['demo-rect', 'demo-ellipse']));
+  const selected = await bridge(page).getSelectedIds();
+  expect(selected).toHaveLength(2);
+  expect(selected).not.toContain('demo-rect');
+  expect(selected).not.toContain('demo-ellipse');
+});
+
 test('@smoke marquee over a panel-wide pattern does NOT select it', async ({ page }) => {
   await openEditor(page);
 

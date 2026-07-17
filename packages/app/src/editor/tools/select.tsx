@@ -4,7 +4,9 @@
 // screen<->mm conversion. Move / resize (8 handles) / path node editing all
 // live here; a later wave refines this ONE file without touching the registry.
 import {
+  duplicateLayersAbove,
   hitTestLayer,
+  mintId,
   movePathAnchor,
   movePathHandle,
   rectsIntersect,
@@ -36,8 +38,30 @@ const MARQUEE_STROKE = 'rgba(77,163,255,0.9)';
 
 const snap = (v: number) => snapToGrid(v, SNAP_MM);
 
+// One member of an in-flight move drag. `orig` is the layer as it was at
+// pointerdown (or, after an Alt-duplicate re-target, the source it was cloned
+// from — same geometry) so deltas always apply against the drag-start state.
+interface MoveTarget {
+  id: string;
+  orig: Layer;
+}
+
 type Drag =
-  | { kind: 'move'; layerId: string; startMm: Pt; orig: Layer }
+  | {
+      kind: 'move';
+      startMm: Pt;
+      // The whole (pattern-free) selection moves as one gesture (#49); a
+      // single-layer drag is just a one-element list.
+      targets: MoveTarget[];
+      // Latched on the FIRST pointermove past DRAG_THRESHOLD_PX — the one
+      // moment Alt is sampled for duplicate (#49). Pressing Alt later must
+      // not retro-clone, and an Alt-click that never crosses clones nothing.
+      crossed: boolean;
+      // Plain pointerdown on a member of a multi-selection keeps the whole
+      // selection so the drag can move it; if the gesture turns out to be a
+      // CLICK (never crossed the threshold), collapse to this id on release.
+      collapseTo: string | null;
+    }
   | { kind: 'resize'; layerId: string; handle: ResizeHandle; orig: Rect; startMm: Pt }
   | { kind: 'anchor'; layerId: string; index: number }
   | { kind: 'handle'; layerId: string; index: number; which: 'hin' | 'hout' };
@@ -111,6 +135,18 @@ function updateLayer(ctx: ToolContext, id: string, patch: Partial<Layer>, commit
   else ctx.replace(next);
 }
 
+// Multi-target variant: ONE replace applies every patch, so a multi-selection
+// move stays a single streamed state per pointermove (one undo entry, #49).
+function updateLayers(ctx: ToolContext, patches: ReadonlyMap<string, Partial<Layer>>): void {
+  ctx.replace({
+    ...ctx.doc,
+    layers: ctx.doc.layers.map((l) => {
+      const patch = patches.get(l.id);
+      return patch ? ({ ...l, ...patch } as Layer) : l;
+    }),
+  });
+}
+
 function topmostHit(doc: DocState, mm: Pt): Layer | null {
   for (let i = doc.layers.length - 1; i >= 0; i -= 1) {
     const layer = doc.layers[i];
@@ -172,8 +208,10 @@ registerTool({
   description:
     'Click a layer to select it and drag to move it; drag on empty canvas to marquee-select every ' +
     'layer the rectangle touches. Shift-click adds to or removes from the selection, Meta/Ctrl-click ' +
-    'toggles one layer, and a plain empty-space click deselects. With one layer selected, drag its ' +
-    'handles to resize (shapes/images) or its anchors and bezier handles to reshape a path. Arrow ' +
+    'toggles one layer, and a plain empty-space click deselects. Dragging any member of a ' +
+    'multi-selection moves the whole selection; hold Alt as the drag starts to duplicate it instead, ' +
+    'and hold Shift while dragging to constrain movement to one axis. With one layer selected, drag ' +
+    'its handles to resize (shapes/images) or its anchors and bezier handles to reshape a path. Arrow ' +
     'keys nudge the selection (Shift = ×10); Delete/Backspace removes it. Shortcut: V.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
     hoveredId = null; // pointer engaged — hover chrome resumes after release
@@ -201,8 +239,30 @@ registerTool({
         );
         return;
       }
+      const ids = ctx.selectedIds;
+      if (ids.length > 1 && ids.includes(hit.id)) {
+        // Multi-move (#49): grabbing any member drags the whole selection.
+        // Patterns are excluded from the targets (panel-wide, no x/y — the
+        // epic's eligibility matrix); they stay selected, just don't move.
+        drag = {
+          kind: 'move',
+          startMm: e.mm,
+          targets: ctx.doc.layers
+            .filter((l) => ids.includes(l.id) && l.type !== 'pattern')
+            .map((l) => ({ id: l.id, orig: l })),
+          crossed: false,
+          collapseTo: hit.id,
+        };
+        return;
+      }
       ctx.select(hit.id);
-      drag = { kind: 'move', layerId: hit.id, startMm: e.mm, orig: hit };
+      drag = {
+        kind: 'move',
+        startMm: e.mm,
+        targets: [{ id: hit.id, orig: hit }],
+        crossed: false,
+        collapseTo: null,
+      };
       return;
     }
 
@@ -256,16 +316,51 @@ registerTool({
     // is open, keep streaming so a drag back toward the start still updates.
     switch (drag.kind) {
       case 'move': {
-        const dx = e.mm.x - drag.startMm.x;
-        const dy = e.mm.y - drag.startMm.y;
+        if (!drag.crossed) {
+          // We're past the client-space threshold gate above, so THIS move is
+          // the crossing moment — the one instant Alt is sampled (#49). An
+          // Alt-click that never reaches here duplicates nothing and (below)
+          // writes no history.
+          drag.crossed = true;
+          if (e.altKey) {
+            // Clone insertion is a real doc change: open the (single) undo
+            // entry now even if the snapped move delta is still zero.
+            ensureGesture(ctx);
+            const { layers, idMap } = duplicateLayersAbove(
+              ctx.doc.layers,
+              drag.targets.map((t) => t.id),
+              (source) => mintId(source.type),
+            );
+            ctx.replace({ ...ctx.doc, layers });
+            // Re-target the drag to the clones — the originals stay put. The
+            // clone starts at its source's geometry, so keeping `orig` keeps
+            // the delta math unchanged.
+            drag.targets = drag.targets.map((t) => ({ id: idMap.get(t.id) ?? t.id, orig: t.orig }));
+            // Selection follows the clones; non-cloned members (patterns)
+            // keep their own id.
+            ctx.selectIds(ctx.selectedIds.map((id) => idMap.get(id) ?? id));
+            drag.collapseTo = null;
+          }
+        }
+        let dx = e.mm.x - drag.startMm.x;
+        let dy = e.mm.y - drag.startMm.y;
+        if (e.shiftKey) {
+          // Shift constrains to the dominant axis, re-evaluated live per move
+          // so the drag can flip axes without releasing.
+          if (Math.abs(dx) >= Math.abs(dy)) dy = 0;
+          else dx = 0;
+        }
         if (!gestureOpen && snap(dx) === 0 && snap(dy) === 0) break;
         ensureGesture(ctx);
-        const orig = drag.orig;
-        if (orig.type === 'path') {
-          updateLayer(ctx, drag.layerId, translatePathLayer(orig, snap(dx), snap(dy)), false);
-        } else if (orig.type !== 'pattern') {
-          updateLayer(ctx, drag.layerId, { x: snap(orig.x + dx), y: snap(orig.y + dy) }, false);
+        const patches = new Map<string, Partial<Layer>>();
+        for (const { id, orig } of drag.targets) {
+          if (orig.type === 'path') {
+            patches.set(id, translatePathLayer(orig, snap(dx), snap(dy)));
+          } else if (orig.type !== 'pattern') {
+            patches.set(id, { x: snap(orig.x + dx), y: snap(orig.y + dy) });
+          }
         }
+        updateLayers(ctx, patches);
         break;
       }
       case 'resize': {
@@ -287,7 +382,8 @@ registerTool({
         break;
       }
       case 'anchor': {
-        const layer = ctx.doc.layers.find((l) => l.id === drag!.layerId);
+        const anchorLayerId = drag.layerId;
+        const layer = ctx.doc.layers.find((l) => l.id === anchorLayerId);
         if (layer?.type === 'path') {
           const nx = snap(e.mm.x);
           const ny = snap(e.mm.y);
@@ -304,7 +400,8 @@ registerTool({
         break;
       }
       case 'handle': {
-        const layer = ctx.doc.layers.find((l) => l.id === drag!.layerId);
+        const handleLayerId = drag.layerId;
+        const layer = ctx.doc.layers.find((l) => l.id === handleLayerId);
         if (layer?.type === 'path') {
           const cur = layer.points[drag.index]?.[drag.which];
           if (!gestureOpen && cur && e.mm.x === cur.x && e.mm.y === cur.y) break;
@@ -322,6 +419,13 @@ registerTool({
   },
   onPointerUp(_e: ToolPointerEvent, ctx: ToolContext) {
     if (marquee?.active) ctx.requestRepaint(); // erase the rubber-band
+    // A grab on a multi-selection member that never crossed the threshold is
+    // a plain CLICK — collapse the selection to that layer (standard tool
+    // behavior; without this a multi-selection could never be narrowed by
+    // clicking one of its members).
+    if (drag?.kind === 'move' && !drag.crossed && drag.collapseTo !== null) {
+      ctx.select(drag.collapseTo);
+    }
     marquee = null;
     drag = null;
     gestureOpen = false;

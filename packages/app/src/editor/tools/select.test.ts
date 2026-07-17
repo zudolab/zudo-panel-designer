@@ -20,6 +20,7 @@ import {
   type HistoryState,
   type Layer,
   type PathLayer,
+  type PatternLayer,
   type Pt,
   type ShapeLayer,
 } from '@zpd/core';
@@ -354,5 +355,244 @@ describe('select tool — one gesture == one undo entry', () => {
     const moved = layerById('p1') as PathLayer;
     expect(moved.points[0].hout).toEqual({ x: 35, y: 20 });
     expect(moved.points[0].hin).toEqual({ x: 5, y: 0 }); // unchanged — mirror broken
+  });
+});
+
+// --- multi-move / Alt-duplicate / Shift-constrain (#49) ---------------------
+
+const rectAt = (id: string, x: number, y: number): ShapeLayer => ({
+  id,
+  name: 'Rect',
+  type: 'shape',
+  shape: 'rect',
+  x,
+  y,
+  width: 20,
+  height: 10,
+  color: 1,
+});
+
+const gridPattern = (id: string): PatternLayer => ({
+  id,
+  name: 'Grid',
+  type: 'pattern',
+  patternType: 'dot-grid',
+  params: { pitch: 2.54 },
+  color: 1,
+});
+
+describe('select tool — multi-selection move (#49)', () => {
+  it('dragging one member moves the whole selection as ONE undo entry', () => {
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10, 10), rectAt('s2', 50, 40)],
+    });
+    ctx.selectIds(['s1', 's2']);
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx); // inside s1
+    select.onPointerMove?.(ptr({ x: 20, y: 18 }), ctx);
+    select.onPointerMove?.(ptr({ x: 25, y: 22 }), ctx);
+    select.onPointerUp?.(ptr({ x: 25, y: 22 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(1);
+    expect(getHistory().past).toHaveLength(1);
+    // both moved by (25-15, 22-15) = (+10, +7)
+    expect(layerById('s1')).toMatchObject({ x: 20, y: 17 });
+    expect(layerById('s2')).toMatchObject({ x: 60, y: 47 });
+    // selection survives the drag
+    expect(ctx.selectedIds).toEqual(['s1', 's2']);
+
+    ctx.undo();
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 10 });
+    expect(layerById('s2')).toMatchObject({ x: 50, y: 40 });
+  });
+
+  it('a multi-selection move translates path members (points + handles)', () => {
+    const path: PathLayer = {
+      id: 'p1',
+      name: 'Path',
+      type: 'path',
+      points: [{ x: 60, y: 60, hout: { x: 65, y: 60 } }],
+      closed: false,
+      fill: null,
+      stroke: 1,
+      strokeWidth: 1,
+    };
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10, 10), path],
+    });
+    ctx.selectIds(['s1', 'p1']);
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 25, y: 20 }), ctx);
+    select.onPointerUp?.(ptr({ x: 25, y: 20 }), ctx);
+
+    const movedPath = layerById('p1') as PathLayer;
+    expect(movedPath.points[0]).toEqual({ x: 70, y: 65, hout: { x: 75, y: 65 } });
+  });
+
+  it('patterns in the selection are skipped — they stay put and stay selected', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [gridPattern('g1'), rectAt('s1', 10, 10)],
+    });
+    ctx.selectIds(['g1', 's1']);
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx); // hits s1 (patterns aren't hit-testable)
+    select.onPointerMove?.(ptr({ x: 25, y: 20 }), ctx);
+    select.onPointerUp?.(ptr({ x: 25, y: 20 }), ctx);
+
+    expect(layerById('s1')).toMatchObject({ x: 20, y: 15 });
+    expect(layerById('g1')).toEqual(gridPattern('g1')); // untouched
+    expect(ctx.selectedIds).toEqual(['g1', 's1']);
+  });
+
+  it('a pure click (below threshold) on a member collapses the selection to it', () => {
+    const { ctx, getHistory } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10, 10), rectAt('s2', 50, 40)],
+    });
+    ctx.selectIds(['s1', 's2']);
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerUp?.(ptr({ x: 15, y: 15 }), ctx);
+
+    expect(ctx.selectedIds).toEqual(['s1']);
+    expect(getHistory().past).toHaveLength(0);
+  });
+});
+
+describe('select tool — Alt-drag duplicate (#49)', () => {
+  it('Alt held when the drag crosses the threshold clones the layer above its source and drags the clone', () => {
+    const { ctx, getHistory, getBeginGestureCalls } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }, { altKey: true }), ctx);
+    select.onPointerMove?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
+    select.onPointerUp?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
+
+    const layers = getHistory().present.layers;
+    expect(layers).toHaveLength(2);
+    // original stays put, at its original index
+    expect(layers[0]).toMatchObject({ id: 's1', x: 10, y: 10 });
+    // the clone sits directly above its source with a FRESH id, and the drag
+    // was re-targeted to it: moved by (+10, +5)
+    const clone = layers[1] as ShapeLayer;
+    expect(clone.id).not.toBe('s1');
+    expect(clone).toMatchObject({ x: 20, y: 15, width: 20, height: 10 });
+    // selection follows the clone
+    expect(ctx.selectedIds).toEqual([clone.id]);
+    // clone + move is ONE undo entry
+    expect(getBeginGestureCalls()).toBe(1);
+    expect(getHistory().past).toHaveLength(1);
+    ctx.undo();
+    expect(getHistory().present.layers).toHaveLength(1);
+    expect(getHistory().present.layers[0]).toMatchObject({ id: 's1', x: 10, y: 10 });
+  });
+
+  it('Alt-drag on a multi-selection clones each member directly above its source', () => {
+    const { ctx, getHistory, getBeginGestureCalls } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10, 10), rectAt('s2', 50, 40)],
+    });
+    ctx.selectIds(['s1', 's2']);
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
+    select.onPointerUp?.(ptr({ x: 25, y: 20 }), ctx);
+
+    const layers = getHistory().present.layers;
+    expect(layers).toHaveLength(4);
+    expect(layers.map((l) => l.id).filter((id) => id === 's1' || id === 's2')).toEqual(['s1', 's2']);
+    // interleaved: [s1, clone-of-s1, s2, clone-of-s2]
+    expect(layers[0].id).toBe('s1');
+    expect(layers[2].id).toBe('s2');
+    const c1 = layers[1] as ShapeLayer;
+    const c2 = layers[3] as ShapeLayer;
+    // originals untouched, clones moved by (+10, +5)
+    expect(layers[0]).toMatchObject({ x: 10, y: 10 });
+    expect(layers[2]).toMatchObject({ x: 50, y: 40 });
+    expect(c1).toMatchObject({ x: 20, y: 15 });
+    expect(c2).toMatchObject({ x: 60, y: 45 });
+    expect(new Set([c1.id, c2.id]).size).toBe(2); // fresh, distinct ids
+    expect(ctx.selectedIds).toEqual([c1.id, c2.id]);
+    expect(getBeginGestureCalls()).toBe(1);
+    expect(getHistory().past).toHaveLength(1);
+    ctx.undo();
+    expect(getHistory().present.layers.map((l) => l.id)).toEqual(['s1', 's2']);
+  });
+
+  it('Alt is sampled AT the threshold crossing — pressing it later does not duplicate', () => {
+    const { ctx, getHistory } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 25, y: 20 }), ctx); // crossing moment: no Alt
+    select.onPointerMove?.(ptr({ x: 30, y: 25 }, { altKey: true }), ctx); // too late
+    select.onPointerUp?.(ptr({ x: 30, y: 25 }), ctx);
+
+    expect(getHistory().present.layers).toHaveLength(1);
+    expect(getHistory().present.layers[0]).toMatchObject({ id: 's1', x: 25, y: 20 });
+  });
+
+  it('an Alt-click that never crosses the threshold duplicates NOTHING and writes NO history', () => {
+    const { ctx, getHistory, getBeginGestureCalls } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    // sub-threshold jiggle (< 4 client px from the down point), Alt held throughout
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }, { altKey: true }), ctx);
+    select.onPointerMove?.(ptr({ x: 16, y: 16 }, { altKey: true }), ctx);
+    select.onPointerMove?.(ptr({ x: 15.5, y: 14.5 }, { altKey: true }), ctx);
+    select.onPointerUp?.(ptr({ x: 15.5, y: 14.5 }, { altKey: true }), ctx);
+
+    expect(getHistory().present.layers).toHaveLength(1);
+    expect(getBeginGestureCalls()).toBe(0);
+    expect(getHistory().past).toHaveLength(0);
+    expect(getHistory().present.layers[0]).toMatchObject({ id: 's1', x: 10, y: 10 });
+  });
+});
+
+describe('select tool — Shift axis-constrain (#49)', () => {
+  it('constrains the move to the dominant axis', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    // dx=10 dy=3 → x dominates, y is pinned
+    select.onPointerMove?.(ptr({ x: 25, y: 18 }, { shiftKey: true }), ctx);
+    expect(layerById('s1')).toMatchObject({ x: 20, y: 10 });
+    // dx=3 dy=13 → y dominates now; the axis re-evaluates live mid-drag
+    select.onPointerMove?.(ptr({ x: 18, y: 28 }, { shiftKey: true }), ctx);
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 23 });
+    select.onPointerUp?.(ptr({ x: 18, y: 28 }, { shiftKey: true }), ctx);
+  });
+
+  it('releasing Shift mid-drag returns to free movement', () => {
+    const { ctx, getHistory, layerById } = makeHarness({
+      panelHp: 12,
+      layers: [rectAt('s1', 10, 10)],
+    });
+    ctx.select('s1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx);
+    select.onPointerMove?.(ptr({ x: 25, y: 18 }, { shiftKey: true }), ctx);
+    select.onPointerMove?.(ptr({ x: 25, y: 18 }), ctx); // Shift released
+    select.onPointerUp?.(ptr({ x: 25, y: 18 }), ctx);
+
+    expect(layerById('s1')).toMatchObject({ x: 20, y: 13 }); // full (+10, +3)
+    expect(getHistory().past).toHaveLength(1); // still one entry
   });
 });
