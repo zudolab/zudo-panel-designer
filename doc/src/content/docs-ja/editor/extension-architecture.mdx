@@ -1,0 +1,91 @@
+---
+title: Extension Architecture
+sidebar_position: 6
+---
+
+エディタシェル（`Editor.tsx`）が保持するのは汎用的な状態だけです。ドキュメント（undo/redo 履歴を含む）、カメラ、現在の選択、そしてどのツールがアクティブか、という状態です。ドメイン固有の要素はすべて — ツールが入力にどう反応するか、レイヤー型がどう検査されるか、ダイアログが何を表示するか、「Add …」ボタンが何をするか — 読み込み時に検出される **自己登録型モジュール** に置かれます。これはリポジトリ内の `packages/app/src/editor/README.md` で詳しく解説されているアーキテクチャで、このページはそのドキュメントサイト版であり、内容を一致させています。
+
+これにより、複数の貢献者がツール/インスペクタ/ダイアログ/追加アクションを **マージコンフリクトなしで並行に追加** できます。それぞれが新しいファイルであり、フックアップのために既存ファイルを編集することがないためです。
+
+## 検出の仕組み
+
+`registry/index.ts` は、インポート時に一度だけ実行されます。
+
+```ts
+import.meta.glob('../tools/*.{ts,tsx}', { eager: true });
+import.meta.glob('../inspectors/*.{ts,tsx}', { eager: true });
+import.meta.glob('../add-actions/*.{ts,tsx}', { eager: true });
+import.meta.glob('../dialogs/*.{ts,tsx}', { eager: true });
+```
+
+これら 4 つのフォルダ内のすべてのファイルを eager にインポートすることで、各ファイルのトップレベルの `register*()` 呼び出しが副作用として実行されます。これらの glob を手作業で管理するインポートリストに **置き換えないでください**。また、新しいモジュールを追加するたびに書き加えなければならない共有の配列や switch を **導入しないでください**。その共有の編集ポイントこそ、この設計が取り除いているものです。
+
+これは自分で確かめられます。`registerTool(...)` を呼び出す新しいファイルを `tools/` に置くだけで、ほかのどこも編集せずにツールバーへ現れます。
+
+:::note
+`import.meta.glob` は Vite/Vitest のビルド時プリミティブです。eager 形式はビルド時に静的インポートをインライン化するため、ツリーシェイキングと HMR は通常どおり機能します。実行時にファイルシステムをスキャンするわけではありません。
+:::
+
+glob パターンは、同じ場所に置かれたテストファイル（`!../tools/*.test.{ts,tsx}` など）も除外します。この除外は見た目のためではなく必須です。素の `*.{ts,tsx}` glob は `*.test.{ts,tsx}` ファイルにもマッチしてしまい、Vitest 自身のファイル収集パスの外でテストファイルを eager に評価すると、その `describe` / `it` ブロックが、たまたまその時点で実行中のスイートの子として再登録されてしまいます。これは実際に起こる、順序依存のファイルをまたいだリークです。
+
+## ツールの追加
+
+`tools/my-tool.tsx` を作成します。
+
+```ts
+import { registerTool } from '../registry/tools';
+
+registerTool({
+  id: 'my-tool',
+  label: 'My Tool',
+  shortcut: 'm', // optional; single key, matched case-insensitively
+  cursor: 'crosshair', // optional CSS cursor while active
+  onPointerDown(e, ctx) {
+    /* e: ToolPointerEvent (screen px + doc mm), ctx: ToolContext */
+  },
+  onPointerMove(e, ctx) {},
+  onPointerUp(e, ctx) {},
+  onKeyDown(e, ctx) {
+    // return true to mark handled and stop app-level fallbacks — this is how a
+    // tool owns Enter/Esc without editing any global keyboard switch
+    return false;
+  },
+  renderDraft(draft, ctx) {
+    // draw an in-progress preview (e.g. the pen path) on top of the scene.
+    // draft.inMmSpace(() => { ... }) runs with 1 unit == 1mm, like the layers.
+  },
+  onActivate(ctx) {},
+  onDeactivate(ctx) {},
+});
+```
+
+イベントをまたぐジェスチャーの状態（ペンのドラフト、ドラッグの起点など）は、ツールファイル内の **モジュールスコープ** に保持してください。アクティブなジェスチャーは常に 1 つだけです。そのドラフト状態が変わったら `ctx.requestRepaint()` を呼び出し、`renderDraft` を再実行させます。完全なパターン（ヒットテスト、`beginGesture` + ストリーミングする `replace` による 1 undo エントリのジェスチャー、画面↔mm 変換）については [`tools/select.tsx`](./tools.mdx) を参照してください。
+
+### `ctx`（`ToolContext`）の要点
+
+- `ctx.doc`、`ctx.camera`、`ctx.selectedId`、`ctx.selectedLayer` — LIVE な読み取り（古いレンダークロージャを参照することはありません）。
+- `ctx.toMm(screen)` / `ctx.toScreen(mm)` — 座標変換。
+- `ctx.commit(next)` — 1 つのアトミックな変更 = 1 つの undo エントリ。
+- `ctx.beginGesture()` に続けてストリーミングする `ctx.replace(next)` — ドラッグ全体 = 1 つの undo エントリ。
+- `ctx.select(id)`、`ctx.setActiveTool(id)`、`ctx.setCamera(next)`。
+- `ctx.openDialog(id, props)` / `ctx.closeDialog()`。
+
+## インスペクタの追加
+
+`inspectors/my-type.tsx` を作成し、`registerInspector('shape', MyInspector)` を呼び出します。インスペクタは `{ layer, onChange, ctx }` を受け取ります。`onChange(patch, { commit })` を呼び出してください。スライダーをスクラブしている間は `commit: false`、個別の編集では `commit: true`（デフォルト）です。[インスペクタ](./inspectors.mdx)を参照してください。
+
+## 追加アクションの追加
+
+`add-actions/add-thing.ts` を作成し、`registerAddAction({ id, label, icon, run(ctx) })` を呼び出します。左ツールバーの追加セクションに自動的に現れます。[追加アクション](./add-actions-and-dialogs.mdx)を参照してください。
+
+## ダイアログの追加
+
+`dialogs/my-dialog.tsx` を作成し、`registerDialog({ id, component })` を呼び出します。コンポーネントは `{ props, close, ctx }` を受け取ります。どこからでも `ctx.openDialog('my-dialog', props)` で開けます。[ダイアログ](./add-actions-and-dialogs.mdx)を参照してください。
+
+## キーボードのルーティング順
+
+グローバルなハンドラは、各 `keydown` をまず **アクティブなツールの `onKeyDown` へ** ルーティングします。ツールが `true` を返さなかった場合にのみ、アプリレベルのフォールバック（ツールショートカット、undo/redo、削除、矢印ナッジ、Esc）が動きます。そのため、ツールの Enter/Esc/ドラフト処理はそのモジュール内に収まり、ツールを追加するときに触れるべき共有の switch 文はありません。[フォールバックの完全な順序](./tools.mdx)を参照してください。
+
+:::tip
+このページはリポジトリの `packages/app/src/editor/README.md` を反映したものです。両者が食い違った場合は、README が信頼できる情報源です。そのフォルダで作業する貢献者が直接読むものだからです。
+:::
