@@ -4,7 +4,7 @@
 // deterministic DOCUMENT order.
 import { describe, expect, it } from 'vitest';
 import type { Layer, ShapeLayer } from '@zpd/core';
-import { normalizeSelectedIds } from './selection';
+import { nextListSelection, normalizeSelectedIds } from './selection';
 
 function shape(id: string): ShapeLayer {
   return {
@@ -51,5 +51,75 @@ describe('normalizeSelectedIds', () => {
 
   it('passes a single valid id through unchanged (the 0/1 status quo)', () => {
     expect(normalizeSelectedIds(['b'], LAYERS)).toEqual(['b']);
+  });
+});
+
+describe('nextListSelection', () => {
+  const ORDER = ['a', 'b', 'c', 'd'] as const;
+  const plain = { shift: false, meta: false };
+  const meta = { shift: false, meta: true };
+  const shift = { shift: true, meta: false };
+
+  it('plain click selects exactly one and sets the anchor', () => {
+    expect(nextListSelection({ selectedIds: ['a', 'b'], anchorId: 'a' }, ORDER, 'c', plain)).toEqual({
+      selectedIds: ['c'],
+      anchorId: 'c',
+    });
+  });
+
+  it('meta-click adds an unselected id and moves the anchor to it', () => {
+    expect(nextListSelection({ selectedIds: ['a'], anchorId: 'a' }, ORDER, 'c', meta)).toEqual({
+      selectedIds: ['a', 'c'],
+      anchorId: 'c',
+    });
+  });
+
+  it('meta-click on a selected id toggles it off', () => {
+    expect(nextListSelection({ selectedIds: ['a', 'c'], anchorId: 'c' }, ORDER, 'a', meta)).toEqual({
+      selectedIds: ['c'],
+      anchorId: 'a',
+    });
+  });
+
+  it('shift-click selects the document-order range from the anchor, inclusive', () => {
+    expect(nextListSelection({ selectedIds: ['b'], anchorId: 'b' }, ORDER, 'd', shift)).toEqual({
+      selectedIds: ['b', 'c', 'd'],
+      anchorId: 'b',
+    });
+  });
+
+  it('shift-range is direction-agnostic (clicking above the anchor)', () => {
+    expect(nextListSelection({ selectedIds: ['c'], anchorId: 'c' }, ORDER, 'a', shift)).toEqual({
+      selectedIds: ['a', 'b', 'c'],
+      anchorId: 'c',
+    });
+  });
+
+  it('shift-click PRESERVES the anchor so the range can be re-dragged', () => {
+    const afterFirst = nextListSelection({ selectedIds: ['b'], anchorId: 'b' }, ORDER, 'd', shift);
+    expect(afterFirst.anchorId).toBe('b');
+    // A second shift-click from the SAME anchor shrinks the range.
+    expect(nextListSelection(afterFirst, ORDER, 'c', shift)).toEqual({
+      selectedIds: ['b', 'c'],
+      anchorId: 'b',
+    });
+  });
+
+  it('shift-click with no usable anchor falls back to a plain single select', () => {
+    expect(nextListSelection({ selectedIds: [], anchorId: null }, ORDER, 'c', shift)).toEqual({
+      selectedIds: ['c'],
+      anchorId: 'c',
+    });
+    // stale anchor (deleted layer) is treated the same way
+    expect(nextListSelection({ selectedIds: [], anchorId: 'gone' }, ORDER, 'c', shift)).toEqual({
+      selectedIds: ['c'],
+      anchorId: 'c',
+    });
+  });
+
+  it('shift wins over meta when both modifiers are held', () => {
+    expect(
+      nextListSelection({ selectedIds: ['a'], anchorId: 'a' }, ORDER, 'c', { shift: true, meta: true }),
+    ).toEqual({ selectedIds: ['a', 'b', 'c'], anchorId: 'a' });
   });
 });

@@ -18,7 +18,6 @@ import {
 import {
   PANEL_HEIGHT_MM,
   panelWidthMm,
-  snapToGrid,
   translatePathLayer,
   type Layer,
 } from '@zpd/core';
@@ -39,7 +38,6 @@ import { Sidebar } from './components/sidebar';
 import { Toolbar } from './components/toolbar';
 
 const FALLBACK_CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
-const snap = (v: number) => snapToGrid(v, 0.1);
 
 function isEditableTarget(target: EventTarget | null): boolean {
   return (
@@ -254,8 +252,7 @@ export function Editor() {
   // --- keyboard: active tool first, then app-level fallbacks -------------
   useEffect(() => {
     const deleteSelected = () => {
-      // Multi-capable (#44) but behaviour-identical today: only 0 or 1 ids can
-      // be selected until #45 adds the multi-select interactions.
+      // Deletes the WHOLE selection as one undo entry (#45).
       const ids = readSelectedIds();
       if (ids.length === 0) return;
       const doomed = new Set(ids);
@@ -263,16 +260,30 @@ export function Editor() {
       setRawSelectedIds([]);
     };
     const nudge = (dx: number, dy: number) => {
-      const layer = ctx.selectedLayer;
-      if (!layer || layer.type === 'pattern') return;
-      const patch =
-        layer.type === 'path'
-          ? translatePathLayer(layer, dx, dy)
-          : { x: snap(layer.x + dx), y: snap(layer.y + dy) };
-      commit({
-        ...docRef.current,
-        layers: docRef.current.layers.map((l) => (l.id === layer.id ? ({ ...l, ...patch } as Layer) : l)),
+      // Nudges the WHOLE selection as ONE undo entry (#45). Patterns are pinned
+      // to the panel (eligibility matrix), so a mixed selection moves only its
+      // non-pattern members — but the whole thing stays a single commit.
+      //
+      // Every movable layer gets the SAME (dx, dy) delta so the selection
+      // translates as a rigid unit — snapping each layer's absolute position
+      // independently would apply different effective deltas to off-grid
+      // members (allowed via the numeric inspectors) and shear the group. dx/dy
+      // are already grid steps (0.1 / 1mm), and this matches translatePathLayer,
+      // which already moves paths by the raw delta.
+      const ids = new Set(readSelectedIds());
+      if (ids.size === 0) return;
+      let moved = false;
+      const layers = docRef.current.layers.map((l) => {
+        if (!ids.has(l.id) || l.type === 'pattern') return l;
+        moved = true;
+        const patch =
+          l.type === 'path'
+            ? translatePathLayer(l, dx, dy)
+            : { x: l.x + dx, y: l.y + dy };
+        return { ...l, ...patch } as Layer;
       });
+      if (!moved) return; // pattern-only selection → no phantom undo entry
+      commit({ ...docRef.current, layers });
     };
 
     const onKeyDown = (e: KeyboardEvent) => {

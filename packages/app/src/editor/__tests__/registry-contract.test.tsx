@@ -124,7 +124,7 @@ describe('public registry API — throwaway inspector', () => {
         height: 10,
         color: 1,
       };
-      render(<InspectorHost ctx={stubCtx()} layer={layer} />);
+      render(<InspectorHost ctx={stubCtx()} layer={layer} selectedIds={[layer.id]} />);
       expect(screen.getByText('DEMO-INSPECTOR')).toBeTruthy();
     } finally {
       // restore the real inspector so we don't leak into other assertions

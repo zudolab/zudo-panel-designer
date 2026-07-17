@@ -84,3 +84,58 @@ describe('LayerList rename', () => {
     expect(select).not.toHaveBeenCalled();
   });
 });
+
+function shape(id: string, name: string): ShapeLayer {
+  return { ...LAYER, id, name };
+}
+
+// Document order [a, b, c]; the list renders top-of-stack first, so the visible
+// rows are [C, B, A].
+function multiCtx(selectedIds: readonly string[]) {
+  const selectIds = vi.fn();
+  const ctx = {
+    doc: { panelHp: 12, layers: [shape('a', 'A'), shape('b', 'B'), shape('c', 'C')] },
+    selectedIds,
+    commit: vi.fn(),
+    select: vi.fn(),
+    selectIds,
+  } as unknown as ToolContext;
+  return { ctx, selectIds };
+}
+
+describe('LayerList multi-select', () => {
+  it('plain click selects exactly one', () => {
+    const { ctx, selectIds } = multiCtx([]);
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByText('B'));
+    expect(selectIds).toHaveBeenLastCalledWith(['b']);
+  });
+
+  it('meta-click adds an unselected layer to the selection', () => {
+    const { ctx, selectIds } = multiCtx(['a']);
+    render(<LayerList ctx={ctx} selectedIds={['a']} />);
+
+    fireEvent.click(screen.getByText('C'), { metaKey: true });
+    expect(selectIds).toHaveBeenLastCalledWith(['a', 'c']);
+  });
+
+  it('ctrl-click toggles a selected layer back off', () => {
+    const { ctx, selectIds } = multiCtx(['a', 'c']);
+    render(<LayerList ctx={ctx} selectedIds={['a', 'c']} />);
+
+    fireEvent.click(screen.getByText('A'), { ctrlKey: true });
+    expect(selectIds).toHaveBeenLastCalledWith(['c']);
+  });
+
+  it('shift-click selects the range from the last singly-clicked anchor', () => {
+    const { ctx, selectIds } = multiCtx([]);
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    // establish the anchor with a plain click on A, then shift-click C
+    fireEvent.click(screen.getByText('A'));
+    expect(selectIds).toHaveBeenLastCalledWith(['a']);
+    fireEvent.click(screen.getByText('C'), { shiftKey: true });
+    expect(selectIds).toHaveBeenLastCalledWith(['a', 'b', 'c']);
+  });
+});
