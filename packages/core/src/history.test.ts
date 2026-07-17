@@ -8,6 +8,7 @@ import {
   createHistory,
   redo,
   replace,
+  reset,
   undo,
 } from './history';
 
@@ -137,6 +138,29 @@ describe('MAX_HISTORY cap', () => {
       state = replace(state, `v${i}`);
     }
     expect(state.past.length).toBe(MAX_HISTORY);
+  });
+});
+
+describe('reset', () => {
+  it('replaces present and clears both past and future', () => {
+    let state = createHistory('v0');
+    state = commit(state, 'v1');
+    state = commit(state, 'v2');
+    state = undo(state); // present=v1, future=[v2], past=[v0]
+    expect(canUndo(state)).toBe(true);
+    expect(canRedo(state)).toBe(true);
+
+    const afterReset = reset('fresh');
+    expect(afterReset).toEqual({ past: [], present: 'fresh', future: [] });
+    expect(canUndo(afterReset)).toBe(false);
+    expect(canRedo(afterReset)).toBe(false);
+  });
+
+  it('unlike commit/replace, discards past entries rather than preserving them', () => {
+    const state = commit(createHistory('v0'), 'v1');
+    expect(state.past).toEqual(['v0']); // commit keeps past
+    const afterReset = reset('v2');
+    expect(afterReset.past).toEqual([]); // reset clears it
   });
 });
 

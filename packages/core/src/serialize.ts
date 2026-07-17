@@ -254,3 +254,31 @@ export function parsePanelConfig(input: unknown): DocState {
 
   return { panelHp: hp, layers, guides: parseGuides(input.guides) };
 }
+
+export type TryParsePanelConfigResult = { ok: true; doc: DocState } | { ok: false; reason: string };
+
+// Oldest PANEL_CONFIG_VERSION this app has ever emitted — v1 predates the
+// `guides` field but is otherwise a valid envelope.
+const MIN_PANEL_CONFIG_VERSION = 1;
+
+// STRICT envelope check, unlike parsePanelConfig above (which never fails —
+// it turns garbage into a default doc). Import UX needs to tell "this is not
+// a zpd panel config" apart from "this is a real config with a wonky field",
+// so it checks only the three envelope markers (app, version range, layers
+// shape) and, on success, delegates to parsePanelConfig for field-level
+// defense. parsePanelConfig itself is unchanged and still never throws.
+export function tryParsePanelConfig(input: unknown): TryParsePanelConfigResult {
+  if (!isPlainObject(input)) return { ok: false, reason: 'not an object' };
+  if (input.app !== 'zpd') return { ok: false, reason: 'not a zpd panel config (app mismatch)' };
+  const version = input.version;
+  if (
+    typeof version !== 'number' ||
+    !Number.isFinite(version) ||
+    version < MIN_PANEL_CONFIG_VERSION ||
+    version > PANEL_CONFIG_VERSION
+  ) {
+    return { ok: false, reason: 'unsupported or missing version' };
+  }
+  if (!Array.isArray(input.layers)) return { ok: false, reason: 'missing layers array' };
+  return { ok: true, doc: parsePanelConfig(input) };
+}

@@ -62,6 +62,14 @@ export function redo<T>(state: HistoryState<T>): HistoryState<T> {
   };
 }
 
+// Replaces present and CLEARS past/future — unlike commit (pushes present
+// onto past) and replace (leaves the stacks untouched), neither of which can
+// discard history. For New-panel and import-replace, where the previous
+// document's undo/redo history is not meaningful for the new one.
+export function reset<T>(next: T): HistoryState<T> {
+  return { past: [], present: next, future: [] };
+}
+
 export function canUndo<T>(state: HistoryState<T>): boolean {
   return state.past.length > 0;
 }
