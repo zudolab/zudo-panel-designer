@@ -15,12 +15,33 @@ export interface SidebarProps {
   selectedId: string | null;
   selectedLayer: Layer | null;
   activeToolId: string;
+  showOutsidePanel: boolean;
+  onShowOutsidePanelChange: (value: boolean) => void;
 }
 
-export function Sidebar({ ctx, selectedId, selectedLayer, activeToolId }: SidebarProps) {
+export function Sidebar({
+  ctx,
+  selectedId,
+  selectedLayer,
+  activeToolId,
+  showOutsidePanel,
+  onShowOutsidePanelChange,
+}: SidebarProps) {
   return (
     <aside className="flex w-72 flex-col border-l border-neutral-800 bg-neutral-900">
       <div className="flex flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3">
+        <CollapsibleSection title="View">
+          <label className="flex items-center justify-between gap-2 text-xs">
+            <span className="text-neutral-400">Show content outside the panel</span>
+            <input
+              type="checkbox"
+              checked={showOutsidePanel}
+              onChange={(e) => onShowOutsidePanelChange(e.target.checked)}
+              className="accent-sky-400"
+            />
+          </label>
+        </CollapsibleSection>
+
         <CollapsibleSection title="Panel">
           <label className="flex items-center justify-between gap-2 text-xs">
             <span className="text-neutral-400">Size</span>
