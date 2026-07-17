@@ -15,7 +15,7 @@
 // (and a payload from an unrelated app, or a future envelope version, is
 // simply ignored rather than crashing the paste).
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { cloneLayersWithFreshIds, mintId, type Layer } from '@zpd/core';
+import { cloneLayersWithFreshIds, mintId, parsePanelConfig, type Layer } from '@zpd/core';
 import { importImageFile } from './import-image';
 import type { ToolContext } from './types';
 
@@ -27,8 +27,6 @@ const ENVELOPE_VERSION = 1;
 // clone technique) so a repeated paste/duplicate never lands exactly on top
 // of its source.
 const CASCADE_OFFSET_MM = 2;
-
-const LAYER_TYPES = new Set(['shape', 'pattern', 'path', 'text', 'image']);
 
 interface ZpdClipboardEnvelope {
   app: typeof ENVELOPE_APP;
@@ -65,17 +63,6 @@ function copyableSelection(ctx: ToolContext): Layer[] {
   return ctx.doc.layers.filter((l) => ids.has(l.id) && l.type !== 'pattern');
 }
 
-function isPlausibleLayer(value: unknown): value is Layer {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as Layer).id === 'string' &&
-    (value as Layer).id.length > 0 &&
-    typeof (value as Layer).type === 'string' &&
-    LAYER_TYPES.has((value as Layer).type)
-  );
-}
-
 // Parses OS clipboard text as a zpd layers envelope. Returns null for
 // anything else — a plain sentence, a URL, JSON from an unrelated app, or a
 // future/foreign envelope version — so the caller can leave non-envelope text
@@ -97,7 +84,15 @@ function parseEnvelope(text: string): Layer[] | null {
   ) {
     return null;
   }
-  const layers = candidate.layers.filter(isPlausibleLayer).filter((l) => l.type !== 'pattern');
+  // Reuse core's defensive panel-config layer parser instead of a hand-rolled
+  // shape check: parsePanelConfig never throws and validates/defaults every
+  // type-specific field individually, so a same-version envelope from an
+  // older/hand-edited source can't slip in a structurally incomplete layer
+  // (e.g. a 'path' with no `points`) that would later throw in cloneLayer or
+  // insert NaN geometry into the document.
+  const layers = parsePanelConfig({ layers: candidate.layers }).layers.filter(
+    (l) => l.type !== 'pattern',
+  );
   return layers.length > 0 ? layers : null;
 }
 
@@ -106,8 +101,14 @@ function parseEnvelope(text: string): Layer[] | null {
 // snapshot) and best-effort mirrors it to the OS clipboard as the versioned
 // envelope. navigator.clipboard.writeText can reject (or the property can be
 // entirely absent, e.g. an insecure context) — either degrades silently to
-// internal-only, per the issue spec.
-function captureToClipboard(clipboardRef: { current: Layer[] }, layers: Layer[]): void {
+// internal-only, per the issue spec. `pendingWriteRef` stays true while the
+// write is in flight — see the paste effect's priority-2 branch for why that
+// matters (a fast copy-then-paste can race the OS clipboard write).
+function captureToClipboard(
+  clipboardRef: { current: Layer[] },
+  pendingWriteRef: { current: boolean },
+  layers: Layer[],
+): void {
   const snapshot: Layer[] = JSON.parse(JSON.stringify(layers));
   clipboardRef.current = snapshot;
   try {
@@ -117,9 +118,16 @@ function captureToClipboard(clipboardRef: { current: Layer[] }, layers: Layer[])
       version: ENVELOPE_VERSION,
       layers: snapshot,
     };
-    navigator.clipboard.writeText(JSON.stringify(envelope)).catch(() => {});
+    pendingWriteRef.current = true;
+    navigator.clipboard
+      .writeText(JSON.stringify(envelope))
+      .catch(() => {})
+      .finally(() => {
+        pendingWriteRef.current = false;
+      });
   } catch {
-    // clipboard API unavailable or permission denied
+    // clipboard API unavailable or permission denied — no write in flight
+    pendingWriteRef.current = false;
   }
 }
 
@@ -140,17 +148,21 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
   // Same-session fallback clipboard — populated by handleCopy/handleCut, read
   // by the paste effect's priority-3 branch below.
   const clipboardRef = useRef<Layer[]>([]);
+  // True while this session's own OS-clipboard write from the most recent
+  // copy/cut hasn't resolved yet — see captureToClipboard and the paste
+  // effect's priority-2 branch.
+  const pendingWriteRef = useRef(false);
 
   const handleCopy = useCallback(() => {
     const layers = copyableSelection(ctx);
     if (layers.length === 0) return;
-    captureToClipboard(clipboardRef, layers);
+    captureToClipboard(clipboardRef, pendingWriteRef, layers);
   }, [ctx]);
 
   const handleCut = useCallback(() => {
     const layers = copyableSelection(ctx);
     if (layers.length === 0) return;
-    captureToClipboard(clipboardRef, layers);
+    captureToClipboard(clipboardRef, pendingWriteRef, layers);
     // Copy + delete as ONE commit — cut must be a single undo entry.
     const cutIds = new Set(layers.map((l) => l.id));
     ctx.commit({ ...ctx.doc, layers: ctx.doc.layers.filter((l) => !cutIds.has(l.id)) });
@@ -189,14 +201,22 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
       // from another app) is left completely untouched, INCLUDING skipping
       // the internal-clipboard fallback below — the OS clipboard's current
       // content always wins over a stale in-app copy.
+      //
+      // EXCEPT while this session's own write is still in flight
+      // (pendingWriteRef): the text just read from clipboardData may PRE-DATE
+      // that write (writeText is async, so a fast copy-then-paste can read
+      // the clipboard before it lands), in which case it's stale, not a
+      // deliberate foreign paste — fall through to the internal snapshot
+      // instead of silently doing nothing.
       const text = e.clipboardData?.getData('text/plain');
       if (text) {
         const envelopeLayers = parseEnvelope(text);
         if (envelopeLayers) {
           e.preventDefault();
           insertClones(ctx, envelopeLayers);
+          return;
         }
-        return;
+        if (!pendingWriteRef.current) return;
       }
 
       // Priority 3: internal same-session clipboard — the last resort when

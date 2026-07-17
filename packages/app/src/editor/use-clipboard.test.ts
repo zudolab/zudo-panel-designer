@@ -8,6 +8,7 @@ import {
   createDefaultDoc,
   type DocState,
   type Layer,
+  type PathLayer,
   type Pt,
   type ShapeLayer,
   type TextLayer,
@@ -293,6 +294,41 @@ describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('an in-flight write does not let stale OS text suppress the internal fallback; once it resolves, unrelated text is untouched again', async () => {
+    let resolveWrite!: () => void;
+    const pendingWrite = new Promise<void>((resolve) => {
+      resolveWrite = resolve;
+    });
+    const writeText = vi.fn().mockReturnValue(pendingWrite);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    try {
+      const doc = baseDoc([shapeLayer]);
+      const ctx = createCtx(doc, ['shape-1']);
+      const { result } = renderHook(() => useClipboard(ctx));
+
+      act(() => result.current.handleCopy()); // write is now in flight (unresolved)
+
+      // The OS clipboard currently holds unrelated text that PRE-DATES this
+      // copy (the write hasn't landed yet) — must NOT be treated as a
+      // deliberate foreign paste while the write is pending.
+      act(() => dispatchPaste(window, { text: 'stale unrelated text' }));
+      expect(ctx.commit).toHaveBeenCalledTimes(1);
+      expect(ctx.doc.layers).toHaveLength(3); // pattern + original + clone
+
+      // Once the write resolves, the normal "foreign text wins" rule applies
+      // again — a second unrelated paste is left untouched.
+      await act(async () => {
+        resolveWrite();
+        await pendingWrite;
+      });
+      vi.mocked(ctx.commit).mockClear();
+      act(() => dispatchPaste(window, { text: 'stale unrelated text' }));
+      expect(ctx.commit).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('useClipboard — paste priority: image > envelope > internal', () => {
@@ -388,6 +424,30 @@ describe('useClipboard — non-envelope text is left untouched', () => {
       }),
     );
     expect(ctx.commit).not.toHaveBeenCalled();
+  });
+});
+
+describe('useClipboard — envelope layer validation', () => {
+  it('a structurally incomplete layer in an otherwise-valid envelope is defended, not crashed or inserted as garbage geometry', () => {
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+
+    // Missing points/closed/fill/stroke/strokeWidth — a hand-edited or
+    // older-tool envelope could plausibly produce this.
+    const envelopeText = JSON.stringify({
+      app: 'zpd',
+      kind: 'layers',
+      version: 1,
+      layers: [{ id: 'p', type: 'path' }],
+    });
+
+    expect(() => act(() => dispatchPaste(window, { text: envelopeText }))).not.toThrow();
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const pasted = ctx.doc.layers.find((l) => l.type !== 'pattern') as PathLayer;
+    expect(pasted).toBeDefined();
+    expect(pasted.points).toEqual([]);
+    expect(pasted.strokeWidth).toBe(0);
   });
 });
 
