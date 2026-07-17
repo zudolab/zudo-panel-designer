@@ -17,15 +17,17 @@ describe('HelpPanel', () => {
 
     expect(screen.getByText('Select')).toBeTruthy();
     expect(screen.getByText('V')).toBeTruthy();
-    expect(screen.getByText(/click empty space to deselect/)).toBeTruthy();
+    // #47 updated the description: it must document the marquee (the stale
+    // pre-marquee text was exactly the bug that created #40)
+    expect(screen.getByText(/marquee-select/)).toBeTruthy();
   });
 
   it('updates live when the active tool id changes', () => {
     const { rerender } = render(<HelpPanel activeToolId="select" />);
-    expect(screen.getByText(/click empty space to deselect/)).toBeTruthy();
+    expect(screen.getByText(/marquee-select/)).toBeTruthy();
 
     rerender(<HelpPanel activeToolId="pen" />);
-    expect(screen.queryByText(/click empty space to deselect/)).toBeNull();
+    expect(screen.queryByText(/marquee-select/)).toBeNull();
     expect(screen.getByText('Pen')).toBeTruthy();
     expect(screen.getByText('P')).toBeTruthy();
     expect(screen.getByText(/bezier handles/)).toBeTruthy();

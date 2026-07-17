@@ -387,6 +387,20 @@ export function selectionBboxes(
   return boxes;
 }
 
+// Hover chrome (#47): a solid 1px outline at reduced alpha — deliberately
+// weaker than the dashed selection chrome so it reads as "would select", not
+// "is selected". Layer-hover only: the reference implementation's 1.2×
+// handle-hover enlargement is a deliberate, recorded exclusion.
+const HOVER_COLOR = 'rgba(77,163,255,0.55)';
+
+export function drawHoverOutline(ctx: CanvasRenderingContext2D, rect: Rect, cam: Camera): void {
+  ctx.save();
+  ctx.strokeStyle = HOVER_COLOR;
+  ctx.lineWidth = 1;
+  strokeMmRect(ctx, rect, cam);
+  ctx.restore();
+}
+
 function strokeMmRect(ctx: CanvasRenderingContext2D, rect: Rect, cam: Camera): void {
   ctx.strokeRect(
     rect.x * cam.pxPerMm + cam.offsetX,
