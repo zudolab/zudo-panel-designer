@@ -22,18 +22,21 @@ const LAYER: ShapeLayer = {
 function stubCtx() {
   const commit = vi.fn();
   const select = vi.fn();
+  const selectIds = vi.fn();
   const ctx = {
     doc: { panelHp: 12, layers: [LAYER] },
+    selectedIds: [],
     commit,
     select,
+    selectIds,
   } as unknown as ToolContext;
-  return { ctx, commit, select };
+  return { ctx, commit, select, selectIds };
 }
 
 describe('LayerList rename', () => {
   it('double-click enters inline rename; Enter commits the new name via renameLayer', () => {
     const { ctx, commit } = stubCtx();
-    render(<LayerList ctx={ctx} selectedId={null} />);
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
 
     fireEvent.doubleClick(screen.getByText('Rect'));
     const input = screen.getByDisplayValue('Rect');
@@ -49,7 +52,7 @@ describe('LayerList rename', () => {
 
   it('Escape cancels without committing', () => {
     const { ctx, commit } = stubCtx();
-    render(<LayerList ctx={ctx} selectedId={null} />);
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
 
     fireEvent.doubleClick(screen.getByText('Rect'));
     const input = screen.getByDisplayValue('Rect');
@@ -62,7 +65,7 @@ describe('LayerList rename', () => {
 
   it('blur without Enter cancels without committing', () => {
     const { ctx, commit } = stubCtx();
-    render(<LayerList ctx={ctx} selectedId={null} />);
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
 
     fireEvent.doubleClick(screen.getByText('Rect'));
     const input = screen.getByDisplayValue('Rect');
@@ -75,7 +78,7 @@ describe('LayerList rename', () => {
 
   it('double-clicking the name does not also toggle selection', () => {
     const { ctx, select } = stubCtx();
-    render(<LayerList ctx={ctx} selectedId={null} />);
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
 
     fireEvent.doubleClick(screen.getByText('Rect'));
     expect(select).not.toHaveBeenCalled();

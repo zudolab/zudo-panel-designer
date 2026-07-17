@@ -12,7 +12,7 @@ import { LayerList } from './layer-list';
 
 export interface SidebarProps {
   ctx: ToolContext;
-  selectedId: string | null;
+  selectedIds: readonly string[];
   selectedLayer: Layer | null;
   activeToolId: string;
   showOutsidePanel: boolean;
@@ -21,7 +21,7 @@ export interface SidebarProps {
 
 export function Sidebar({
   ctx,
-  selectedId,
+  selectedIds,
   selectedLayer,
   activeToolId,
   showOutsidePanel,
@@ -75,7 +75,7 @@ export function Sidebar({
         </CollapsibleSection>
 
         <CollapsibleSection title="Layers">
-          <LayerList ctx={ctx} selectedId={selectedId} />
+          <LayerList ctx={ctx} selectedIds={selectedIds} />
         </CollapsibleSection>
 
         <CollapsibleSection title={selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}>

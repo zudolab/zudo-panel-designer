@@ -23,6 +23,7 @@ import {
   type Pt,
   type ShapeLayer,
 } from '@zpd/core';
+import { normalizeSelectedIds } from '../selection';
 import type { PanelDims, ToolContext, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
 
@@ -31,8 +32,16 @@ const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
 function makeHarness(initialDoc: DocState) {
   let history: HistoryState<DocState> = createHistory(initialDoc);
-  let selectedId: string | null = null;
+  let selectedIds: readonly string[] = [];
   let beginGestureCalls = 0;
+
+  // Same derivation the Editor performs: selectedIds normalized against the
+  // live doc; selectedId/selectedLayer non-null only for exactly one id.
+  const readSelectedIds = () => normalizeSelectedIds(selectedIds, history.present.layers);
+  const readSelectedId = () => {
+    const ids = readSelectedIds();
+    return ids.length === 1 ? ids[0] : null;
+  };
 
   const ctx: ToolContext = {
     get doc() {
@@ -44,11 +53,14 @@ function makeHarness(initialDoc: DocState) {
     get panel() {
       return PANEL;
     },
+    get selectedIds() {
+      return readSelectedIds();
+    },
     get selectedId() {
-      return selectedId;
+      return readSelectedId();
     },
     get selectedLayer() {
-      return history.present.layers.find((l) => l.id === selectedId) ?? null;
+      return history.present.layers.find((l) => l.id === readSelectedId()) ?? null;
     },
     toMm: (p: Pt) => p,
     toScreen: (p: Pt) => p,
@@ -69,7 +81,10 @@ function makeHarness(initialDoc: DocState) {
       history = coreRedo(history);
     },
     select: (id) => {
-      selectedId = id;
+      selectedIds = id === null ? [] : [id];
+    },
+    selectIds: (ids) => {
+      selectedIds = ids;
     },
     setCamera: () => {},
     setActiveTool: () => {},
