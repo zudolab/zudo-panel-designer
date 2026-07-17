@@ -79,7 +79,7 @@ export function Sidebar({
         </CollapsibleSection>
 
         <CollapsibleSection title={selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}>
-          <InspectorHost ctx={ctx} layer={selectedLayer} />
+          <InspectorHost ctx={ctx} layer={selectedLayer} selectedIds={selectedIds} />
         </CollapsibleSection>
       </div>
 

@@ -5,6 +5,7 @@
 // @zpd/core + @zpd/patterns APIs.
 import {
   buildPath2D,
+  mergeBboxes,
   PALETTE,
   pathBbox,
   rotatedRectAABB,
@@ -29,7 +30,8 @@ const OUTSIDE_GHOST_ALPHA = 0.35;
 
 export interface RenderExtras {
   // Multi-select contract (#44): the full (normalized) selection. The chrome
-  // pass below still renders only the exactly-one case — N-layer chrome is #45.
+  // pass draws a dashed bbox per selected layer plus a combined bbox when >1;
+  // resize handles / path nodes render only when exactly one is selected (#45).
   selectedIds: readonly string[];
   images: Map<string, HTMLImageElement>;
   showNodes: boolean; // draw path anchors/handles for the selected path layer
@@ -72,6 +74,15 @@ export function measureTextBbox(layer: {
 }
 
 // Layer bbox in mm (pre-rotation). Pattern layers cover the whole panel.
+//
+// CANONICAL BOUNDS (#45): this app-side function is the ONE source of layer
+// bounds for selection chrome AND the marquee (#47) — both MUST read it so a
+// text layer's chrome and marquee-hit agree to the pixel. It uses real Canvas
+// text metrics (measureTextBbox). Core's estimateTextBbox in hit-test.ts is a
+// rough character-count fallback that exists only because @zpd/core is
+// dependency-free with no Canvas in Node; it is a Node-side hit-test fallback,
+// NOT a bounds source for anything the user sees. Do not re-point chrome/marquee
+// at core's estimate — they would visibly disagree for text.
 export function layerBbox(layer: Layer, panel: PanelDims): Rect | null {
   switch (layer.type) {
     case 'shape':
@@ -355,6 +366,36 @@ function makeDraftContext(
   };
 }
 
+// Axis-aligned selection bboxes (mm) for the chrome pass: one per selected,
+// non-hidden layer, in selection order. Hidden layers are skipped — the layer
+// paint pass skips them (renderer.ts) so their chrome must vanish too. This is
+// also the set the combined bbox unions over. Kept pure + exported so the
+// selection-bounds rule is unit-testable without a Canvas.
+export function selectionBboxes(
+  layers: readonly Layer[],
+  selectedIds: readonly string[],
+  panel: PanelDims,
+): Rect[] {
+  const boxes: Rect[] = [];
+  for (const id of selectedIds) {
+    const layer = layers.find((l) => l.id === id);
+    if (!layer || layer.hidden) continue;
+    const raw = layerBbox(layer, panel);
+    if (!raw) continue;
+    boxes.push(rotatedRectAABB(raw, layerRotation(layer)));
+  }
+  return boxes;
+}
+
+function strokeMmRect(ctx: CanvasRenderingContext2D, rect: Rect, cam: Camera): void {
+  ctx.strokeRect(
+    rect.x * cam.pxPerMm + cam.offsetX,
+    rect.y * cam.pxPerMm + cam.offsetY,
+    rect.width * cam.pxPerMm,
+    rect.height * cam.pxPerMm,
+  );
+}
+
 function drawSelectionChrome(
   ctx: CanvasRenderingContext2D,
   layers: Layer[],
@@ -362,27 +403,34 @@ function drawSelectionChrome(
   cam: Camera,
   extras: RenderExtras,
 ): void {
-  // Single-selection chrome only in this wave (#44) — #45 draws N-layer chrome.
-  const selectedId = extras.selectedIds.length === 1 ? extras.selectedIds[0] : null;
-  const selected = layers.find((l) => l.id === selectedId);
-  if (!selected) return;
-  if (selected.hidden) return; // the layer pass skips hidden layers — chrome must too
-  const rawBbox = layerBbox(selected, panel);
-  if (!rawBbox) return;
-  const rotation = layerRotation(selected);
-  const bbox = rotatedRectAABB(rawBbox, rotation);
+  const boxes = selectionBboxes(layers, extras.selectedIds, panel);
+  if (boxes.length === 0) return;
 
   ctx.save();
   ctx.strokeStyle = SELECT_COLOR;
   ctx.lineWidth = 1.5;
   ctx.setLineDash([5, 4]);
-  ctx.strokeRect(
-    bbox.x * cam.pxPerMm + cam.offsetX,
-    bbox.y * cam.pxPerMm + cam.offsetY,
-    bbox.width * cam.pxPerMm,
-    bbox.height * cam.pxPerMm,
-  );
+  // one dashed bbox per selected layer …
+  for (const b of boxes) strokeMmRect(ctx, b, cam);
+  // … plus the combined bbox that encloses them all when more than one is
+  // selected. mergeBboxes is the shared union (#45) — no bespoke union here.
+  if (boxes.length > 1) strokeMmRect(ctx, mergeBboxes(boxes), cam);
   ctx.setLineDash([]);
+
+  // Handles + path nodes are single-selection affordances only: multi-resize is
+  // #52. Everything below runs iff EXACTLY one layer is selected — and boxes is
+  // then non-empty, so the layer is present and visible.
+  if (extras.selectedIds.length !== 1) {
+    ctx.restore();
+    return;
+  }
+  const selected = layers.find((l) => l.id === extras.selectedIds[0]);
+  if (!selected) {
+    ctx.restore();
+    return;
+  }
+  const rotation = layerRotation(selected);
+  const bbox = boxes[0];
 
   // resize handles only when the layer is eligible (not rotated)
   const resizable = (selected.type === 'shape' || selected.type === 'image') && !rotation;

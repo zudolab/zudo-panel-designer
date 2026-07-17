@@ -254,8 +254,7 @@ export function Editor() {
   // --- keyboard: active tool first, then app-level fallbacks -------------
   useEffect(() => {
     const deleteSelected = () => {
-      // Multi-capable (#44) but behaviour-identical today: only 0 or 1 ids can
-      // be selected until #45 adds the multi-select interactions.
+      // Deletes the WHOLE selection as one undo entry (#45).
       const ids = readSelectedIds();
       if (ids.length === 0) return;
       const doomed = new Set(ids);
@@ -263,16 +262,23 @@ export function Editor() {
       setRawSelectedIds([]);
     };
     const nudge = (dx: number, dy: number) => {
-      const layer = ctx.selectedLayer;
-      if (!layer || layer.type === 'pattern') return;
-      const patch =
-        layer.type === 'path'
-          ? translatePathLayer(layer, dx, dy)
-          : { x: snap(layer.x + dx), y: snap(layer.y + dy) };
-      commit({
-        ...docRef.current,
-        layers: docRef.current.layers.map((l) => (l.id === layer.id ? ({ ...l, ...patch } as Layer) : l)),
+      // Nudges the WHOLE selection as ONE undo entry (#45). Patterns are pinned
+      // to the panel (eligibility matrix), so a mixed selection moves only its
+      // non-pattern members — but the whole thing stays a single commit.
+      const ids = new Set(readSelectedIds());
+      if (ids.size === 0) return;
+      let moved = false;
+      const layers = docRef.current.layers.map((l) => {
+        if (!ids.has(l.id) || l.type === 'pattern') return l;
+        moved = true;
+        const patch =
+          l.type === 'path'
+            ? translatePathLayer(l, dx, dy)
+            : { x: snap(l.x + dx), y: snap(l.y + dy) };
+        return { ...l, ...patch } as Layer;
       });
+      if (!moved) return; // pattern-only selection → no phantom undo entry
+      commit({ ...docRef.current, layers });
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
