@@ -22,6 +22,7 @@ import {
   type Layer,
 } from '@zpd/core';
 import { fit, project, unproject, zoomAt, type Camera } from './camera';
+import { installBrowserZoomGuard } from './browser-zoom-guard';
 import { renderScene } from './renderer';
 import { getTool, toolByShortcut } from './registry';
 import { closeDialog, openDialog } from './registry/dialogs';
@@ -126,6 +127,12 @@ export function Editor() {
       getCamera: () => cameraRef.current,
     });
   }, [readSelectedId, readSelectedIds]);
+
+  // Browser zoom desyncs the cursor position reported to the app from the
+  // actual screen position, which misaligns drag handles / resize handles /
+  // click targets (#62). Installed once for the app's lifetime; the canvas's
+  // own wheel handler (below) keeps handling in-app zoom unchanged.
+  useEffect(() => installBrowserZoomGuard(), []);
 
   // Built once — all mutators are stable, all reads go through refs.
   const ctx = useMemo<ToolContext>(

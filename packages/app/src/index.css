@@ -1,1 +1,18 @@
 @import 'tailwindcss';
+
+/* iOS Safari auto-zooms the viewport when focusing a text input with a
+   computed font-size under 16px. With pinch-zoom blocked (browser-zoom-guard,
+   #62) that auto-zoom would trap the user zoomed in with no way to pinch back
+   out, so force 16px on narrow viewports where the zoom-in behavior fires. */
+@media (max-width: 640px) {
+  input[type='text'],
+  input[type='number'],
+  input[type='email'],
+  input[type='search'],
+  input[type='password'],
+  input[type='url'],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
