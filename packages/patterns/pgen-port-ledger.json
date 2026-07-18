@@ -105,6 +105,86 @@
       "status": "ported",
       "date": "2026-07-18",
       "notes": "trial port: dropped bg fill + colorOffset fg cycling; cell + bar width now mm params; inset ratio 0.28 kept as source const"
+    },
+    {
+      "zpdName": "asanoha",
+      "pgenId": "asanoha",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + per-cluster colorOffset cycling; hex outline + 6 spokes + 6 kite diamonds as mm polylines; star radius + line width mm params; hexRadiusFactor 0.9 folded into radius"
+    },
+    {
+      "zpdName": "kagome",
+      "pgenId": "kagome",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + colorOffset cycling; single stroke; up/down triangle interlace as mm polylines; triangle side + line width params; triScale 1.0 hardcoded"
+    },
+    {
+      "zpdName": "seigaiha",
+      "pgenId": "seigaiha",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + per-ring colorOffset cycling; nested upper-semicircle arcs in mm; fan radius + line width params, arcRings kept as signature knob"
+    },
+    {
+      "zpdName": "shippo",
+      "pgenId": "shippo",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + colorOffset cycling; kept step=radius interlock; radius + line width params, inner accent circle kept as signature knob (0=off)"
+    },
+    {
+      "zpdName": "uroko-scales",
+      "pgenId": "uroko-scales",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "2-colour up/down triangle scheme collapsed to fill only up-triangles (down gaps = real negative space, no bg paint); dropped bg fill + colorCount/colorOffset; scale width + aspect params"
+    },
+    {
+      "zpdName": "yagasuri",
+      "pgenId": "yagasuri",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + colorOffset cycling; single fg fill per mirrored chevron barb polygon; column width + barb height mm params; slant 0.7 kept as source const"
+    },
+    {
+      "zpdName": "sayagata",
+      "pgenId": "sayagata",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + colorOffset cycling; manji key-fret continuous polylines 1:1 in mm; cell + line width params; armReach 0.7 kept as source const"
+    },
+    {
+      "zpdName": "raimon",
+      "pgenId": "raimon",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + colorOffset cycling; square-spiral fret with (ix+iy) parity mirror ported 1:1; cell + line width params, turns kept as signature knob"
+    },
+    {
+      "zpdName": "wachigai",
+      "pgenId": "wachigai",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "removed no-op rand() wobble + colorOffset cycling + bg fill; plain brick-offset ring arcs in mm; ring radius + overlap + line width params"
+    },
+    {
+      "zpdName": "yoshiwara-tsunagi",
+      "pgenId": "yoshiwara-tsunagi",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "near-direct port; dropped bg fill + per-cell colorOffset pick; notched-square corner brackets in mm; cell + line width params; notch 0.18 kept as source const"
     }
   ],
   "ornament": [],
