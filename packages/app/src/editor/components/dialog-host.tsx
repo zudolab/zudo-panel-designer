@@ -17,9 +17,12 @@ import { OverlayPortal } from './overlay-portal';
 // Confirm dialog is core infra, not a Wave-5 extension — self-registers via
 // this side-effect import rather than the ../dialogs/* auto-discovery glob.
 import './confirm-dialog';
-import type { ToolContext } from '../types';
+import type { CommandContext } from '../commands';
 
-export function DialogHost({ ctx }: { ctx: ToolContext }) {
+// ctx is typed CommandContext (not the narrower ToolContext) because Editor
+// wires this with its full command-execution context and the command palette
+// depends on receiving it — mis-wiring now fails typecheck here.
+export function DialogHost({ ctx }: { ctx: CommandContext }) {
   const open = useSyncExternalStore(subscribeDialog, getOpenDialog, getOpenDialog);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
@@ -81,6 +84,7 @@ export function DialogHost({ ctx }: { ctx: ToolContext }) {
           ref={dialogRef}
           role="dialog"
           aria-modal="true"
+          aria-labelledby={mod.labelledBy}
           tabIndex={-1}
           className="rounded-lg border border-neutral-700 bg-neutral-900 p-4 shadow-2xl"
           onClick={(e) => e.stopPropagation()}

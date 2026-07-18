@@ -65,7 +65,9 @@ function ShortcutPanelDialog({ close }: DialogProps) {
   return (
     <div className="flex max-h-[80vh] w-[min(30rem,92vw)] flex-col">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-neutral-100">Keyboard shortcuts</h2>
+        <h2 id="shortcut-panel-title" className="text-sm font-semibold text-neutral-100">
+          Keyboard shortcuts
+        </h2>
         <button
           type="button"
           onClick={close}
@@ -117,4 +119,8 @@ function ShortcutPanelDialog({ close }: DialogProps) {
   );
 }
 
-registerDialog({ id: 'shortcut-panel', component: ShortcutPanelDialog });
+registerDialog({
+  id: 'shortcut-panel',
+  component: ShortcutPanelDialog,
+  labelledBy: 'shortcut-panel-title',
+});

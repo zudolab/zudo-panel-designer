@@ -26,12 +26,13 @@ import { fit, project, unproject, zoomAt, type Camera } from './camera';
 import { installBrowserZoomGuard } from './browser-zoom-guard';
 import { reconcileImageCache, renderScene } from './renderer';
 import { getTool } from './registry';
-import { closeDialog, openDialog } from './registry/dialogs';
+import { closeDialog, getOpenDialog, openDialog } from './registry/dialogs';
 import { dispatchCommand, type CommandContext } from './commands';
 import { createDemoDoc } from './demo-doc';
 import { readDoc } from './doc-store';
 import { normalizeSelectedIds } from './selection';
 import { installTestBridge } from './test-bridge';
+import { isEditableTarget } from './is-editable-target';
 import { useAutosave } from './use-autosave';
 import { useClipboard } from './use-clipboard';
 import { useDocHistory } from './use-doc-history';
@@ -47,13 +48,6 @@ import { Toolbar } from './components/toolbar';
 import { ToastContainer } from './components/toast/toast-container';
 
 const FALLBACK_CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')
-  );
-}
 
 export function Editor() {
   // Boot restore (#72): the stored doc when present, else the first-visit
@@ -408,6 +402,15 @@ export function Editor() {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
+      // A dialog owns the keyboard while it's open: none of this app-level
+      // fallback chain (Space-hold pan arming, tool shortcuts, Delete/nudge,
+      // clipboard C/X/D/A, undo/redo, Escape-deselect) may run behind the
+      // modal. Space must reach a focused dialog button as its native
+      // activation, not be preventDefault'd into pan-arming; doc-mutating keys
+      // must not leak through. Escape-to-close is unaffected — it lives in the
+      // dialog host's own document listener (dialog-host.tsx), not here.
+      if (getOpenDialog() !== null) return;
+
       if (e.code === 'Space' && !isEditableTarget(e.target)) {
         setSpaceDown(true);
         e.preventDefault();

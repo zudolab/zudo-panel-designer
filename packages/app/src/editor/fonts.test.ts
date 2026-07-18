@@ -11,7 +11,7 @@
 // non-curated routing target) is unit-tested on its own in
 // google-font-loader.test.ts — here it's mocked, so these tests stay about
 // fonts.ts's routing/memoization contract, not the network-adjacent details.
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CURATED_FONTS,
   DEFAULT_FONT_FAMILY,
@@ -19,10 +19,11 @@ import {
   isFontLoaded,
   isFontLoading,
 } from './fonts';
-import { loadGoogleFont } from './google-font-loader';
+import { isGoogleFontLoaded, loadGoogleFont } from './google-font-loader';
 
 vi.mock('./google-font-loader', () => ({
   loadGoogleFont: vi.fn(),
+  isGoogleFontLoaded: vi.fn(() => false),
 }));
 
 function stubFontFaceSet() {
@@ -38,6 +39,13 @@ function stubFontFaceSet() {
   Object.defineProperty(document, 'fonts', { value: fonts, configurable: true });
   return fonts;
 }
+
+beforeEach(() => {
+  // Family-level delegation target (finding #5): default it to "not loaded" so
+  // a non-curated family reads as unloaded until this session's own tracking
+  // says otherwise. afterEach's resetAllMocks clears this, so re-set per test.
+  vi.mocked(isGoogleFontLoaded).mockReturnValue(false);
+});
 
 afterEach(() => {
   // @ts-expect-error test-only teardown of the stubbed FontFaceSet
@@ -216,5 +224,49 @@ describe('isFontLoading / isFontLoaded — sync truth', () => {
     resolveAbc();
     await abcPromise;
     expect(isFontLoaded('Independent CJK Font', 'ABC')).toBe(true);
+  });
+});
+
+describe('empty / whitespace fontFamily — non-loadable no-op (#67 review)', () => {
+  it('an empty family never hits the Google Fonts network path or document.fonts', async () => {
+    const fonts = stubFontFaceSet();
+    // A legacy/imported text layer with fontFamily '' is neither curated nor a
+    // CSS generic — the old routing fired css2?family= and dimmed for 10s.
+    await expect(ensureFont('')).resolves.toBeUndefined();
+    await expect(ensureFont('   ')).resolves.toBeUndefined();
+    expect(loadGoogleFont).not.toHaveBeenCalled();
+    expect(fonts.load).not.toHaveBeenCalled();
+  });
+
+  it('reports an empty family as ready (loaded) and never loading, so the renderer neither dims nor re-arms a repaint each frame', () => {
+    expect(isFontLoading('')).toBe(false);
+    expect(isFontLoading('   ')).toBe(false);
+    expect(isFontLoaded('')).toBe(true);
+    expect(isFontLoaded('   ')).toBe(true);
+  });
+});
+
+describe('family-level readiness delegates to the loader (#5 consolidation)', () => {
+  it('a family-only query for a Google-fetched family reflects the loader', () => {
+    vi.mocked(isGoogleFontLoaded).mockReturnValue(true);
+    expect(isFontLoaded('Some Google Family')).toBe(true);
+
+    vi.mocked(isGoogleFontLoaded).mockReturnValue(false);
+    expect(isFontLoaded('Some Google Family')).toBe(false);
+  });
+
+  it('does NOT delegate for a per-sample query — each (family, sample) subset is tracked on its own', () => {
+    // Even with the loader reporting the family loaded, a sample-specific query
+    // stays exact (the renderer relies on this so a CJK font's Latin vs
+    // Japanese subsets don't mask each other).
+    vi.mocked(isGoogleFontLoaded).mockReturnValue(true);
+    expect(isFontLoaded('Some Google Family', 'ABC')).toBe(false);
+  });
+
+  it('a curated family never delegates — it is tracked locally', () => {
+    vi.mocked(isGoogleFontLoaded).mockReturnValue(true);
+    // Oswald is curated: the loader has no say over it.
+    expect(isFontLoaded('Oswald')).toBe(false);
+    expect(isGoogleFontLoaded).not.toHaveBeenCalledWith('Oswald');
   });
 });

@@ -17,7 +17,7 @@ import '@fontsource/share-tech-mono';
 import '@fontsource/archivo-black';
 import '@fontsource/monoton';
 import '@fontsource/press-start-2p';
-import { loadGoogleFont } from './google-font-loader';
+import { isGoogleFontLoaded, loadGoogleFont } from './google-font-loader';
 
 export interface FontEntry {
   family: string; // both the display label and the CSS font-family value
@@ -72,14 +72,39 @@ function fontKey(family: string, sampleText: string | undefined): string {
   return `${family.length}:${family}${sampleText ?? ''}`;
 }
 
+// An empty / whitespace-only family (e.g. a legacy or imported text layer that
+// never had a real fontFamily set) is neither a curated face nor a CSS
+// generic, so it must NOT be routed to the Google Fonts network path — that
+// would fire css2?family=&display=swap and dim the layer for the whole 10s
+// timeout. There is genuinely nothing to fetch: the canvas renders its own
+// default face. Treated everywhere here as an immediately-ready no-op.
+function isNonLoadableFamily(family: string): boolean {
+  return family.trim() === '';
+}
+
+function isGoogleFetchedFamily(family: string): boolean {
+  return !CURATED_FAMILIES.has(family) && !CSS_GENERIC_FAMILIES.has(family);
+}
+
 export function isFontLoaded(family: string, sampleText?: string): boolean {
-  return loaded.has(fontKey(family, sampleText));
+  if (isNonLoadableFamily(family)) return true;
+  if (loaded.has(fontKey(family, sampleText))) return true;
+  // Family-level query (no sampleText) for a Google-fetched family: delegate
+  // to the loader's family-deduped readiness so a caller that knows only the
+  // family — the Font Explorer's cards — sees a font warmed via loadGoogleFont
+  // as loaded. A per-sample query (the renderer, passing the layer's content)
+  // stays exact: each (family, sample) subset loads on its own, no delegation.
+  if (sampleText === undefined && isGoogleFetchedFamily(family)) {
+    return isGoogleFontLoaded(family);
+  }
+  return false;
 }
 
 // True while `family` (+ `sampleText` for a Google Font) has an in-flight
 // load — the renderer dims a text layer's fallback-face paint while this is
 // true (#67).
 export function isFontLoading(family: string, sampleText?: string): boolean {
+  if (isNonLoadableFamily(family)) return false;
   return pending.has(fontKey(family, sampleText));
 }
 
@@ -94,12 +119,15 @@ export function isFontLoading(family: string, sampleText?: string): boolean {
 // forwarded to the Google Font path so unicode-range subsets fetch the
 // glyphs actually being rendered, not just the default Latin range.
 export function ensureFont(family: string, sampleText?: string): Promise<void> {
+  // Nothing to load for an empty/whitespace family — resolve immediately
+  // without touching the network or document.fonts (see isNonLoadableFamily).
+  if (isNonLoadableFamily(family)) return Promise.resolve();
   const key = fontKey(family, sampleText);
   if (loaded.has(key)) return Promise.resolve();
   const existing = pending.get(key);
   if (existing) return existing;
 
-  if (!CURATED_FAMILIES.has(family) && !CSS_GENERIC_FAMILIES.has(family)) {
+  if (isGoogleFetchedFamily(family)) {
     const promise = loadGoogleFont(family, sampleText).then(() => {
       loaded.add(key);
       pending.delete(key);

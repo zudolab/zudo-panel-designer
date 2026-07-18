@@ -38,7 +38,9 @@ function ConfirmDialogContent({ props, close }: DialogProps<ConfirmDialogProps>)
 
   return (
     <div className="w-[min(24rem,90vw)]">
-      <h2 className="mb-3 text-sm font-semibold text-neutral-100">{title}</h2>
+      <h2 id="confirm-dialog-title" className="mb-3 text-sm font-semibold text-neutral-100">
+        {title}
+      </h2>
       {message && <p className="mb-3 text-xs text-neutral-300">{message}</p>}
       {children && <div className="mb-3">{children}</div>}
       <div className="mt-4 flex justify-end gap-2">
@@ -69,7 +71,11 @@ function ConfirmDialogContent({ props, close }: DialogProps<ConfirmDialogProps>)
   );
 }
 
-registerDialog<ConfirmDialogProps>({ id: CONFIRM_DIALOG_ID, component: ConfirmDialogContent });
+registerDialog<ConfirmDialogProps>({
+  id: CONFIRM_DIALOG_ID,
+  component: ConfirmDialogContent,
+  labelledBy: 'confirm-dialog-title',
+});
 
 export interface ConfirmDialogOptions {
   title: string;

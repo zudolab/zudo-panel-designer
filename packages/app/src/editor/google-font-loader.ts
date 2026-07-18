@@ -11,7 +11,6 @@
 //    range.
 const fontLoadPromises = new Map<string, Promise<void>>();
 const loadedFonts = new Set<string>();
-const loadingFonts = new Set<string>();
 // Per-family set of sample texts already sent to document.fonts.load. The
 // <link> stylesheet is deduplicated by family alone (below) — but two
 // callers sharing a family with DIFFERENT sample text (e.g. two text layers
@@ -22,12 +21,14 @@ const requestedSamples = new Map<string, Set<string>>();
 
 const FONT_LOAD_TIMEOUT_MS = 10000;
 
-export function isFontLoaded(family: string): boolean {
+// Family-level readiness for the Google-fetched (non-curated) families. This
+// is the loader's INTERNAL memoization surface: fonts.ts is the single PUBLIC
+// font-readiness API (its isFontLoaded/isFontLoading) and delegates the
+// family-only question here for a caller that knows just the family, not the
+// per-layer sample text (the Font Explorer's cards). Not meant for feature
+// components to import directly.
+export function isGoogleFontLoaded(family: string): boolean {
   return loadedFonts.has(family);
-}
-
-export function isFontLoading(family: string): boolean {
-  return loadingFonts.has(family);
 }
 
 function requestFontFace(family: string, sampleText: string | undefined): Promise<unknown> {
@@ -51,8 +52,6 @@ export function loadGoogleFont(family: string, sampleText?: string): Promise<voi
     return existing;
   }
 
-  loadingFonts.add(family);
-
   const link = document.createElement('link');
   link.rel = 'stylesheet';
   link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}&display=swap`;
@@ -74,7 +73,6 @@ export function loadGoogleFont(family: string, sampleText?: string): Promise<voi
   const timeout = new Promise<void>((resolve) => setTimeout(resolve, FONT_LOAD_TIMEOUT_MS));
   const promise = Promise.race([fontReady, timeout]).then(() => {
     loadedFonts.add(family);
-    loadingFonts.delete(family);
   });
   fontLoadPromises.set(family, promise);
   return promise;

@@ -73,6 +73,22 @@ describe('Cmd/Ctrl+Shift+K opens the command palette, but not while editing text
   });
 });
 
+describe('the new dialogs expose an accessible name (aria-labelledby, finding 9)', () => {
+  it('the shortcuts overlay is named by its heading', () => {
+    render(<App />);
+    fireEvent.keyDown(window, { key: '?' });
+    // getByRole resolves the accessible name via aria-labelledby → the dialog's
+    // heading; it throws if the role="dialog" wrapper has no accessible name.
+    expect(screen.getByRole('dialog', { name: /keyboard shortcuts/i })).toBeTruthy();
+  });
+
+  it('the command palette carries an accessible name even though it has no visible heading', () => {
+    render(<App />);
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true, shiftKey: true });
+    expect(screen.getByRole('dialog', { name: /command palette/i })).toBeTruthy();
+  });
+});
+
 describe('shell smoke — mounting with the new dialogs registered raises no console errors', () => {
   it('renders and opens both dialogs with no console.error', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
