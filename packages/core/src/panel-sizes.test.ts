@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { PANEL_HEIGHT_MM, PANEL_SIZES, panelWidthMm } from './panel-sizes';
+import { MAX_PANEL_HP, PANEL_HEIGHT_MM, PANEL_SIZES, panelWidthMm } from './panel-sizes';
+
+describe('MAX_PANEL_HP', () => {
+  it('tracks the largest HP in the product size table', () => {
+    expect(MAX_PANEL_HP).toBe(Math.max(...PANEL_SIZES.map((size) => size.hp)));
+  });
+});
 
 describe('panelWidthMm', () => {
   it('returns the exact spec width for every tabulated HP', () => {

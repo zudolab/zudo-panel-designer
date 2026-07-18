@@ -22,6 +22,10 @@ export const PANEL_SIZES: readonly PanelSize[] = [
   { hp: 20, widthMm: 101.3 },
 ] as const;
 
+// Imported documents are allowed to use unlisted in-range HP values, but the
+// largest real product size is the safe upper bound for derived geometry.
+export const MAX_PANEL_HP = Math.max(...PANEL_SIZES.map((size) => size.hp));
+
 // Nominal Eurorack module pitch. Used as a fallback for HP values that have
 // no entry in the spec table above (no real product measurement exists for
 // them). This is wider than a real spec width would be — the table values

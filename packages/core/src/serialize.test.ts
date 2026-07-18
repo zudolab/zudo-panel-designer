@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultDoc } from './default-doc';
 import { PALETTE } from './palette';
-import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
+import { MAX_PANEL_HP, PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
 import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
 import { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig, tryParsePanelConfig } from './serialize';
 import type { DocState, PatternLayer } from './types';
@@ -241,6 +241,24 @@ describe('serialize v3 — pattern square geometry migration (#96)', () => {
     expect(firstPattern(doc)).toMatchObject(coverFor(4));
   });
 
+  it.each([
+    ['top-level hp', { hp: 1e9 }],
+    ['nested panel.hp', { panel: { hp: 1e9 } }],
+  ])('clamps hostile %s before deriving panel dimensions and cover geometry', (_label, hpInput) => {
+    const doc = parsePanelConfig({
+      ...hpInput,
+      layers: [{ type: 'pattern', patternType: 'dot-grid', color: 1, params: {} }],
+    });
+
+    expect(doc.panelHp).toBe(MAX_PANEL_HP);
+    expect(firstPattern(doc)).toMatchObject(coverFor(MAX_PANEL_HP));
+    expect(serializePanelConfig(doc).panel).toEqual({
+      hp: MAX_PANEL_HP,
+      widthMm: panelWidthMm(MAX_PANEL_HP),
+      heightMm: PANEL_HEIGHT_MM,
+    });
+  });
+
   it.each([0, -3, NaN, Infinity, 'big', null, undefined])(
     'non-finite/non-positive size (%s) falls back to the cover size, keeping finite x/y',
     (size) => {
@@ -349,10 +367,21 @@ describe('parsePanelConfig — never throws on bad input', () => {
   });
 
   it.each([-5, 0, NaN, Infinity, '12', null, undefined])(
-    'clamps out-of-range hp (%s) to the default HP',
+    'falls back from invalid/non-positive hp (%s) to the default HP',
     (hp) => {
       const doc = parsePanelConfig({ hp });
       expect(doc.panelHp).toBe(12);
+    },
+  );
+
+  it.each([6, 7, 20])('preserves finite positive in-range hp (%s)', (hp) => {
+    expect(parsePanelConfig({ hp }).panelHp).toBe(hp);
+  });
+
+  it.each([MAX_PANEL_HP + 0.1, 1e9, Number.MAX_VALUE])(
+    'clamps finite hp above the product maximum (%s)',
+    (hp) => {
+      expect(parsePanelConfig({ hp }).panelHp).toBe(MAX_PANEL_HP);
     },
   );
 

@@ -12,6 +12,7 @@ import App from '../../App';
 import {
   allAddActions,
   allTools,
+  getDialog,
   getInspector,
   getTool,
   openDialog,
@@ -26,6 +27,15 @@ import { InspectorHost } from '../components/inspector-host';
 import type { Pt, ShapeLayer } from '@zpd/core';
 import type { DraftRenderContext } from '../types';
 import type { CommandContext } from '../commands';
+
+const BUILT_IN_DIALOG_IDS = [
+  'command-palette',
+  'confirm-dialog',
+  'font-explorer',
+  'pattern-picker',
+  'shortcut-panel',
+  'trace',
+] as const;
 
 afterEach(cleanup);
 
@@ -71,7 +81,17 @@ describe('auto-discovery (import.meta.glob)', () => {
     expect(getInspector('shape')).toBeDefined();
     expect(getInspector('pattern')).toBeDefined();
     const ids = allAddActions().map((a) => a.id);
-    expect(ids).toEqual(expect.arrayContaining(['add-rect', 'add-ellipse', 'add-pattern', 'add-image']));
+    expect(ids).toEqual(
+      expect.arrayContaining(['add-rect', 'add-ellipse', 'add-pattern', 'add-image']),
+    );
+  });
+
+  it('gives every built-in dialog a non-empty accessible-name reference', () => {
+    for (const id of BUILT_IN_DIALOG_IDS) {
+      const dialog = getDialog(id);
+      expect(dialog, `${id} should be registered`).toBeDefined();
+      expect(dialog?.labelledBy?.trim(), `${id} should define labelledBy`).not.toBe('');
+    }
   });
 });
 
@@ -79,7 +99,13 @@ describe('public registry API — throwaway tool', () => {
   it('registerTool makes a new tool discoverable and routable', () => {
     const onPointerDown = vi.fn();
     const renderDraft = vi.fn();
-    registerTool({ id: 'demo-throwaway', label: 'Demo', shortcut: '9', onPointerDown, renderDraft });
+    registerTool({
+      id: 'demo-throwaway',
+      label: 'Demo',
+      shortcut: '9',
+      onPointerDown,
+      renderDraft,
+    });
     try {
       expect(getTool('demo-throwaway')).toBeDefined();
       expect(allTools().some((t) => t.id === 'demo-throwaway')).toBe(true);

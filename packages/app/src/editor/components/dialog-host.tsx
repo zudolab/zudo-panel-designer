@@ -5,12 +5,7 @@
 // focus trap — rendered through OverlayPortal. Registered dialogs (see
 // registry/dialogs.ts) supply content only.
 import { createElement, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
-import {
-  closeDialog,
-  getDialog,
-  getOpenDialog,
-  subscribeDialog,
-} from '../registry/dialogs';
+import { closeDialog, getDialog, getOpenDialog, subscribeDialog } from '../registry/dialogs';
 import { queryFocusables, useFocusTrap } from '../use-focus-trap';
 import { Z_INDEX } from '../z-index';
 import { OverlayPortal } from './overlay-portal';
@@ -25,20 +20,19 @@ import type { CommandContext } from '../commands';
 export function DialogHost({ ctx }: { ctx: CommandContext }) {
   const open = useSyncExternalStore(subscribeDialog, getOpenDialog, getOpenDialog);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const isOpen = open !== null;
+  const returnFocusTarget = open?.returnFocusTarget ?? null;
 
-  useFocusTrap(dialogRef, open !== null);
+  useFocusTrap(dialogRef, isOpen);
 
-  // Escape-to-close + capturing the pre-open focus target to restore on
-  // close. `open` is a fresh object per openDialog() call (or null on
-  // close), so this fires exactly once per open and once per close. A
-  // layout effect (not a passive one) so the capture below runs BEFORE the
-  // initial-focus layout effect steals focus into the dialog — layout
-  // effects across a component's hooks run in declaration order, passive
-  // effects only run after every layout effect has already committed.
+  // Escape handling and final focus restoration are scoped to the whole
+  // open/replace/close modal session. The registry captures the outside
+  // target before emitting the first open; replacements retain that target,
+  // so this effect does not clean up (or transiently restore focus) while one
+  // open dialog replaces another. The store check also makes StrictMode's
+  // setup/cleanup replay harmless while the session is still open.
   useLayoutEffect(() => {
-    if (!open) return;
-    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+    if (!isOpen) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
@@ -49,9 +43,10 @@ export function DialogHost({ ctx }: { ctx: CommandContext }) {
 
     return () => {
       document.removeEventListener('keydown', onKeyDown);
-      previouslyFocusedRef.current?.focus?.();
+      if (getOpenDialog() !== null) return;
+      if (returnFocusTarget?.isConnected) returnFocusTarget.focus();
     };
-  }, [open]);
+  }, [isOpen, returnFocusTarget]);
 
   // Initial focus: the first focusable descendant, unless a content
   // component already moved focus into the dialog itself (e.g. ConfirmDialog

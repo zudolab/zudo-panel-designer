@@ -33,11 +33,14 @@ entire import.
 ## `panelHp`
 
 `parseHp()` reads `input.hp`, falling back to `input.panel.hp` when the
-top-level `hp` is absent. A value is accepted only if it is a finite number
-greater than `0`; anything else — missing, non-numeric, `NaN`, `Infinity`,
-a string, zero, or negative — falls back to `DEFAULT_PANEL_HP` (the same
-default used for a brand-new document), rather than propagating a
-nonsensical panel dimension.
+top-level `hp` is absent. Missing, non-numeric, non-finite, zero, or negative
+values fall back to `DEFAULT_PANEL_HP` (the same default used for a brand-new
+document). Finite positive values through `MAX_PANEL_HP` are preserved,
+including unlisted in-range values handled by `panelWidthMm()`'s nominal-pitch
+fallback. Anything above `MAX_PANEL_HP` is clamped to that maximum, which is
+derived from the largest entry in `PANEL_SIZES` (currently 20 HP). Panel
+dimensions and default pattern cover geometry are derived only after this
+sanitization, so hostile magnitudes cannot create enormous draw spans.
 
 A hand-edited `panel.widthMm` / `panel.heightMm` that disagrees with `hp` is
 ignored on import — those fields are advisory output only (see

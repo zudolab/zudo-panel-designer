@@ -27,6 +27,10 @@ export function getDialog(id: string): DialogModule | undefined {
 export interface OpenDialogState {
   id: string;
   props: unknown;
+  // Captured synchronously by openDialog(), before listeners can mount a
+  // self-focusing dialog child. Replacements carry the same target for the
+  // lifetime of the modal session; only a later close may restore it.
+  returnFocusTarget: HTMLElement | null;
 }
 
 let openState: OpenDialogState | null = null;
@@ -36,8 +40,21 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
+function captureReturnFocusTarget(): HTMLElement | null {
+  // Dialog calls are also usable from non-DOM environments (SSR, node tests),
+  // where neither global is guaranteed to exist.
+  if (typeof document === 'undefined' || typeof HTMLElement === 'undefined') return null;
+  const activeElement = document.activeElement;
+  return activeElement instanceof HTMLElement ? activeElement : null;
+}
+
 export function openDialog(id: string, props?: unknown): void {
-  openState = { id, props: props ?? {} };
+  // Opening while another dialog is present is a replacement inside the same
+  // modal session. Preserve the original outside opener instead of capturing
+  // whichever control the outgoing dialog currently owns.
+  const returnFocusTarget =
+    openState === null ? captureReturnFocusTarget() : openState.returnFocusTarget;
+  openState = { id, props: props ?? {}, returnFocusTarget };
   emit();
 }
 

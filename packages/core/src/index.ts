@@ -22,7 +22,7 @@ export type { PaletteEntry } from './palette';
 export { PALETTE, paletteEntry } from './palette';
 
 export type { PanelSize } from './panel-sizes';
-export { PANEL_HEIGHT_MM, PANEL_SIZES, panelWidthMm } from './panel-sizes';
+export { MAX_PANEL_HP, PANEL_HEIGHT_MM, PANEL_SIZES, panelWidthMm } from './panel-sizes';
 
 export type { PanelConfig, TryParsePanelConfigResult } from './serialize';
 export { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig, tryParsePanelConfig } from './serialize';

@@ -62,16 +62,20 @@ Every `draw()` reads its params through `resolveParam(params, defs, key)`, never
 
 ```ts
 function resolveParam(params, defs, key) {
+  const def = defs.find((d) => d.key === key);
+  if (!def) {
+    throw new Error(`resolveParam: unknown parameter key "${key}"`);
+  }
   const raw = params[key];
   const finiteRaw = typeof raw === 'number' && Number.isFinite(raw);
-  const def = defs.find((d) => d.key === key);
-  if (!def) return finiteRaw ? raw : Number.NaN; // no def to clamp against
   const value = finiteRaw ? raw : def.defaultValue;
   return Math.min(def.max, Math.max(def.min, value));
 }
 ```
 
 `resolveParam` falls back to the def's `defaultValue` when the incoming value is missing or non-finite, then always clamps into `[min, max]`. This clamp is not cosmetic — it guarantees positive pitches/counts, which is what keeps every draw loop above finite even if a caller passes a stale, zero, or negative value (a zero-or-negative pitch would otherwise spin the `for` loop forever).
+
+The requested `key` must exist in `defs`. Asking for an undeclared key is a generator programmer error, so `resolveParam` always throws an error that names the key — regardless of whether `params` has no value for it, a finite value, or a non-finite value. Never rely on an undeclared key falling back to `0`, the raw value, or `NaN`: without a definition there is no range invariant to enforce.
 
 ## File layout
 
