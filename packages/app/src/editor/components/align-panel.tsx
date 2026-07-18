@@ -1,27 +1,12 @@
 // Align & distribute panel (Properties sidebar, #73): 6 align + 2 distribute
-// buttons and a selection|panel reference toggle that governs both. Ported
-// from $HOME/repos/zp/pgen/packages/pattern-gen-viewer/src/components/
-// composer/composer-align-panel.tsx, collapsed onto core's two-mode
-// AlignReference ('selection' | 'panel' — pgen's 'canvas' is zpd's panel
-// rect, the composition bounds here) and zpd's ChromeButton/Tooltip chrome.
-// Bboxes come from the app's rotation-aware layerBbox (renderer.ts); results
-// apply via core alignLayers/distributeLayers as ONE undo commit per press
-// (skipped entirely when the press is a no-op — see apply() below).
+// buttons and a selection|panel reference toggle that governs both. The
+// actual align/distribute math + eligibility rules live in ../align-ops.ts
+// (issue #76) — shared with the command registry's palette-facing
+// align/distribute commands — this file is UI only: buttons + the reference
+// toggle.
 import { useState, type ReactNode } from 'react';
-import {
-  alignLayers,
-  distributeLayers,
-  normalizeRect,
-  rotatedRectAABB,
-  translatePathLayer,
-  type AlignRect,
-  type AlignType,
-  type DistributeAxis,
-  type DocState,
-  type Layer,
-  type PatternLayer,
-} from '@zpd/core';
-import { layerBbox, layerRotation } from '../renderer';
+import type { AlignType, DistributeAxis } from '@zpd/core';
+import { applyAlign, applyDistribute, canAlign, canDistribute, type Reference } from '../align-ops';
 import type { ToolContext } from '../types';
 import { ChromeButton } from './chrome';
 
@@ -29,8 +14,6 @@ export interface AlignPanelProps {
   ctx: ToolContext;
   selectedIds: readonly string[];
 }
-
-type Reference = 'selection' | 'panel';
 
 interface IconButtonSpec<T> {
   value: T;
@@ -143,102 +126,18 @@ const DISTRIBUTE_BUTTONS: IconButtonSpec<DistributeAxis>[] = [
   },
 ];
 
-// Selection reference needs 2+ eligible layers to align against (a single
-// layer has nothing to align to) and 3+ to distribute (2 layers have no
-// interior gap). Panel reference works from 1+ for both — the panel rect is
-// always there to align/distribute against, matching pgen's canvas-reference
-// semantics (computeAlignmentToCanvas / distribute-h/-v accept a single
-// target).
-function minCount(kind: 'align' | 'distribute', reference: Reference): number {
-  if (reference === 'panel') return 1;
-  return kind === 'align' ? 2 : 3;
-}
-
-// Same float hygiene as select.tsx's multi-move addMm: adds a delta without
-// re-snapping the absolute position, so a press keeps every target's exact
-// resulting offset rather than independently rounding each one.
-function addMm(a: number, b: number): number {
-  return Number((a + b).toFixed(6));
-}
-
-// Pattern layers are panel-wide, position-pinned backgrounds (no x/y of their
-// own to align) — excluded from both the eligible set and its count, same
-// rule as select.tsx's multi-move/multi-resize targets. A type-predicate
-// filter (not a plain `!== 'pattern'` check) so downstream code sees the
-// PatternLayer-free type and applyDelta's fallthrough branch below can read
-// `.x`/`.y` without a cast.
-type NonPatternLayer = Exclude<Layer, PatternLayer>;
-
-// A path with no anchors (and no extra subpaths) has no real geometry, but
-// core's pathBbox still has to return SOME Rect for it — it falls back to a
-// 0×0 rect at the origin (see path-geometry.ts). Counting that as a real
-// alignment target would silently pull a combined bbox toward (0, 0) and
-// could yank a legitimately selected shape there too. Excluded here, before
-// the target ever reaches layerAlignRect.
-function hasGeometry(layer: NonPatternLayer): boolean {
-  if (layer.type !== 'path') return true;
-  return layer.points.length > 0 || (layer.extraSubpaths ?? []).some((sub) => sub.length > 0);
-}
-
-function eligibleLayers(doc: DocState, selectedIds: readonly string[]): NonPatternLayer[] {
-  return doc.layers.filter(
-    (l): l is NonPatternLayer =>
-      selectedIds.includes(l.id) && l.type !== 'pattern' && hasGeometry(l),
-  );
-}
-
-function layerAlignRect(layer: Layer, ctx: ToolContext): AlignRect {
-  const raw = layerBbox(layer, ctx.panel) ?? { x: 0, y: 0, width: 0, height: 0 };
-  const bbox = normalizeRect(rotatedRectAABB(raw, layerRotation(layer)));
-  return { id: layer.id, x: bbox.x, y: bbox.y, w: bbox.width, h: bbox.height };
-}
-
-function applyDelta(layer: NonPatternLayer, dx: number, dy: number): Partial<Layer> {
-  if (layer.type === 'path') return translatePathLayer(layer, dx, dy);
-  return { x: addMm(layer.x, dx), y: addMm(layer.y, dy) };
-}
-
 export function AlignPanel({ ctx, selectedIds }: AlignPanelProps) {
   const [reference, setReference] = useState<Reference>('selection');
 
-  const targets = eligibleLayers(ctx.doc, selectedIds);
-  const alignDisabled = targets.length < minCount('align', reference);
-  const distributeDisabled = targets.length < minCount('distribute', reference);
-
-  function apply(results: { id: string; dx: number; dy: number }[]) {
-    const patches = new Map<string, Partial<Layer>>();
-    for (const layer of targets) {
-      const result = results.find((r) => r.id === layer.id);
-      // Already-aligned/-distributed targets return a zero delta — skip them
-      // so a no-op press doesn't touch history: ctx.commit always discards
-      // any redo branch (see history.ts), so committing an identical doc
-      // would silently wipe the user's redo stack for zero visual change.
-      if (result && (result.dx !== 0 || result.dy !== 0)) {
-        patches.set(layer.id, applyDelta(layer, result.dx, result.dy));
-      }
-    }
-    if (patches.size === 0) return;
-    ctx.commit({
-      ...ctx.doc,
-      layers: ctx.doc.layers.map((l) => {
-        const patch = patches.get(l.id);
-        return patch ? ({ ...l, ...patch } as Layer) : l;
-      }),
-    });
-  }
-
-  function alignReference() {
-    return reference === 'panel'
-      ? ({ mode: 'panel', panel: { x: 0, y: 0, width: ctx.panel.widthMm, height: ctx.panel.heightMm } } as const)
-      : ({ mode: 'selection' } as const);
-  }
+  const alignDisabled = !canAlign(ctx.doc, selectedIds, reference);
+  const distributeDisabled = !canDistribute(ctx.doc, selectedIds, reference);
 
   function handleAlign(type: AlignType) {
-    apply(alignLayers(targets.map((l) => layerAlignRect(l, ctx)), type, alignReference()));
+    applyAlign(ctx, selectedIds, type, reference);
   }
 
   function handleDistribute(axis: DistributeAxis) {
-    apply(distributeLayers(targets.map((l) => layerAlignRect(l, ctx)), axis, alignReference()));
+    applyDistribute(ctx, selectedIds, axis, reference);
   }
 
   return (

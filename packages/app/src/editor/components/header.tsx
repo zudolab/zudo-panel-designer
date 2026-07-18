@@ -1,12 +1,10 @@
 import { useRef, type ChangeEvent } from 'react';
-import { createDefaultDoc } from '@zpd/core';
 import { downloadPanelConfig } from '../download';
 import { importJsonFile } from '../import';
-import { replaceDoc } from '../replace-doc';
+import { newPanelAction } from '../replace-doc';
 import type { ToolContext } from '../types';
 import type { SaveStatus } from '../use-autosave';
 import { ChromeButton } from './chrome';
-import { confirmDialog } from './confirm-dialog';
 import { SaveStatusChip } from './save-status';
 
 export interface HeaderProps {
@@ -19,7 +17,15 @@ export interface HeaderProps {
   onZoomStep(factor: number): void;
 }
 
-export function Header({ ctx, zoomPercent, canUndo, canRedo, saveStatus, onFit, onZoomStep }: HeaderProps) {
+export function Header({
+  ctx,
+  zoomPercent,
+  canUndo,
+  canRedo,
+  saveStatus,
+  onFit,
+  onZoomStep,
+}: HeaderProps) {
   const importInputRef = useRef<HTMLInputElement>(null);
 
   const handleImportFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -27,19 +33,6 @@ export function Header({ ctx, zoomPercent, canUndo, canRedo, saveStatus, onFit, 
     // Reset so picking the same file again still fires a change event.
     e.target.value = '';
     if (file) void importJsonFile(file, ctx);
-  };
-
-  const handleNewPanel = async () => {
-    const confirmed = await confirmDialog({
-      title: 'Start a new panel?',
-      // createDefaultDoc() ships one starter pattern layer (dot grid), not an
-      // empty document — the copy must not claim "blank" (codex review).
-      message: 'This replaces the current panel with the default starter panel. This cannot be undone.',
-      confirmLabel: 'New panel',
-      danger: true,
-    });
-    if (!confirmed) return;
-    replaceDoc(createDefaultDoc(), ctx);
   };
 
   return (
@@ -52,7 +45,9 @@ export function Header({ ctx, zoomPercent, canUndo, canRedo, saveStatus, onFit, 
         <ChromeButton title="Zoom out" onClick={() => onZoomStep(1 / 1.25)}>
           −
         </ChromeButton>
-        <span className="w-12 text-center text-xs tabular-nums text-neutral-300">{zoomPercent}%</span>
+        <span className="w-12 text-center text-xs tabular-nums text-neutral-300">
+          {zoomPercent}%
+        </span>
         <ChromeButton title="Zoom in" onClick={() => onZoomStep(1.25)}>
           +
         </ChromeButton>
@@ -98,7 +93,7 @@ export function Header({ ctx, zoomPercent, canUndo, canRedo, saveStatus, onFit, 
 
         <span className="mx-1 h-5 w-px bg-neutral-700" />
 
-        <ChromeButton title="Start a new panel" onClick={handleNewPanel}>
+        <ChromeButton title="Start a new panel" onClick={() => void newPanelAction(ctx)}>
           New panel
         </ChromeButton>
       </div>

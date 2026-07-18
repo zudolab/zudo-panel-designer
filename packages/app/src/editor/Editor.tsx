@@ -25,8 +25,9 @@ import {
 import { fit, project, unproject, zoomAt, type Camera } from './camera';
 import { installBrowserZoomGuard } from './browser-zoom-guard';
 import { reconcileImageCache, renderScene } from './renderer';
-import { getTool, toolByShortcut } from './registry';
+import { getTool } from './registry';
 import { closeDialog, openDialog } from './registry/dialogs';
+import { dispatchCommand, type CommandContext } from './commands';
 import { createDemoDoc } from './demo-doc';
 import { readDoc } from './doc-store';
 import { normalizeSelectedIds } from './selection';
@@ -110,12 +111,16 @@ export function Editor() {
   const rawSelectedIdsRef = useRef(rawSelectedIds);
   const panelRef = useRef(panel);
   const showGuidesRef = useRef(showGuides);
+  // canvasSize as a ref too (issue #76): lets zoomStep below stay a STABLE
+  // callback (empty deps) instead of recreated every resize — see zoomStep.
+  const canvasSizeRef = useRef(canvasSize);
   useEffect(() => {
     docRef.current = doc;
     cameraRef.current = camera;
     rawSelectedIdsRef.current = rawSelectedIds;
     panelRef.current = panel;
     showGuidesRef.current = showGuides;
+    canvasSizeRef.current = canvasSize;
   });
 
   // The normalized live view of the selection — what ctx and the test bridge
@@ -222,16 +227,32 @@ export function Editor() {
     return () => observer.disconnect();
   }, []);
 
+  // Stable (empty deps): reads panel size through panelRef rather than a
+  // closed-over `panel`, so this identity never changes across renders. That
+  // matters for the command registry (issue #76) — ctx.zoomFit below embeds
+  // this directly, and a stable identity keeps it safe to call from any
+  // render without going stale.
   const fitView = useCallback(() => {
     const el = containerRef.current;
     if (!el || el.clientWidth === 0) return;
-    const cam = fit(panel.widthMm, panel.heightMm, {
+    const cam = fit(panelRef.current.widthMm, panelRef.current.heightMm, {
       width: el.clientWidth,
       height: el.clientHeight,
     });
     setFitScale(cam.pxPerMm);
     setCameraState(cam);
-  }, [panel.widthMm, panel.heightMm]);
+  }, []);
+
+  // Also stable — reads canvasSizeRef instead of the closed-over canvasSize,
+  // same reasoning as fitView above. Identical math to the pre-#76 inline
+  // onZoomStep; only the state source changed (ref instead of closure).
+  const zoomStep = useCallback((factor: number) => {
+    setCameraState((cam) =>
+      cam
+        ? zoomAt(cam, { x: canvasSizeRef.current.w / 2, y: canvasSizeRef.current.h / 2 }, factor)
+        : cam,
+    );
+  }, []);
 
   const measured = canvasSize.w > 0;
   useEffect(() => {
@@ -303,14 +324,6 @@ export function Editor() {
 
   // --- keyboard: active tool first, then app-level fallbacks -------------
   useEffect(() => {
-    const deleteSelected = () => {
-      // Deletes the WHOLE selection as one undo entry (#45).
-      const ids = readSelectedIds();
-      if (ids.length === 0) return;
-      const doomed = new Set(ids);
-      commit({ ...docRef.current, layers: docRef.current.layers.filter((l) => !doomed.has(l.id)) });
-      setRawSelectedIds([]);
-    };
     const nudge = (dx: number, dy: number) => {
       // Nudges the WHOLE selection as ONE undo entry (#45). Patterns are pinned
       // to the panel (eligibility matrix), so a mixed selection moves only its
@@ -355,50 +368,30 @@ export function Editor() {
       };
       if (getTool(activeToolId)?.onKeyDown?.(keyEvent, ctx) === true) return;
 
-      // Clipboard (#74): copy/cut/duplicate/select-all. No 'v' case here —
-      // paste is the window `paste` event, owned entirely by use-clipboard.ts.
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
-        switch (e.key.toLowerCase()) {
-          case 'c':
-            e.preventDefault();
-            clipboard.handleCopy();
-            return;
-          case 'x':
-            e.preventDefault();
-            clipboard.handleCut();
-            return;
-          case 'd':
-            e.preventDefault();
-            clipboard.handleDuplicate();
-            return;
-          case 'a':
-            e.preventDefault();
-            clipboard.handleSelectAll();
-            return;
-        }
-      }
+      // Registry dispatch (#76): undo/redo, clipboard C/X/D/A, tool switches
+      // (derived from the tool registry), delete, deselect — see commands.ts
+      // for the exact parity mapping from the pre-refactor branches this
+      // replaced. clipboard/zoom need more than ToolContext (see
+      // CommandContext) — built fresh here from the same live ctx.
+      const commandCtx: CommandContext = {
+        ...ctx,
+        clipboard: {
+          handleCopy: clipboard.handleCopy,
+          handleCut: clipboard.handleCut,
+          handleDuplicate: clipboard.handleDuplicate,
+          handleSelectAll: clipboard.handleSelectAll,
+        },
+        zoomIn: () => zoomStep(1.25),
+        zoomOut: () => zoomStep(1 / 1.25),
+        zoomFit: () => fitView(),
+      };
+      if (dispatchCommand(keyEvent, commandCtx)) return;
 
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-        return;
-      }
-      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-        const tool = toolByShortcut(e.key);
-        if (tool) {
-          setActiveToolId(tool.id);
-          return;
-        }
-      }
+      // Nudge stays bespoke (display-only in the registry — see commands.ts):
+      // 4 arrow keys plus a Shift-scaled step size don't collapse into one
+      // chord/command. Unconditional on modifiers, same as before #76 (the
+      // pre-refactor switch had no modifier gate here either).
       switch (e.key) {
-        case 'Escape':
-          setRawSelectedIds([]);
-          break;
-        case 'Delete':
-        case 'Backspace':
-          deleteSelected();
-          break;
         case 'ArrowLeft':
         case 'ArrowRight':
         case 'ArrowUp':
@@ -423,7 +416,7 @@ export function Editor() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [activeToolId, ctx, commit, undo, redo, readSelectedIds, clipboard]);
+  }, [activeToolId, ctx, commit, readSelectedIds, clipboard, zoomStep, fitView]);
 
   // --- pointer routing to the active (or Space-override pan) tool ---------
   const effectiveToolId = spaceDown ? 'pan' : activeToolId;
@@ -474,10 +467,6 @@ export function Editor() {
 
   const zoomPercent = camera ? Math.round((camera.pxPerMm / fitScale) * 100) : 100;
   const cursor = spaceDown ? 'grab' : (getTool(effectiveToolId)?.cursor ?? 'default');
-  const onZoomStep = (factor: number) =>
-    setCameraState((cam) =>
-      cam ? zoomAt(cam, { x: canvasSize.w / 2, y: canvasSize.h / 2 }, factor) : cam,
-    );
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-neutral-950 text-neutral-100 select-none">
@@ -488,7 +477,7 @@ export function Editor() {
         canRedo={canRedo}
         saveStatus={saveStatus}
         onFit={fitView}
-        onZoomStep={onZoomStep}
+        onZoomStep={zoomStep}
       />
       <div className="flex min-h-0 flex-1">
         <Toolbar ctx={ctx} activeToolId={activeToolId} />
