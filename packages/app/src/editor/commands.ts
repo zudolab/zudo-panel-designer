@@ -217,9 +217,11 @@ const STATIC_COMMANDS: CommandDef[] = [
     category: 'Edit',
     chord: { key: ['Delete', 'Backspace'] },
     run: (ctx) => {
-      // Deletes the WHOLE selection as one undo entry (#45) — moved here
-      // verbatim from Editor.tsx's old inline deleteSelected() closure, now
-      // the single owner since Delete/Backspace is fully registry-dispatched.
+      // Deletes the WHOLE selection as one undo entry (#45) — the same logic
+      // as Editor.tsx's old inline deleteSelected() closure, rewritten
+      // against ctx (equivalent: ctx.doc/selectedIds/commit/selectIds are the
+      // same refs that closure read/called directly). Now the single owner,
+      // since Delete/Backspace is fully registry-dispatched.
       const ids = ctx.selectedIds;
       if (ids.length === 0) return;
       const doomed = new Set(ids);
