@@ -345,6 +345,9 @@ const STATIC_COMMANDS: CommandDef[] = [
     label: 'Keyboard Shortcuts',
     category: 'Help',
     chord: { key: '?' },
+    // Without preventDefault the opening '?' keystroke also types into the
+    // panel's auto-focused search field, filtering to nothing.
+    preventDefault: true,
     run: (ctx) => ctx.openDialog('shortcut-panel'),
     isEnabled: ALWAYS_ENABLED,
   },
