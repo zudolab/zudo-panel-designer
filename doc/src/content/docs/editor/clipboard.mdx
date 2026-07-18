@@ -15,7 +15,7 @@ sidebar_position: 12
 | `⌘/Ctrl+D` | Duplicate | Clones the selection with fresh ids and a small offset, selects the clones — one undo entry. |
 | `⌘/Ctrl+A` | Select All | Selects every non-pattern layer. |
 
-All four exclude **pattern layers** from the operated-on set — patterns are the single panel-wide background (see [Tools → Layer eligibility matrix](./tools.mdx#layer-eligibility-matrix)), so they are never copyable, cuttable, duplicable, or included by Select All. Copy, cut, and duplicate act on the **current selection**, so they're no-ops when nothing eligible is currently selected. Select All doesn't read the current selection at all — it always selects every non-pattern layer in the document, so it's a no-op only when the document has no non-pattern layers.
+Copy, Cut, and Duplicate act on the **current selection** as-is — a selected `pattern` layer (its movable `x`/`y`/`size` square, see [Tools → Select → Pattern squares](./tools.mdx#built-in-tools-select-v-pattern-squares)) is copyable/cuttable/duplicable exactly like any other layer type, so all three are no-ops only when *nothing* is currently selected. **Select All is the one deliberate exception**: it still excludes pattern layers on purpose — a background-ish cover square joining every `⌘/Ctrl+A` would make "select everything and move it" drag the background along too, so a pattern only joins a selection via a direct click (the [two-tier hit-test](./tools.mdx#built-in-tools-select-v-pattern-squares)) or the layer list. Select All doesn't read the current selection at all — it always selects every non-pattern layer in the document, so it's a no-op only when the document has no non-pattern layers.
 
 Every one of these chords is registered with `shift: false` — `⌘⇧C` never copies, matching the pre-refactor behavior exactly.
 
@@ -38,7 +38,7 @@ interface ZpdClipboardEnvelope {
 
 This is what makes copy/paste work **across zpd tabs** — copy in one tab, switch to another, paste. Writing the envelope is best-effort: `navigator.clipboard.writeText` can reject, or the API can be entirely absent (e.g. an insecure context), and either case degrades silently to internal-clipboard-only — copy/cut/duplicate/select-all never fail outright over a clipboard permission issue.
 
-On paste, the OS clipboard's `text/plain` payload is parsed and checked against the envelope shape (`app`/`kind`/`version` markers, then the `layers` array is re-validated through core's defensive `parsePanelConfig`, filtered to drop patterns). Anything that isn't a recognized zpd envelope — a URL, a sentence, JSON from an unrelated app, or a future/foreign envelope version — is left **completely untouched**; a normal text paste into, say, the layer-rename field is never hijacked.
+On paste, the OS clipboard's `text/plain` payload is parsed and checked against the envelope shape (`app`/`kind`/`version` markers, then the `layers` array is re-validated through core's defensive `parsePanelConfig` — pattern layers included, since they're copyable per the exception above). Anything that isn't a recognized zpd envelope — a URL, a sentence, JSON from an unrelated app, or a future/foreign envelope version — is left **completely untouched**; a normal text paste into, say, the layer-rename field is never hijacked.
 
 ## Paste
 

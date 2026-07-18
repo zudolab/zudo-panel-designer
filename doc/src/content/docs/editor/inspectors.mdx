@@ -41,7 +41,7 @@ All five built-in inspectors are composed from `components/inspector-ui.tsx`:
 | `text` | `inspectors/text.tsx` | Text content, font, color, size (mm), x, y, rotation (°) |
 | `path` | `inspectors/path.tsx` | Fill (or none), stroke (or none), stroke width (mm), closed |
 | `image` | `inspectors/image.tsx` | x, y, width, height, "Convert to vector…" |
-| `pattern` | `inspectors/pattern.tsx` | "Browse…" (pattern picker), color, one slider per pattern param |
+| `pattern` | `inspectors/pattern.tsx` | "Browse…" (pattern picker), color, x, y, size (mm), "Cover panel", one slider per pattern param |
 
 ### Shape
 
@@ -61,7 +61,9 @@ Only geometry (x/y/width/height) is editable — an image layer is a design-time
 
 ### Pattern
 
-Shows the current pattern's display name behind a **Browse…** button that opens the [pattern picker](./add-actions-and-dialogs.mdx#dialogs-built-in-dialogs-pattern-picker-dialog) (disabled if that dialog isn't registered), a `ColorPicker`, and one `<input type="range">` per `PatternParamDef` the pattern declares (see [Patterns → Generator contract](../patterns/generator-contract.mdx)).
+Shows the current pattern's display name behind a **Browse…** button that opens the [pattern picker](./add-actions-and-dialogs.mdx#dialogs-built-in-dialogs-pattern-picker-dialog) (disabled if that dialog isn't registered), a `ColorPicker`, the square's geometry, and one `<input type="range">` per `PatternParamDef` the pattern declares (see [Patterns → Generator contract](../patterns/generator-contract.mdx)).
+
+A `pattern` layer is a movable **square** — `x`, `y`, and `size` (mm), all plain `NumberField`s like the shape/image inspectors — since [pattern squares became draggable on the canvas](./tools.mdx#built-in-tools-select-v-pattern-squares). `size` is clamped into `[0.1, MAX_PATTERN_SIZE_MM]` on commit (`@zpd/core`'s `MAX_PATTERN_SIZE_MM`, a DoS guard against a generator looping over an absurd span — see [Rendering & Camera](./rendering-and-camera.mdx#the-repaint-loop)), and a commit that would leave the value unchanged after clamping is skipped, so typing an out-of-range number and having it silently clamp back never writes a phantom undo entry. A **Cover panel** button beneath the geometry fields recenters and resizes the square back to `patternCoverGeometry()` — its original cover-the-panel-at-any-aspect-ratio placement — with the same no-op guard (a click that would leave `x`/`y`/`size` unchanged commits nothing).
 
 Each slider follows the same lazy-gesture pattern as Select's drag: the first `onChange` of a scrub opens one undo entry (`ctx.beginGesture()`), every subsequent tick of the same drag streams `onChange(patch, { commit: false })`, and releasing the pointer/key just ends the scrub locally — there is no trailing commit, since that would double up the entry `beginGesture` already opened.
 
