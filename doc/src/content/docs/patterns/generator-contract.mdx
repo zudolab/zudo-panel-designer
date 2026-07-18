@@ -18,8 +18,8 @@ interface PatternParamDef {
 }
 
 interface DrawOptions {
-  widthMm: number;   // blank panel dimensions in millimetres
-  heightMm: number;
+  widthMm: number;   // draw-region dimensions in millimetres — a pattern
+  heightMm: number;  // layer's own square (see below), or a 30mm thumbnail window
   color: string;     // a single palette hex the caller chose for this pattern
   params: Record<string, number>; // keyed by PatternParamDef.key
 }
@@ -34,9 +34,9 @@ interface PanelPatternGenerator {
 
 ## Draw in pre-scaled, pre-clipped mm space
 
-`draw(ctx, opts)` is called with a `CanvasRenderingContext2D` that the **caller** has already scaled so 1 canvas unit = 1mm, and already clipped to the panel rect `(0,0)`–`(widthMm, heightMm)`. A generator draws directly in panel-mm coordinates — `ctx.arc(x, y, radius, ...)` with `x`/`y`/`radius` all in mm, no unit conversion inside `draw()` at all.
+`draw(ctx, opts)` is called with a `CanvasRenderingContext2D` that the **caller** has already scaled so 1 canvas unit = 1mm, translated to the draw region's own origin, and already clipped to that region's rect `(0,0)`–`(widthMm, heightMm)`. A generator draws directly in object-local mm coordinates — `ctx.arc(x, y, radius, ...)` with `x`/`y`/`radius` all in mm, no unit conversion inside `draw()` at all.
 
-There is deliberately **no** larger-canvas / slice / viewport indirection here: a pattern computes only inside the panel it's given, using the panel's own `widthMm`/`heightMm`. This is the same transform the [renderer's mm-space layer pass](../editor/rendering-and-camera.mdx#the-repaint-loop) sets up for every layer, and the same 30mm pre-scaled window the [thumbnail renderer](./built-in-patterns.mdx#thumbnails) sets up for picker previews — a pattern's `draw()` never needs to know or care which of the two contexts is calling it.
+There is deliberately **no** larger-canvas / slice / viewport indirection here: a pattern computes only inside the span it's given, using that span's own `widthMm`/`heightMm`. A pattern layer's region is its own **square** — `widthMm == heightMm == layer.size` — not necessarily the whole panel: a pattern's `x`/`y`/`size` are independent geometry a user can drag and resize on the canvas (see [Editor → Tools → Pattern squares](../editor/tools.mdx#built-in-tools-select-v-pattern-squares)), and `draw()` is called with `widthMm`/`heightMm` set to that square's own side — the panel-covering default is just the square's *initial* placement, not a property `draw()` can assume. This is the same per-region transform the [renderer's mm-space layer pass](../editor/rendering-and-camera.mdx#the-repaint-loop) sets up (translate to the square's origin, then clip to it — a separate, composed clip inside the main panel clip), and the same 30mm pre-scaled window the [thumbnail renderer](./built-in-patterns.mdx#thumbnails) sets up for picker previews — a pattern's `draw()` never needs to know or care which of the two contexts is calling it, or how big the square currently is.
 
 ## Deterministic — no randomness, anywhere
 
@@ -44,9 +44,17 @@ There is deliberately **no** larger-canvas / slice / viewport indirection here: 
 
 This is a hard constraint, not a style preference: the exported order JSON stores a pattern layer's `patternType` and `params`, not a rasterized image. If a generator called `Math.random()`, replaying that same JSON later — or re-rendering the same document on a different machine — would produce a visually different panel. Every built-in achieves apparent organic variation (wave phase, ray angles, lattice tiling) with pure trigonometry keyed off the panel's own dimensions and the declared params, never a random seed.
 
+## Shared helpers: `param-utils.ts`
+
+Every built-in imports its clamping and layout math from `packages/patterns/src/param-utils.ts` rather than reimplementing it per pattern:
+
+- `resolveParam(params, defs, key)` — the clamp described below.
+- `centeredStart(span, pitch)` — see [Centered, overscanning lattices](#centered-overscanning-lattices).
+- `hash01(ix, iy, channel, salt)` — a deterministic stand-in for the per-cell `rand()` calls in patterns ported from pgen (tile orientation, cell skip, jitter — local independent choices only, never sequence-dependent simulation). Keyed on cell indices measured from the draw span's own center, so resizing a pattern's square re-centers the tiling without rescrambling every cell; `channel` separates independent decisions within one cell, `salt` separates variants. A pure `Math.imul` integer mix with a murmur3-style finalizer — no floats in the mix, uniform-ish output in `[0, 1)`, and (per [Deterministic](#deterministic-—-no-randomness-anywhere) above) never `Math.random()`.
+
 ## Centered, overscanning lattices
 
-Most built-ins tile a repeating unit (a dot, a hex cell, a brick) across the panel. `patterns.ts`'s shared `centeredStart(span, pitch)` helper computes the lowest lattice coordinate to start iterating from so the tiling is **centered** on the panel — one tick always lands exactly on `span / 2` — and **overscans** past the edges in both directions (paired with a loop bound of `span + pitch`). Centering plus overscan is what makes every pattern read as intentionally designed at any panel width, rather than looking clipped or off-center on an odd HP size.
+Most built-ins tile a repeating unit (a dot, a hex cell, a brick) across their draw span. `param-utils.ts`'s shared `centeredStart(span, pitch)` helper computes the lowest lattice coordinate to start iterating from so the tiling is **centered** on that span — one tick always lands exactly on `span / 2` — and **overscans** past the edges in both directions (paired with a loop bound of `span + pitch`). Centering plus overscan is what makes every pattern read as intentionally designed at any span, rather than looking clipped or off-center — whether that span is a panel-covering default square, a user-resized one, or a fixed 30mm thumbnail window.
 
 ## Param clamping
 
@@ -65,14 +73,30 @@ function resolveParam(params, defs, key) {
 
 `resolveParam` falls back to the def's `defaultValue` when the incoming value is missing or non-finite, then always clamps into `[min, max]`. This clamp is not cosmetic — it guarantees positive pitches/counts, which is what keeps every draw loop above finite even if a caller passes a stale, zero, or negative value (a zero-or-negative pitch would otherwise spin the `for` loop forever).
 
+## File layout
+
+Unlike the early single-file `patterns.ts`, the package now spreads its ~60+ generators across one module per pattern, grouped into shards:
+
+| Piece | Path |
+|---|---|
+| One module per pattern | `packages/patterns/src/patterns/<name>.ts` (exports one `PanelPatternGenerator` const) |
+| Group shard files | `packages/patterns/src/patterns/group-*.ts` (e.g. `group-japanese.ts`, `group-curves.ts` — each exports a `PanelPatternGenerator[]` of imports from its member pattern modules) |
+| The registry | `packages/patterns/src/patterns/index.ts` — hand-listed, see below |
+| Shared helpers | `packages/patterns/src/param-utils.ts` — see [Shared helpers](#shared-helpers-param-utils-ts) above |
+
 ## The registry
 
-`PATTERN_GENERATORS` in `patterns.ts` is a **hand-listed array**, not generated — there is no plugin/auto-discovery mechanism here the way there is for [editor tools/inspectors](../editor/extension-architecture.mdx). Adding a new built-in pattern means adding it to this array directly.
+`PATTERN_GENERATORS` in `patterns/index.ts` is a **hand-listed array**, not generated — there is no plugin/auto-discovery mechanism here the way there is for [editor tools/inspectors](../editor/extension-architecture.mdx). It lists the 12 original hand-written generators directly, then spreads each group shard's exported array in a fixed order:
 
 ```ts
 export const PATTERN_GENERATORS: PanelPatternGenerator[] = [
   dotGrid, diagStripes, gridLines, concentricCircles, hexLattice, checker,
   waveLines, crosshatch, radialBurst, brick, diamondLattice, scallops,
+  ...groupJapanese,
+  ...groupOrnament,
+  ...groupCurves,
+  ...groupRingsCircuits,
+  ...groupTilings,
 ];
 ```
 
@@ -86,3 +110,7 @@ Two small helpers sit on top of the registry:
 - `defaultParams(name)` — returns `{ [key]: defaultValue }` for every param the named generator declares (an empty object if the name doesn't resolve). This is what a freshly added pattern layer, and every thumbnail render, initializes its `params` from.
 
 See [Built-in catalog](./built-in-patterns.mdx) for the full parameter table of every registered pattern.
+
+## Adding a new built-in pattern
+
+Most new built-ins arrive by porting a static generator from [pgen](https://github.com/zudolab/zudo-pattern-gen) rather than being written from scratch. `.claude/skills/port-pgen-patterns/SKILL.md` is the repeatable workflow: it walks candidate triage against a disqualifier checklist (gradients, multi-color-essential looks, sequence-dependent randomness are all out-of-contract per this page), the mm-space/`resolveParam`/`centeredStart`/`hash01` porting conventions, which group shard a new pattern joins (or when to create a new one), and appending a row to `packages/patterns/pgen-port-ledger.json` — the append-only record of every attempted port (`ported`, `original`, or `rejected`) that `scripts/check-ledger.mjs` cross-validates against the registry. See [Built-in catalog → pgen port provenance](./built-in-patterns.mdx#pgen-port-provenance) for what the ledger looks like and how it's kept in sync with the doc table.

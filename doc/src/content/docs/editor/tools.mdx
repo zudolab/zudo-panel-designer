@@ -27,7 +27,7 @@ Tools are the modules that interpret pointer and keyboard input on the canvas. E
 - **Drag on empty canvas** rubber-bands a **marquee**. Its semantics are **intersection**, not containment: any layer whose (rotation-aware) bounding box *overlaps* the rectangle is selected. Bounds come from the renderer's canonical `layerBbox`, so the marquee and the on-screen chrome agree to the pixel. The marquee only materializes once the pointer passes the 4px drag threshold, so a plain click never flashes one.
 - **Shift-click** adds a layer to (or removes it from) the selection; **Meta/Ctrl-click** toggles exactly one layer. A modifier held while marqueeing **unions** the marquee hits with the down-time selection.
 - **Hover** outlines the layer under the cursor with a subtle solid outline — weaker than the dashed selection chrome, so it reads as "would select". It clears when the pointer leaves the canvas.
-- **Patterns are never marquee- or canvas-selectable** — panel-wide, they are reachable only from the layer list (see [Layer eligibility](#layer-eligibility-matrix)).
+- **Pattern squares hit-test last, and never join a marquee.** A pattern layer is a movable square object (see [Pattern squares](#built-in-tools-select-v-pattern-squares) below) that only wins a click when no other layer is under the pointer, and a marquee drag never picks one up even when it overlaps — see [Pattern squares](#built-in-tools-select-v-pattern-squares) for the full two-tier rule.
 
 #### Moving
 
@@ -40,7 +40,20 @@ Tools are the modules that interpret pointer and keyboard input on the canvas. E
 
 - **Single resize** — with one `shape` or `image` selected, drag its 8 handles. A **rotated** `shape` resizes too (the only type that both rotates and resizes): the handles ride the rotated corners and the drag resolves in the layer's local frame via `resizeRotatedRect` (`@zpd/core`). Axis-aligned resizes grid- and guide-snap; a rotated resize keeps float hygiene only, because independently snapping a rotated rect's edges would visibly detach the anchored corner.
 - **Rotate** — a `shape` or `text` layer wears a round knob on a stem above its top edge; drag it to rotate about the bbox center. **Shift** snaps to 45° steps, measured from where the gesture began.
-- **Multi-resize** — with more than one layer selected, the combined box wears **corner handles only**. Dragging one scales the whole selection **uniformly** about the opposite corner; **Alt** re-anchors the scale to the center. The scale is uniform by construction, so **Shift is a deliberate no-op** here (patterns in the selection stay put).
+- **Multi-resize** — with more than one layer selected, the combined box wears **corner handles only**. Dragging one scales the whole selection **uniformly** about the opposite corner; **Alt** re-anchors the scale to the center. The scale is uniform by construction, so **Shift is a deliberate no-op** here (patterns in the selection stay put — see below).
+
+#### Pattern squares
+
+A `pattern` layer is a positioned **square** object — `x`/`y`/`size` in mm, the pattern drawn inside `(x,y)`–`(x+size,y+size)` — not an implicit whole-panel fill. It behaves like an `image` layer for move purposes, with one deliberate twist for how it's picked up:
+
+- **Cover-by-default placement.** A freshly added pattern (or one whose panel size just changed) is sized and centered to fully cover the panel at any aspect ratio — side = the larger panel dimension, `patternCoverGeometry()` (`@zpd/core`). Changing the panel's HP does **not** re-run this automatically, so the square can stop covering the panel; the inspector's **Cover panel** button (see [Inspectors → Pattern](./inspectors.mdx#built-in-inspectors-pattern)) re-centers and re-sizes it back to covering on demand.
+- **Two-tier hit-test.** A pattern square only wins a click when **no other layer** is under the pointer — it never steals a click from a shape/text/path/image stacked on top of or below it in z-order. It also **never joins a marquee**, even when the marquee rectangle overlaps it: dragging over an *unselected* pattern square draws a marquee exactly as if empty canvas were there, so a cover-sized square never blocks rubber-band-selecting whatever's on top of it.
+- **Selecting one still takes a click.** A press-then-release on an unselected pattern square that never crosses the drag threshold (toggle-)selects it, same as any other layer — the marquee-exclusion above only changes what a *drag* does, not what a *click* does.
+- **A selected pattern drags like any layer.** Once selected (by that click, or from the layer list), the next drag on it **moves** it — grid-snapped, guide-snapped, part of a multi-selection drag like anything else. There are no resize/rotate handles on a pattern square, though: change its `size` from the [Properties panel](./inspectors.mdx#built-in-inspectors-pattern) or the **Cover panel** reset instead.
+- **Excluded from multi-resize, rotation, and align/distribute.** A pattern square is unaffected by a multi-selection's uniform scale (see above), has no `rotation` field, and is excluded from [Align & Distribute](./align-and-distribute.mdx#eligibility) — the same "no independent resizable rect the group math can act on" reasoning as elsewhere on this page.
+- **Arrow keys move it too.** Nudging the selection (below) translates a pattern square's `x`/`y` the same as any other movable member — it is not pinned.
+- **The off-panel part ghosts.** Drag a pattern square partway off the panel and, with **Show content outside the panel** on, the part outside the panel edge renders as a dimmed ghost like any other layer's overflow — see [Rendering & Camera → The off-panel ghost pass](./rendering-and-camera.mdx#the-off-panel-ghost-pass).
+- **Copyable, cuttable, duplicable, pasteable — but not Select-All'd.** [Clipboard](./clipboard.mdx) treats a selected pattern square like any other layer for Copy/Cut/Duplicate/paste; only `⌘/Ctrl+A` Select All deliberately skips patterns, so "select everything" never drags a background-ish cover square along for the ride.
 
 #### Editing path anchors
 
@@ -52,7 +65,7 @@ Dragging streams the change via `ctx.replace()` and opens an undo entry (`ctx.be
 
 #### Clipboard and align/distribute
 
-Two more selection-driven operations live outside this file, as their own modules, but act on exactly the selection Select maintains: [Clipboard](./clipboard.mdx) (`⌘/Ctrl+C`/`X`/`D`/`A`, plus paste) and [Align & Distribute](./align-and-distribute.mdx) (the sidebar panel, or the command palette's chordless Align commands). Both exclude pattern layers from their operated-on set, the same eligibility rule this page's [layer eligibility matrix](#layer-eligibility-matrix) already documents for move/resize/rotate.
+Two more selection-driven operations live outside this file, as their own modules, but act on exactly the selection Select maintains: [Clipboard](./clipboard.mdx) (`⌘/Ctrl+C`/`X`/`D`/`A`, plus paste) and [Align & Distribute](./align-and-distribute.mdx) (the sidebar panel, or the command palette's chordless Align commands). The two disagree on patterns, deliberately: Copy/Cut/Duplicate/paste treat a selected pattern square like any other layer (only Select All skips patterns — see [Pattern squares](#built-in-tools-select-v-pattern-squares) above), while Align & Distribute excludes pattern layers entirely, the same eligibility rule this page's [layer eligibility matrix](#layer-eligibility-matrix) documents for multi-resize/rotate.
 
 ### Pen (`P`)
 
@@ -82,15 +95,15 @@ The whole multi-click gesture never touches `ctx.doc` until the path is finished
 
 The Select tool's gestures are defined against zpd's actual document model, which is narrower than a general-purpose vector editor's — not every gesture applies to every layer type:
 
-| Layer type | Canvas marquee | Move / nudge | Single resize | Rotate | Multi-resize (uniform) |
-|---|---|---|---|---|---|
-| `shape` | yes | yes | yes (**incl. rotated** — the only such type) | **yes** | yes |
-| `text` | yes | yes | no (no independent width/height) | **yes** | yes (scales `sizeMm`) |
-| `path` | yes | yes | no (edit anchors instead) | no (no `rotation` field) | yes (scales points + handles) |
-| `image` | yes | yes | yes (never rotated) | no (no `rotation` field) | yes |
-| `pattern` | **no** | **no** (panel-wide, no x/y) | no | no | **no** |
+| Layer type | Canvas click | Canvas marquee | Move / nudge | Single resize | Rotate | Multi-resize (uniform) |
+|---|---|---|---|---|---|---|
+| `shape` | yes | yes | yes | yes (**incl. rotated** — the only such type) | **yes** | yes |
+| `text` | yes | yes | yes | no (no independent width/height) | **yes** | yes (scales `sizeMm`) |
+| `path` | yes | yes | yes | no (edit anchors instead) | no (no `rotation` field) | yes (scales points + handles) |
+| `image` | yes | yes | yes | yes (never rotated) | no (no `rotation` field) | yes |
+| `pattern` | **yes, but last** (two-tier — see below) | **no** | yes | no (resize via inspector fields, not handles) | no (no `rotation` field) | **no** |
 
-- **Patterns are excluded from the canvas entirely.** They are panel-wide and selectable only from the layer list — an existing invariant (`hit-test.ts`: a pattern is never canvas-hit-testable), not a new call. A panel-wide dot grid would otherwise join essentially every marquee. In a multi-selection a pattern stays selected but is unaffected by a move or scale.
+- **Patterns click-select but never marquee-select.** A `pattern` layer's `x`/`y`/`size` square hit-tests **after** every other layer type — a click only lands on it when nothing else is under the pointer — and it is entirely excluded from marquee/rubber-band selection, so a cover-sized square can't swallow every rectangle drag. Once selected it moves/nudges like an `image`; there's no resize/rotate handle for it, but the inspector's `x`/`y`/`size` fields (or its **Cover panel** reset) are. See [Select → Pattern squares](#built-in-tools-select-v-pattern-squares) above for the full interaction rule.
 - **Rotation is single-selection, `shape`/`text` only.** Only those two types carry a `rotation` field, so the rotate knob is offered only for them; `path`/`image` have no rotation to set and the chrome must not invent one. Rotating a whole multi-selection isn't representable for `path`/`image` either, so there is no group rotate.
 - **Multi-resize is uniform scale, corner handles only, Shift a no-op.** Non-uniform scaling of a *rotated* rect isn't representable in the `x`/`y`/`width`/`height`/`rotation` model (it would need a shear), and `text` has no independent width/height (only `sizeMm`) — so a group scale can only be uniform. This is a scope reduction forced by the model, not by taste.
 - **`shape` is the only type that both rotates and single-resizes.** `ImageLayer` has no `rotation` field at all, and `text` has no independent width/height — so rotation-aware resize math has exactly one real consumer: a rotated `shape`.
@@ -124,7 +137,7 @@ When the tool does not return `true`, the shell runs its fallbacks in this order
 2. A single-key tool shortcut (`V`/`P`/`T`/`H`/`Z`, case-insensitive) — matched only when no modifier key is held, so it never fires ahead of the undo/redo check.
 3. `Esc` — deselect.
 4. `Delete`/`Backspace` — delete the current selection (every selected layer, as one undo entry).
-5. Arrow keys — nudge the selection by 0.1mm, or 1mm with Shift held. Every movable member takes the same delta so the selection translates as a rigid unit; pattern layers (which cover the whole panel) are pinned and don't move, and path layers translate their whole point set. A pattern-only selection writes no undo entry.
+5. Arrow keys — nudge the selection by 0.1mm, or 1mm with Shift held. Every movable member takes the same delta so the selection translates as a rigid unit; `shape`/`text`/`image`/`pattern` layers all translate via their `x`/`y` origin (a pattern square moves like an image's — see [Pattern squares](#built-in-tools-select-v-pattern-squares) above), and `path` layers translate their whole point set.
 
 Keyboard input is ignored globally while an `<input>`/`<textarea>`/`<select>` is focused (e.g. the layer-rename field, an inspector's number field), so typing "V" into a text box never switches tools.
 

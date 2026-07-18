@@ -30,7 +30,7 @@ Both button groups disable themselves (and every icon button dims) once the curr
 
 Align/distribute targets are computed the same way the Select tool's [layer eligibility](./tools.mdx#layer-eligibility-matrix) already excludes patterns from group operations:
 
-- **Pattern layers are excluded** — they're the panel-wide background with no `x`/`y` of their own, so they can't participate and don't count toward the minimum.
+- **Pattern layers are excluded** — a `pattern` layer is a movable `x`/`y`/`size` square (see [Tools → Select → Pattern squares](./tools.mdx#built-in-tools-select-v-pattern-squares)), but its cover-default placement would dominate the combined bounds and yank real content toward it, the same reasoning as the marquee/Select-All exclusions elsewhere. It doesn't participate and doesn't count toward the minimum; move/size it via drag, nudge, or the inspector instead.
 - **A `path` layer with no real geometry** (no points, and no non-empty `extraSubpaths`) is excluded too — core's path-bbox math still returns *some* rect for an empty path (a 0×0 rect at the origin), and counting that as a real target would silently pull the combined bounding box toward `(0, 0)`.
 - **Rotated shapes** align/distribute by their **axis-aligned bounding box** (`rotatedRectAABB`) — the same rotation-aware bbox the renderer and the Select tool's multi-selection chrome use, so what you see selected is exactly what the operation measures against.
 - A `path` layer's points (and bezier handles) translate as a unit via `translatePathLayer`; every other layer type moves by patching `x`/`y`.

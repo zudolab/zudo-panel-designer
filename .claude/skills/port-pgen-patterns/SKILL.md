@@ -18,6 +18,7 @@ required.
 | Scored candidate pool + spares from past planning | `references/candidate-notes.md` |
 | Candidate lister | `scripts/list-candidates.mjs` |
 | Ledger ↔ registry checker | `scripts/check-ledger.mjs` |
+| Doc table generator | `scripts/gen-doc-table.mjs` |
 | Ledger (what was ported/rejected, append-only) | `packages/patterns/pgen-port-ledger.json` |
 | Group shard files (ported generators live here) | `packages/patterns/src/patterns/group-*.ts` |
 | Registry | `packages/patterns/src/patterns/index.ts` |
@@ -119,7 +120,19 @@ node .claude/skills/port-pgen-patterns/scripts/check-ledger.mjs
 Must print OK: every registered generator has exactly one `ported`/`original`
 row, every such row has a registered generator, names and pgen ids unique.
 
-## Step 8 — visual sanity
+## Step 8 — regenerate the doc table
+
+```sh
+node .claude/skills/port-pgen-patterns/scripts/gen-doc-table.mjs
+```
+
+Paste the output over the parameter reference table in
+`doc/src/content/docs/patterns/built-in-patterns.mdx` and its `docs-ja`
+mirror (same table — it's all key/number tokens, nothing to translate).
+Hand-maintaining ~60+ names × params across two language pages drifts fast;
+this keeps both pages exactly matching the live registry.
+
+## Step 9 — visual sanity
 
 Patterns render as one flat color on the panel (gold on black by default). If
 a browser is available, check the pattern picker thumbnails (30mm window) and

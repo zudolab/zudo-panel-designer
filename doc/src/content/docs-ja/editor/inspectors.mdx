@@ -41,7 +41,7 @@ interface InspectorProps<L extends Layer = Layer> {
 | `text` | `inspectors/text.tsx` | テキスト内容、フォント、色、サイズ（mm）、x、y、回転（°） |
 | `path` | `inspectors/path.tsx` | 塗り（または none）、ストローク（または none）、ストローク幅（mm）、閉じているか |
 | `image` | `inspectors/image.tsx` | x、y、幅、高さ、「Convert to vector…」 |
-| `pattern` | `inspectors/pattern.tsx` | 「Browse…」（パターンピッカー）、色、パターンのパラメータごとに 1 つのスライダー |
+| `pattern` | `inspectors/pattern.tsx` | 「Browse…」（パターンピッカー）、色、x、y、size（mm）、「Cover panel」、パターンのパラメータごとに 1 つのスライダー |
 
 ### Shape
 
@@ -61,7 +61,9 @@ interface InspectorProps<L extends Layer = Layer> {
 
 ### Pattern
 
-現在のパターンの表示名を、[パターンピッカー](./add-actions-and-dialogs.mdx)を開く **Browse…** ボタン（そのダイアログが登録されていなければ無効）の背後に表示し、`ColorPicker` と、パターンが宣言する `PatternParamDef` ごとに 1 つの `<input type="range">` を表示します（[パターン → ジェネレータ契約](../patterns/generator-contract.mdx)を参照）。
+現在のパターンの表示名を、[パターンピッカー](./add-actions-and-dialogs.mdx)を開く **Browse…** ボタン（そのダイアログが登録されていなければ無効）の背後に表示し、`ColorPicker`、正方形のジオメトリ、そしてパターンが宣言する `PatternParamDef` ごとに 1 つの `<input type="range">` を表示します（[パターン → ジェネレータ契約](../patterns/generator-contract.mdx)を参照）。
+
+`pattern` レイヤーは移動可能な **正方形** です——`x`、`y`、`size`（mm）はすべて、shape/image インスペクタと同じ素の `NumberField` です。[パターンの正方形がキャンバス上でドラッグできるようになって](./tools.mdx#組み込みツール-選択ツール（v）-パターンの正方形)以降のことです。`size` はコミット時に `[0.1, MAX_PATTERN_SIZE_MM]` にクランプされます（`@zpd/core` の `MAX_PATTERN_SIZE_MM` は、ジェネレータが法外なスパンでループしてしまわないための DoS ガードです。[レンダリングとカメラ](./rendering-and-camera.mdx)を参照）。クランプ後に値が変わらないコミットはスキップされるため、範囲外の数値を入力して黙ってクランプされて戻っても、幽霊のような undo エントリが書き込まれることはありません。ジオメトリのフィールドの下にある **Cover panel** ボタンは、正方形を `patternCoverGeometry()`——どんなアスペクト比でもパネルを覆う、元の配置——へ中心とサイズを戻します。これも同じ no-op ガード付きです（`x`／`y`／`size` が変わらないクリックは、何もコミットしません）。
 
 各スライダーは、選択ツールのドラッグと同じ遅延ジェスチャーのパターンに従います。スクラブの最初の `onChange` で 1 つの undo エントリ（`ctx.beginGesture()`）を開き、以降の同じドラッグの各ティックは `onChange(patch, { commit: false })` をストリーミングし、ポインタ/キーを離すとローカルでスクラブを終えるだけです。末尾でコミットはしません。`beginGesture` がすでに開いたエントリを二重にしてしまうためです。
 
