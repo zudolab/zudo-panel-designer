@@ -191,7 +191,7 @@ describe('scaleLayer — path', () => {
 });
 
 describe('scaleLayer — pattern', () => {
-  it('returns the pattern layer unchanged (panel-wide; not scalable)', () => {
+  it('returns the pattern layer unchanged (scaling stays excluded until the interaction sub)', () => {
     const pattern: PatternLayer = {
       id: 'pt1',
       name: 'grid',
@@ -199,6 +199,9 @@ describe('scaleLayer — pattern', () => {
       patternType: 'dots',
       params: { spacing: 5 },
       color: 1,
+      x: 2,
+      y: 3,
+      size: 60,
     };
     expect(scaleLayer(pattern, 2, anchor)).toBe(pattern);
   });

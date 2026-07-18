@@ -21,6 +21,11 @@ export interface ShapeLayer extends LayerBase {
   color: ColorIndex;
 }
 
+// A positioned SQUARE object, no longer an implicit whole-panel fill (#96):
+// the pattern draws inside (x,y)-(x+size,y+size) in document mm. The default
+// placement covers the panel — see patternCoverGeometry (pattern-geometry.ts).
+// A panel HP change deliberately keeps x/y/size (the square may stop covering;
+// the inspector's "Cover panel" reset is the recovery).
 export interface PatternLayer extends LayerBase {
   type: 'pattern';
   // Kept as opaque data even when unrecognized — the patterns registry is an
@@ -28,6 +33,9 @@ export interface PatternLayer extends LayerBase {
   patternType: string;
   params: Record<string, number>;
   color: ColorIndex;
+  x: number;
+  y: number;
+  size: number; // square side, mm
 }
 
 export interface PathPoint {

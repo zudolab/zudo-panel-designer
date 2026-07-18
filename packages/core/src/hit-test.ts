@@ -1,5 +1,7 @@
-// Canvas hit-testing in mm space. Topmost-first; pattern layers are
-// panel-wide and only selectable via the layer list (never canvas-hit-testable).
+// Canvas hit-testing in mm space. Topmost-first; pattern layers are only
+// selectable via the layer list (never canvas-hit-testable) — they carry an
+// x/y/size square since #96, but canvas hit-testing stays disabled until the
+// interaction follow-up sub flips it, so PatternLayerLike needs no geometry.
 //
 // The spec references Path2D's isPointInPath(...,'evenodd')/isPointInStroke,
 // but Path2D is a browser API unavailable in plain Node/Vitest. This module
