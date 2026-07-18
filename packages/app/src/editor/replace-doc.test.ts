@@ -1,7 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
-import type { DocState, ImageLayer, Pt } from '@zpd/core';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { DocState, ImageLayer, Pt, TextLayer } from '@zpd/core';
 import { replaceDoc } from './replace-doc';
 import type { ToolContext } from './types';
+import {
+  getTextGeometry,
+  reconcileTextGeometry,
+  resetTextGeometryForTests,
+  setTextMeasureForTests,
+} from './text-geometry';
+
+afterEach(() => resetTextGeometryForTests());
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -68,5 +76,41 @@ describe('replaceDoc', () => {
     replaceDoc(nextDoc, ctx);
 
     expect(ctx.evictImageCache).toHaveBeenCalledWith(nextDoc.layers);
+  });
+
+  it('clears render-only text geometry before a same-id next document', () => {
+    resetTextGeometryForTests();
+    const oldLayer: TextLayer = {
+      id: 'reused-text',
+      name: 'Old',
+      type: 'text',
+      content: 'OLD',
+      fontFamily: 'sans-serif',
+      sizeMm: 8,
+      x: 10,
+      y: 20,
+      rotation: 90,
+      color: 1,
+    };
+    setTextMeasureForTests((layer) => ({
+      x: layer.x,
+      y: layer.y,
+      width: 40,
+      height: 20,
+    }));
+    reconcileTextGeometry([oldLayer]);
+    expect(getTextGeometry(oldLayer)!.pivot).toEqual({ x: 30, y: 30 });
+
+    const nextLayer = { ...oldLayer, name: 'New' };
+    const nextDoc: DocState = { panelHp: 6, guides: [], layers: [nextLayer] };
+    replaceDoc(nextDoc, stubCtx());
+    setTextMeasureForTests((layer) => ({
+      x: layer.x,
+      y: layer.y,
+      width: 12,
+      height: 10,
+    }));
+    reconcileTextGeometry(nextDoc.layers);
+    expect(getTextGeometry(nextLayer)!.pivot).toEqual({ x: 16, y: 25 });
   });
 });

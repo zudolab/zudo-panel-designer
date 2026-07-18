@@ -1,18 +1,43 @@
+// @vitest-environment jsdom
+
 // Proves the pen tool's pure draft-state transitions directly (per the
 // editor/README contract, module-scope gesture state should stay testable
 // without a canvas), plus the tool's headline guarantee: however many
 // clicks/drags build up a path, finishing it (close, Enter, or cancel) is
 // exactly one document mutation — one undo entry, or none at all on cancel.
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+interface MockHintRoot {
+  container: Element;
+  render: ReturnType<typeof vi.fn>;
+  unmount: ReturnType<typeof vi.fn>;
+}
+
+const mockedReactRoots = vi.hoisted(() => ({ roots: [] as MockHintRoot[] }));
+
+vi.mock('react-dom/client', () => ({
+  createRoot: (container: Element) => {
+    const root: MockHintRoot = {
+      container,
+      render: vi.fn(),
+      unmount: vi.fn(),
+    };
+    mockedReactRoots.roots.push(root);
+    return root;
+  },
+}));
+
 import {
   addCornerAnchor,
   buildClosedPathLayer,
   buildOpenPathLayer,
   canClosePath,
   canFinishOpen,
+  derivePenHintBucket,
   dragLastAnchorHandle,
   isNearFirstAnchor,
   setCursor,
+  type PenHintBarProps,
   type PenDraft,
 } from './pen';
 import { getTool } from '../registry/tools';
@@ -36,7 +61,7 @@ import type { Camera } from '../camera';
 const CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 }; // identity: screen px == mm
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
-function makeHarness() {
+function makeHarness(onActiveToolChange?: (id: string) => void) {
   let history: HistoryState<DocState> = createHistory({ panelHp: 12, guides: [], layers: [] });
   let selectedIds: readonly string[] = [];
   let activeToolId = 'pen';
@@ -97,6 +122,7 @@ function makeHarness() {
     setCamera: () => {},
     setActiveTool: (id) => {
       activeToolId = id;
+      onActiveToolChange?.(id);
     },
     requestRepaint: () => {
       repaintCalls += 1;
@@ -147,10 +173,27 @@ function key(k: string): ToolKeyEvent {
 const pen = getTool('pen')!;
 
 beforeEach(() => {
-  // module-scope draft state — reset between tests defensively (no document
-  // in the node test environment, so onDeactivate's DOM cleanup is a no-op)
+  vi.useFakeTimers();
+  // Reset module-scope draft/mount state and finish any cleanup inherited
+  // from the prior test before clearing the mock record.
   pen.onDeactivate?.({} as ToolContext);
+  vi.runOnlyPendingTimers();
+  mockedReactRoots.roots.length = 0;
+  document.body.replaceChildren();
 });
+
+afterEach(() => {
+  pen.onDeactivate?.({} as ToolContext);
+  vi.runOnlyPendingTimers();
+  document.body.replaceChildren();
+  vi.useRealTimers();
+});
+
+function renderedHintProps(root: MockHintRoot, callIndex: number = -1): PenHintBarProps {
+  const call =
+    callIndex < 0 ? root.render.mock.calls.at(callIndex) : root.render.mock.calls[callIndex];
+  return (call?.[0] as { props: PenHintBarProps }).props;
+}
 
 describe('pen tool — pure draft-state transitions', () => {
   it('addCornerAnchor snaps to the 0.1mm grid and starts a draft from null', () => {
@@ -219,6 +262,18 @@ describe('pen tool — pure draft-state transitions', () => {
     expect(canClosePath(draft)).toBe(true); // 3 points
   });
 
+  it('derives stable zero/one/two/three-plus hint capability buckets', () => {
+    expect(derivePenHintBucket(null)).toBe('zero');
+    let draft = addCornerAnchor(null, { x: 0, y: 0 });
+    expect(derivePenHintBucket(draft)).toBe('one');
+    draft = addCornerAnchor(draft, { x: 10, y: 0 });
+    expect(derivePenHintBucket(draft)).toBe('two');
+    draft = addCornerAnchor(draft, { x: 20, y: 0 });
+    expect(derivePenHintBucket(draft)).toBe('three-plus');
+    draft = addCornerAnchor(draft, { x: 30, y: 0 });
+    expect(derivePenHintBucket(draft)).toBe('three-plus');
+  });
+
   it('buildClosedPathLayer fills gold with no stroke', () => {
     let draft = addCornerAnchor(null, { x: 0, y: 0 });
     draft = addCornerAnchor(draft, { x: 10, y: 0 });
@@ -244,6 +299,141 @@ describe('pen tool — pure draft-state transitions', () => {
       strokeWidth: 0.6,
       points: draft.points,
     });
+  });
+});
+
+describe('pen tool — hint root lifecycle and semantic rendering', () => {
+  it('renders only on activation and capability-bucket transitions while every move repaints', () => {
+    const { ctx, getRepaintCalls } = makeHarness();
+    pen.onActivate?.(ctx);
+
+    const root = mockedReactRoots.roots[0];
+    expect(root).toBeDefined();
+    expect(root.render).toHaveBeenCalledTimes(1);
+
+    pen.onPointerDown?.(ptr({ x: 0, y: 0 }), ctx); // zero -> one
+    pen.onPointerMove?.(ptr({ x: 5, y: 0 }), ctx); // handle-only: still one
+    pen.onPointerUp?.(ptr({ x: 5, y: 0 }), ctx);
+    pen.onPointerMove?.(ptr({ x: 10, y: 0 }, { buttons: 0 }), ctx); // cursor-only: still one
+    pen.onPointerDown?.(ptr({ x: 20, y: 0 }), ctx); // one -> two
+    pen.onPointerUp?.(ptr({ x: 20, y: 0 }), ctx);
+    pen.onPointerDown?.(ptr({ x: 40, y: 0 }), ctx); // two -> three-plus
+    pen.onPointerUp?.(ptr({ x: 40, y: 0 }), ctx);
+    pen.onPointerDown?.(ptr({ x: 60, y: 0 }), ctx); // still three-plus
+    pen.onPointerUp?.(ptr({ x: 60, y: 0 }), ctx);
+
+    expect(getRepaintCalls()).toBe(6);
+    expect(root.render).toHaveBeenCalledTimes(4);
+    expect(root.render.mock.calls.map((_, index) => renderedHintProps(root, index).bucket)).toEqual(
+      ['zero', 'one', 'two', 'three-plus'],
+    );
+  });
+
+  it('resolves a same-bucket hint callback against the latest pointer context', () => {
+    const first = makeHarness();
+    const latest = makeHarness();
+    pen.onActivate?.(first.ctx);
+    const root = mockedReactRoots.roots[0];
+
+    pen.onPointerDown?.(ptr({ x: 0, y: 0 }), first.ctx);
+    pen.onPointerUp?.(ptr({ x: 0, y: 0 }), first.ctx);
+    pen.onPointerDown?.(ptr({ x: 20, y: 0 }), first.ctx);
+    pen.onPointerUp?.(ptr({ x: 20, y: 0 }), first.ctx);
+    expect(renderedHintProps(root).bucket).toBe('two');
+
+    // This move changes cursor geometry and the live context, but deliberately
+    // does not rerender the two-anchor hint bucket.
+    pen.onPointerMove?.(ptr({ x: 25, y: 5 }, { buttons: 0 }), latest.ctx);
+    expect(root.render).toHaveBeenCalledTimes(3);
+    renderedHintProps(root).onFinishOpen();
+
+    expect(first.getHistory().past).toHaveLength(0);
+    expect(latest.getHistory().past).toHaveLength(1);
+    expect(latest.getHistory().present.layers[0]).toMatchObject({
+      type: 'path',
+      closed: false,
+    });
+    expect(latest.getSelectedId()).toBe(latest.getHistory().present.layers[0].id);
+    expect(latest.getActiveToolId()).toBe('select');
+  });
+
+  it('defers captured-root cleanup and keeps rapid reactivation isolated and idempotent', () => {
+    const first = makeHarness();
+    const second = makeHarness();
+    pen.onActivate?.(first.ctx);
+    const firstRoot = mockedReactRoots.roots[0];
+    const staleCancel = renderedHintProps(firstRoot).onCancel;
+
+    pen.onDeactivate?.(first.ctx);
+    pen.onDeactivate?.(first.ctx);
+    expect(firstRoot.unmount).not.toHaveBeenCalled();
+    expect(firstRoot.container.isConnected).toBe(true);
+    expect(document.querySelectorAll('[data-pen-hint-root]')).toHaveLength(0);
+
+    pen.onActivate?.(second.ctx);
+    const secondRoot = mockedReactRoots.roots[1];
+    expect(document.querySelectorAll('[data-pen-hint-root]')).toHaveLength(1);
+    expect(secondRoot.container.isConnected).toBe(true);
+
+    staleCancel();
+    expect(first.getRepaintCalls()).toBe(0);
+    expect(second.getRepaintCalls()).toBe(0);
+
+    vi.runOnlyPendingTimers();
+    expect(firstRoot.unmount).toHaveBeenCalledTimes(1);
+    expect(firstRoot.container.isConnected).toBe(false);
+    expect(secondRoot.unmount).not.toHaveBeenCalled();
+    expect(secondRoot.container.isConnected).toBe(true);
+
+    // Activating again without a matching deactivation retires only the
+    // current mount and still leaves one connected hint container.
+    pen.onActivate?.(first.ctx);
+    const thirdRoot = mockedReactRoots.roots[2];
+    expect(secondRoot.unmount).not.toHaveBeenCalled();
+    expect(document.querySelectorAll('[data-pen-hint-root]')).toHaveLength(1);
+    expect(thirdRoot.container.isConnected).toBe(true);
+
+    vi.runOnlyPendingTimers();
+    expect(secondRoot.unmount).toHaveBeenCalledTimes(1);
+    expect(secondRoot.container.isConnected).toBe(false);
+    expect(thirdRoot.unmount).not.toHaveBeenCalled();
+    expect(thirdRoot.container.isConnected).toBe(true);
+
+    pen.onDeactivate?.(first.ctx);
+    pen.onDeactivate?.(first.ctx);
+    expect(thirdRoot.unmount).not.toHaveBeenCalled();
+    expect(document.querySelectorAll('[data-pen-hint-root]')).toHaveLength(0);
+    expect(thirdRoot.container.isConnected).toBe(true);
+    vi.runOnlyPendingTimers();
+    expect(thirdRoot.unmount).toHaveBeenCalledTimes(1);
+    expect(thirdRoot.container.isConnected).toBe(false);
+  });
+
+  it('does not revive a retiring context when tool handoff deactivates synchronously', () => {
+    const next = makeHarness();
+    let handOff = () => {};
+    const retiring = makeHarness(() => handOff());
+    handOff = () => {
+      pen.onDeactivate?.(retiring.ctx);
+      pen.onActivate?.(next.ctx);
+    };
+
+    pen.onActivate?.(retiring.ctx);
+    const retiringRoot = mockedReactRoots.roots[0];
+    pen.onPointerDown?.(ptr({ x: 0, y: 0 }), retiring.ctx);
+    pen.onPointerUp?.(ptr({ x: 0, y: 0 }), retiring.ctx);
+    pen.onPointerDown?.(ptr({ x: 20, y: 0 }), retiring.ctx);
+    pen.onPointerUp?.(ptr({ x: 20, y: 0 }), retiring.ctx);
+
+    renderedHintProps(retiringRoot).onFinishOpen();
+    const nextRoot = mockedReactRoots.roots[1];
+    expect(nextRoot).toBeDefined();
+    expect(retiring.getHistory().past).toHaveLength(1);
+
+    const retiringRepaints = retiring.getRepaintCalls();
+    renderedHintProps(nextRoot).onCancel();
+    expect(retiring.getRepaintCalls()).toBe(retiringRepaints);
+    expect(next.getRepaintCalls()).toBe(1);
   });
 });
 

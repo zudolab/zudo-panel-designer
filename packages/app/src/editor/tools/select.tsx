@@ -6,7 +6,7 @@
 // touching the registry.
 import {
   duplicateLayersAbove,
-  hitTestDoc,
+  hitTestLayer,
   mergeBboxes,
   mintId,
   movePathAnchor,
@@ -38,6 +38,7 @@ import {
   rotateHandleScreenPos,
 } from '../renderer';
 import { registerTool } from '../registry/tools';
+import { getTextGeometry, reconcileTextGeometry } from '../text-geometry';
 import type { DraftRenderContext, ToolContext, ToolPointerEvent } from '../types';
 
 const SNAP_MM = 0.1;
@@ -62,7 +63,11 @@ const snap = (v: number) => snapToGrid(v, SNAP_MM);
 const GUIDE_SNAP_PX = 8;
 
 function snapOptions(ctx: ToolContext): SnapOptions {
-  return { gridMm: SNAP_MM, toleranceMm: GUIDE_SNAP_PX / ctx.camera.pxPerMm, guides: ctx.doc.guides };
+  return {
+    gridMm: SNAP_MM,
+    toleranceMm: GUIDE_SNAP_PX / ctx.camera.pxPerMm,
+    guides: ctx.doc.guides,
+  };
 }
 
 // Union (rotated-AABB) bbox of a move gesture's targets, at their pointerdown
@@ -257,6 +262,7 @@ export function marqueeRect(startMm: Pt, currentMm: Pt): Rect {
 // would otherwise join essentially every marquee. Patterns are selected by
 // direct click (the two-tier rule in hit-test.ts) or the layer list.
 export function marqueeHitIds(layers: readonly Layer[], rectMm: Rect): string[] {
+  reconcileTextGeometry(layers);
   const ids: string[] = [];
   for (const layer of layers) {
     if (layer.hidden || layer.type === 'pattern') continue;
@@ -294,15 +300,43 @@ function pointerDeg(mm: Pt, center: Pt): number {
 
 // Keep streamed rotations inspector-friendly: [-180, 180), 0.1° resolution.
 function normalizeDeg(v: number): number {
-  return Number((((v % 360) + 540) % 360 - 180).toFixed(1));
+  return Number(((((v % 360) + 540) % 360) - 180).toFixed(1));
 }
 
-// Two-tier hit (#97, core hit-test.ts): non-pattern layers topmost-first,
-// pattern squares only when nothing else hits. hitTestDoc returns the same
-// object it was handed from doc.layers, so the LayerLike -> Layer cast is a
-// safe narrowing, not a conversion.
-function topmostHit(doc: DocState, mm: Pt): Layer | null {
-  return hitTestDoc(doc, mm.x, mm.y) as Layer | null;
+// App-side text hit: use the same raw box and render pivot as paint/chrome.
+// topmostHit below retains core's two-tier layer ordering around this helper.
+export function hitTestCanonicalText(layer: Extract<Layer, { type: 'text' }>, mm: Pt): boolean {
+  const geometry = getTextGeometry(layer);
+  if (!geometry) return false;
+  let x = mm.x;
+  let y = mm.y;
+  const rotation = layer.rotation ?? 0;
+  if (rotation) {
+    const rad = (-rotation * Math.PI) / 180;
+    const dx = mm.x - geometry.pivot.x;
+    const dy = mm.y - geometry.pivot.y;
+    x = geometry.pivot.x + dx * Math.cos(rad) - dy * Math.sin(rad);
+    y = geometry.pivot.y + dx * Math.sin(rad) + dy * Math.cos(rad);
+  }
+  const box = geometry.box;
+  return x >= box.x && x <= box.x + box.width && y >= box.y && y <= box.y + box.height;
+}
+
+function topmostHit(ctx: ToolContext, mm: Pt): Layer | null {
+  reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+  // Preserve core's two-tier ordering exactly: every non-pattern wins over
+  // every pattern, and topmost wins within a tier. Only text substitutes the
+  // app's canonical Canvas-metric geometry for core's rough estimate.
+  for (const patternTier of [false, true]) {
+    for (let i = ctx.doc.layers.length - 1; i >= 0; i -= 1) {
+      const layer = ctx.doc.layers[i];
+      if (layer.hidden || (layer.type === 'pattern') !== patternTier) continue;
+      const hit =
+        layer.type === 'text' ? hitTestCanonicalText(layer, mm) : hitTestLayer(layer, mm.x, mm.y);
+      if (hit) return layer;
+    }
+  }
+  return null;
 }
 
 function tryGrabNode(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): boolean {
@@ -338,7 +372,12 @@ function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolCont
   // aligned through layerRotation() === 0.
   const rotation = layerRotation(selected);
   for (const h of resizeHandleRects(bbox, ctx.camera, rotation)) {
-    if (e.screen.x >= h.x && e.screen.x <= h.x + h.size && e.screen.y >= h.y && e.screen.y <= h.y + h.size) {
+    if (
+      e.screen.x >= h.x &&
+      e.screen.x <= h.x + h.size &&
+      e.screen.y >= h.y &&
+      e.screen.y <= h.y + h.size
+    ) {
       drag = {
         kind: 'resize',
         layerId: selected.id,
@@ -426,7 +465,12 @@ function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolea
   const bbox = multiResizeBbox(ctx.doc.layers, ids);
   if (!bbox) return false;
   for (const h of cornerHandleRects(bbox, ctx.camera)) {
-    if (e.screen.x >= h.x && e.screen.x <= h.x + h.size && e.screen.y >= h.y && e.screen.y <= h.y + h.size) {
+    if (
+      e.screen.x >= h.x &&
+      e.screen.x <= h.x + h.size &&
+      e.screen.y >= h.y &&
+      e.screen.y <= h.y + h.size
+    ) {
       drag = {
         kind: 'multi-resize',
         handle: h.id,
@@ -463,6 +507,7 @@ registerTool({
     'selected pattern drags like any layer (size it from the Properties panel). Arrow keys nudge ' +
     'the selection (Shift = ×10); Delete/Backspace removes it. Shortcut: V.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
+    reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
     hoveredId = null; // pointer engaged — hover chrome resumes after release
     // Right (or middle) click PRESERVES the selection: a future context menu
     // must be able to act on the live selection (#47).
@@ -482,7 +527,7 @@ registerTool({
     // hit-test, same precedence as the single-selection handles above (#52).
     if (tryGrabMultiResizeHandle(e, ctx)) return;
 
-    const hit = topmostHit(ctx.doc, e.mm);
+    const hit = topmostHit(ctx, e.mm);
     const toggleModifier = e.shiftKey || e.metaKey || e.ctrlKey;
     // #97's drag rule: a press on a pattern square that is NOT already
     // selected behaves like empty space for DRAG purposes — the panel stays
@@ -499,9 +544,7 @@ registerTool({
         // clicked layer's membership and leave the rest untouched; no move
         // drag starts on a modifier click.
         const ids = ctx.selectedIds;
-        ctx.selectIds(
-          ids.includes(hit.id) ? ids.filter((id) => id !== hit.id) : [...ids, hit.id],
-        );
+        ctx.selectIds(ids.includes(hit.id) ? ids.filter((id) => id !== hit.id) : [...ids, hit.id]);
         return;
       }
       const ids = ctx.selectedIds;
@@ -547,13 +590,16 @@ registerTool({
     };
   },
   onPointerMove(e: ToolPointerEvent, ctx: ToolContext) {
+    reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
     if (marquee) {
       if (!marquee.active && !pastThreshold(e.screen, marquee.startScreen)) return;
       marquee.active = true;
       marquee.currentMm = e.mm;
       const hits = marqueeHitIds(ctx.doc.layers, marqueeRect(marquee.startMm, marquee.currentMm));
       const base = marquee.baseIds;
-      ctx.selectIds(marquee.additive ? [...base, ...hits.filter((id) => !base.includes(id))] : hits);
+      ctx.selectIds(
+        marquee.additive ? [...base, ...hits.filter((id) => !base.includes(id))] : hits,
+      );
       ctx.requestRepaint(); // the rubber-band moved even if the selection didn't
       return;
     }
@@ -562,7 +608,7 @@ registerTool({
       // the hovered id actually changes — #17 is an open issue about the Pen
       // hint bar re-rendering per pointermove; do not add a second instance.
       if (e.buttons === 0) {
-        const id = topmostHit(ctx.doc, e.mm)?.id ?? null;
+        const id = topmostHit(ctx, e.mm)?.id ?? null;
         if (id !== hoveredId) {
           hoveredId = id;
           ctx.requestRepaint();
@@ -653,7 +699,11 @@ registerTool({
           }
           if (!yLocked) {
             const movedY = bbox.y + dy;
-            const gy = snapAxis([movedY, movedY + bbox.height, movedY + bbox.height / 2], 'y', opts);
+            const gy = snapAxis(
+              [movedY, movedY + bbox.height, movedY + bbox.height / 2],
+              'y',
+              opts,
+            );
             if (gy.guide) sdy = roundMm(dy + gy.delta);
           }
         }
@@ -781,7 +831,16 @@ registerTool({
           updateLayer(
             ctx,
             drag.layerId,
-            { points: movePathHandle(layer.points, drag.index, drag.which, e.mm.x, e.mm.y, !e.altKey) },
+            {
+              points: movePathHandle(
+                layer.points,
+                drag.index,
+                drag.which,
+                e.mm.x,
+                e.mm.y,
+                !e.altKey,
+              ),
+            },
             false,
           );
         }
@@ -833,6 +892,7 @@ registerTool({
     downScreen = null;
   },
   renderDraft(d: DraftRenderContext, ctx: ToolContext) {
+    reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
     // hover chrome — subtle, and skipped for layers already wearing selection
     // chrome (hoveredId is cleared on pointerdown, so nothing draws mid-drag)
     if (hoveredId && !ctx.selectedIds.includes(hoveredId)) {

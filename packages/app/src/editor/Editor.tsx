@@ -54,8 +54,18 @@ export function Editor() {
   // demo doc. Lazy useState initializer — readDoc() does a synchronous
   // localStorage read + parse, and this form guarantees it runs only once.
   const [initialDoc] = useState<DocState>(() => readDoc() ?? createDemoDoc());
-  const { doc, canUndo, canRedo, commit, replace, reset, beginGesture, undo, redo } =
-    useDocHistory(initialDoc);
+  const {
+    history: historyState,
+    doc,
+    canUndo,
+    canRedo,
+    commit,
+    replace,
+    reset,
+    beginGesture,
+    undo,
+    redo,
+  } = useDocHistory(initialDoc);
   const saveStatus = useAutosave(doc);
   // Selection state (#44): the stored ids are RAW (exactly what select() /
   // selectIds() was given); every read derives the normalized view (de-duped,
@@ -101,6 +111,7 @@ export function Editor() {
   // (not during render) — tool handlers only run after commit+effects, so by
   // the next event the refs are current.
   const docRef = useRef(doc);
+  const historyRef = useRef(historyState);
   const cameraRef = useRef(camera);
   const rawSelectedIdsRef = useRef(rawSelectedIds);
   const panelRef = useRef(panel);
@@ -110,6 +121,7 @@ export function Editor() {
   const canvasSizeRef = useRef(canvasSize);
   useEffect(() => {
     docRef.current = doc;
+    historyRef.current = historyState;
     cameraRef.current = camera;
     rawSelectedIdsRef.current = rawSelectedIds;
     panelRef.current = panel;
@@ -133,6 +145,7 @@ export function Editor() {
   useEffect(() => {
     installTestBridge({
       getDoc: () => docRef.current,
+      getHistory: () => historyRef.current,
       getSelectedId: () => readSelectedId(),
       getSelectedIds: () => readSelectedIds(),
       getCamera: () => cameraRef.current,

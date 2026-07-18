@@ -43,6 +43,8 @@ function reducer(state: HistoryState<DocState>, action: Action): HistoryState<Do
 }
 
 export interface DocHistory {
+  /** Read-only live snapshot used by the test bridge to prove resource events do not mutate history. */
+  history: HistoryState<DocState>;
   doc: DocState;
   canUndo: boolean;
   canRedo: boolean;
@@ -67,6 +69,7 @@ export function useDocHistory(initial: DocState): DocHistory {
   const redo = useCallback(() => dispatch({ type: 'redo' }), []);
 
   return {
+    history: state,
     doc: state.present,
     canUndo: coreCanUndo(state),
     canRedo: coreCanRedo(state),

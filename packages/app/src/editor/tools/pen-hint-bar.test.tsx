@@ -4,33 +4,16 @@
 // mounts its own hint bar (see pen.tsx's onActivate/onDeactivate). This tests
 // the presentational half — PenHintBar — in isolation via
 // @testing-library/react, the same pattern used by
-// inspectors/affordance-hooks.test.tsx: disabled state tracks the draft, and
-// each button fires exactly the callback prop it was given (the tool wires
+// inspectors/affordance-hooks.test.tsx: disabled state tracks the semantic
+// anchor-count bucket, and each button fires exactly the callback prop it was given (the tool wires
 // those callbacks to the very same finishClosed/finishOpen/resetDraft
 // functions the pointer/keyboard gestures call, so there's no button-only
 // reimplementation to drift out of sync).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { PenHintBar, type PenDraft } from './pen';
+import { PenHintBar } from './pen';
 
 afterEach(cleanup);
-
-const oneAnchor: PenDraft = { points: [{ x: 0, y: 0 }], cursorMm: null };
-const twoAnchors: PenDraft = {
-  points: [
-    { x: 0, y: 0 },
-    { x: 10, y: 0 },
-  ],
-  cursorMm: null,
-};
-const threeAnchors: PenDraft = {
-  points: [
-    { x: 0, y: 0 },
-    { x: 10, y: 0 },
-    { x: 10, y: 10 },
-  ],
-  cursorMm: null,
-};
 
 function getButton(name: RegExp) {
   return screen.getByRole<HTMLButtonElement>('button', { name });
@@ -39,7 +22,7 @@ function getButton(name: RegExp) {
 describe('PenHintBar', () => {
   it('with no draft, every button is disabled', () => {
     render(
-      <PenHintBar draft={null} onClosePath={vi.fn()} onFinishOpen={vi.fn()} onCancel={vi.fn()} />,
+      <PenHintBar bucket="zero" onClosePath={vi.fn()} onFinishOpen={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(getButton(/Close path/).disabled).toBe(true);
     expect(getButton(/Finish open/).disabled).toBe(true);
@@ -48,12 +31,7 @@ describe('PenHintBar', () => {
 
   it('with 1 anchor, only Cancel is enabled', () => {
     render(
-      <PenHintBar
-        draft={oneAnchor}
-        onClosePath={vi.fn()}
-        onFinishOpen={vi.fn()}
-        onCancel={vi.fn()}
-      />,
+      <PenHintBar bucket="one" onClosePath={vi.fn()} onFinishOpen={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(getButton(/Close path/).disabled).toBe(true);
     expect(getButton(/Finish open/).disabled).toBe(true);
@@ -62,12 +40,7 @@ describe('PenHintBar', () => {
 
   it('with 2 anchors, Finish open and Cancel are enabled but Close path is not', () => {
     render(
-      <PenHintBar
-        draft={twoAnchors}
-        onClosePath={vi.fn()}
-        onFinishOpen={vi.fn()}
-        onCancel={vi.fn()}
-      />,
+      <PenHintBar bucket="two" onClosePath={vi.fn()} onFinishOpen={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(getButton(/Close path/).disabled).toBe(true);
     expect(getButton(/Finish open/).disabled).toBe(false);
@@ -77,7 +50,7 @@ describe('PenHintBar', () => {
   it('with 3+ anchors, all three buttons are enabled', () => {
     render(
       <PenHintBar
-        draft={threeAnchors}
+        bucket="three-plus"
         onClosePath={vi.fn()}
         onFinishOpen={vi.fn()}
         onCancel={vi.fn()}
@@ -94,7 +67,7 @@ describe('PenHintBar', () => {
     const onCancel = vi.fn();
     render(
       <PenHintBar
-        draft={threeAnchors}
+        bucket="three-plus"
         onClosePath={onClosePath}
         onFinishOpen={onFinishOpen}
         onCancel={onCancel}
@@ -112,5 +85,6 @@ describe('PenHintBar', () => {
     fireEvent.click(getButton(/Cancel/));
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onClosePath).toHaveBeenCalledTimes(1); // unchanged by the other clicks
+    expect(onFinishOpen).toHaveBeenCalledTimes(1);
   });
 });

@@ -6,7 +6,7 @@
 // handlers directly against a small ToolContext harness backed by the real
 // core history functions (not a mock), so this exercises the real gesture
 // wiring select.tsx performs.
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import '../tools/select'; // registers 'select' as a side effect
 import { getTool } from '../registry/tools';
 import {
@@ -25,11 +25,13 @@ import {
   type PatternLayer,
   type Pt,
   type ShapeLayer,
+  type TextLayer,
 } from '@zpd/core';
 import { normalizeSelectedIds } from '../selection';
 import { rotateHandleScreenPos } from '../renderer';
 import type { PanelDims, ToolContext, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
+import { resetTextGeometryForTests, setTextMeasureForTests } from '../text-geometry';
 
 const CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 }; // identity: screen px == mm
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
@@ -133,6 +135,50 @@ const select = getTool('select')!;
 beforeEach(() => {
   // module-scope drag/gestureOpen state — reset between tests defensively
   select.onDeactivate?.({} as ToolContext);
+  resetTextGeometryForTests();
+});
+
+afterEach(() => resetTextGeometryForTests());
+
+describe('select tool — canonical rotated-text direct hit (#111)', () => {
+  it('uses the measured rotated box and preserves non-pattern-over-pattern ordering', () => {
+    setTextMeasureForTests((layer) => ({
+      x: layer.x,
+      y: layer.y,
+      width: 40,
+      height: 20,
+    }));
+    const text: TextLayer = {
+      id: 'text-hit',
+      name: 'Text',
+      type: 'text',
+      content: 'AAAAA\nBB',
+      fontFamily: 'sans-serif',
+      sizeMm: 8,
+      x: 10,
+      y: 20,
+      rotation: 90,
+      color: 1,
+    };
+    const pattern: PatternLayer = {
+      id: 'cover-pattern',
+      name: 'Pattern',
+      type: 'pattern',
+      patternType: 'dot-grid',
+      params: {},
+      color: 1,
+      x: 0,
+      y: 0,
+      size: 100,
+    };
+    const { ctx } = makeHarness({ panelHp: 20, guides: [], layers: [text, pattern] });
+
+    // Inside canonical B0 rotated box (AABB x20..40/y10..50) near its lower
+    // left, but outside core's old shorter character-count estimate.
+    select.onPointerDown?.(ptr({ x: 21, y: 49 }), ctx);
+    select.onPointerUp?.(ptr({ x: 21, y: 49 }), ctx);
+    expect(ctx.selectedIds).toEqual([text.id]);
+  });
 });
 
 describe('select tool — one gesture == one undo entry', () => {
