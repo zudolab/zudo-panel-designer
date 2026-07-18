@@ -266,7 +266,7 @@
       "family": "Japanese & Manga",
       "status": "ported",
       "date": "2026-07-19",
-      "notes": "each cell an even-odd hex ring (outer hex minus inner hex → real void) instead of a second-color inner-hex punch; dropped tint jitter + color cycling; radius + innerScale params"
+      "notes": "each cell an even-odd hex ring (outer hex minus inner hex \u2192 real void) instead of a second-color inner-hex punch; dropped tint jitter + color cycling; radius + innerScale params"
     }
   ],
   "curves": [
@@ -366,7 +366,7 @@
       "family": "Circles & Rings",
       "status": "ported",
       "date": "2026-07-19",
-      "notes": "dropped bg fill + fg-pool color cycling; step=1.42×radius interlock constant kept; radius + band width now mm params; odd-row half-step offset via center-origin row index"
+      "notes": "dropped bg fill + fg-pool color cycling; step=1.42\u00d7radius interlock constant kept; radius + band width now mm params; odd-row half-step offset via center-origin row index"
     },
     {
       "zpdName": "circle-quarters",
@@ -382,7 +382,7 @@
       "family": "Crosses, Stars & Icons",
       "status": "ported",
       "date": "2026-07-19",
-      "notes": "dropped bg fill + fg-pool color cycling; four lobes filled as one non-zero-winding path (union); lobe offset 0.95×lobe kept as source const; cell + lobe radius now mm params"
+      "notes": "dropped bg fill + fg-pool color cycling; four lobes filled as one non-zero-winding path (union); lobe offset 0.95\u00d7lobe kept as source const; cell + lobe radius now mm params"
     },
     {
       "zpdName": "hex-circuit",
@@ -422,8 +422,89 @@
       "family": "Crosses, Stars & Icons",
       "status": "ported",
       "date": "2026-07-19",
-      "notes": "dropped bg fill + color cycling; 8-point star as filled 16-vertex polygon; long/short ray ratio kept as param; outer radius 0.46×cell kept as source const; cell now mm param"
+      "notes": "dropped bg fill + color cycling; 8-point star as filled 16-vertex polygon; long/short ray ratio kept as param; outer radius 0.46\u00d7cell kept as source const; cell now mm param"
     }
   ],
-  "tilings": []
+  "tilings": [
+    {
+      "zpdName": "herringbone",
+      "pgenId": "herringbone",
+      "family": "Bricks, Tiles & Mosaic",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill, per-brick color variation and highlight/shadow edge strokes; single flat fill with the inter-brick gap left as real negative space (no painted bg); brick length/width and gap are mm params"
+    },
+    {
+      "zpdName": "houndstooth-tooth-grid",
+      "pgenId": "houndstooth-tooth-grid",
+      "family": "Checks & Plaids",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill and seeded fg pick; direct port of block + two tooth tabs on checker parity (keyed on center-origin indices); cell mm param + notch fraction knob"
+    },
+    {
+      "zpdName": "greek-cross-lattice",
+      "pgenId": "greek-cross-lattice",
+      "family": "Crosses, Stars & Icons",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill and the one rand() color pick; two fillRect bars per cross; cell mm param + armLength fraction, arm thickness kept as source 0.5x ratio"
+    },
+    {
+      "zpdName": "deco-chevron-gold",
+      "pgenId": "deco-chevron-gold",
+      "family": "Art Movements & Retro",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill, cycling fg palette and accent stroke line; 2-color alternation collapsed to filled chevron band vs unpainted gap (constant gap since all ribbons share one V profile); pitch/amplitude mm + thickness knob"
+    },
+    {
+      "zpdName": "valknut-grid",
+      "pgenId": "valknut-grid",
+      "family": "Celtic & Nordic",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "NO bg-halo pass (forbidden painted bg); strands cross plainly per porting note; three stroked triangle outlines per tile in one color; dropped bg fill, halo pass, per-cell rand color and darken accent"
+    },
+    {
+      "zpdName": "isometric-cube-grid",
+      "pgenId": "isometric-cube-grid",
+      "family": "Grids & Lattices",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill and three separate family colors (collapsed to one stroke); +30/-30/vertical line families centered on panel center; cell + line width mm params"
+    },
+    {
+      "zpdName": "ogee",
+      "pgenId": "ogee",
+      "family": "Waves & Scallops",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill, alternating fg colors and colorOffset; two-color tilework collapsed to a single stroked ogival outline lattice (no painted bg); tile width + line width mm + dome-height knob, shoulder kept as source const 0.55"
+    },
+    {
+      "zpdName": "ammann-bars",
+      "pgenId": "ammann-bars",
+      "family": "Tessellations & Tilings",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "near-direct single-color line port; four families at 0/45/90/135 with Fibonacci long/short (1/phi) gap walk; rand was consumed only for PRNG stability so dropped -> fully deterministic; spacing + line width mm, panel clip owns line extents"
+    },
+    {
+      "zpdName": "cairo-pentagonal",
+      "pgenId": "cairo-pentagonal",
+      "family": "Tessellations & Tilings",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "stroke the four pentagon outlines instead of 4-color fills (no painted bg); dropped bg fill, four fg colors and colorOffset; per-cell rand was PRNG-stability-only so removed; cell + line width mm, apex offset kept as source 0.28x ratio"
+    },
+    {
+      "zpdName": "masu-tsunagi",
+      "pgenId": "masu-tsunagi",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill and per-ring color cycling / colorOffset; nested strokeRect squares on a centered grid in one color; cell + line width mm + integer nest-count knob"
+    }
+  ]
 }
