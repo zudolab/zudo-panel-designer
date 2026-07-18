@@ -92,12 +92,18 @@ function parseEnvelope(text: string): Layer[] | null {
 // snapshot) and best-effort mirrors it to the OS clipboard as the versioned
 // envelope. navigator.clipboard.writeText can reject (or the property can be
 // entirely absent, e.g. an insecure context) — either degrades silently to
-// internal-only, per the issue spec. `pendingWriteRef` stays true while the
-// write is in flight — see the paste effect's priority-2 branch for why that
-// matters (a fast copy-then-paste can race the OS clipboard write).
+// internal-only, per the issue spec.
+//
+// `outstandingWritesRef` COUNTS in-flight writes rather than tracking a single
+// boolean: two overlapping copies (copy A, copy B before A settles) both write,
+// and a plain boolean would be cleared by whichever write settles FIRST — so
+// A settling would mark "no write pending" while B is still in flight, letting
+// the OS clipboard's stale A win over the just-copied snapshot B. A counter is
+// only zero once EVERY write has settled — see the paste effect's priority-2
+// branch for why that matters.
 function captureToClipboard(
   clipboardRef: { current: Layer[] },
-  pendingWriteRef: { current: boolean },
+  outstandingWritesRef: { current: number },
   layers: Layer[],
 ): void {
   const snapshot: Layer[] = JSON.parse(JSON.stringify(layers));
@@ -109,16 +115,17 @@ function captureToClipboard(
       version: ENVELOPE_VERSION,
       layers: snapshot,
     };
-    pendingWriteRef.current = true;
+    outstandingWritesRef.current += 1;
     navigator.clipboard
       .writeText(JSON.stringify(envelope))
       .catch(() => {})
       .finally(() => {
-        pendingWriteRef.current = false;
+        outstandingWritesRef.current -= 1;
       });
   } catch {
-    // clipboard API unavailable or permission denied — no write in flight
-    pendingWriteRef.current = false;
+    // clipboard API unavailable or writeText threw synchronously — no write is
+    // actually in flight, so undo the optimistic increment above.
+    outstandingWritesRef.current -= 1;
   }
 }
 
@@ -139,21 +146,22 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
   // Same-session fallback clipboard — populated by handleCopy/handleCut, read
   // by the paste effect's priority-3 branch below.
   const clipboardRef = useRef<Layer[]>([]);
-  // True while this session's own OS-clipboard write from the most recent
-  // copy/cut hasn't resolved yet — see captureToClipboard and the paste
-  // effect's priority-2 branch.
-  const pendingWriteRef = useRef(false);
+  // Count of this session's own OS-clipboard writes (copy/cut) that haven't
+  // settled yet — nonzero means at least one write may not have landed, so the
+  // OS clipboard text could be stale relative to clipboardRef. See
+  // captureToClipboard and the paste effect's priority-2 branch.
+  const outstandingWritesRef = useRef(0);
 
   const handleCopy = useCallback(() => {
     const layers = copyableSelection(ctx);
     if (layers.length === 0) return;
-    captureToClipboard(clipboardRef, pendingWriteRef, layers);
+    captureToClipboard(clipboardRef, outstandingWritesRef, layers);
   }, [ctx]);
 
   const handleCut = useCallback(() => {
     const layers = copyableSelection(ctx);
     if (layers.length === 0) return;
-    captureToClipboard(clipboardRef, pendingWriteRef, layers);
+    captureToClipboard(clipboardRef, outstandingWritesRef, layers);
     // Copy + delete as ONE commit — cut must be a single undo entry.
     const cutIds = new Set(layers.map((l) => l.id));
     ctx.commit({ ...ctx.doc, layers: ctx.doc.layers.filter((l) => !cutIds.has(l.id)) });
@@ -193,17 +201,18 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
       // the internal-clipboard fallback below — the OS clipboard's current
       // content always wins over a stale in-app copy.
       //
-      // EXCEPT while this session's own write is still in flight
-      // (pendingWriteRef): the text just read from clipboardData PRE-DATES
-      // that write (writeText is async, so a fast copy-then-paste can read
-      // the clipboard before it lands). That stale text may itself be a PRIOR
-      // copy's zpd envelope — e.g. copy A, copy B, immediate paste, where the
-      // OS clipboard still holds envelope A. Parsing the envelope BEFORE this
-      // guard let stale envelope A win over the just-copied internal snapshot
-      // B; so while a write is pending we skip the envelope path entirely and
-      // fall through to the internal snapshot, which always holds B.
+      // EXCEPT while any of this session's own writes are still in flight
+      // (outstandingWritesRef): the text just read from clipboardData PRE-DATES
+      // the latest write (writeText is async, so a fast copy-then-paste can
+      // read the clipboard before it lands). That stale text may itself be a
+      // PRIOR copy's zpd envelope — e.g. copy A, copy B, immediate paste, where
+      // the OS clipboard still holds envelope A. Parsing the envelope BEFORE
+      // this guard let stale envelope A win over the just-copied internal
+      // snapshot B; so while any write is outstanding we skip the envelope path
+      // entirely and fall through to the internal snapshot, which always holds
+      // the most recent copy.
       const text = e.clipboardData?.getData('text/plain');
-      if (text && !pendingWriteRef.current) {
+      if (text && outstandingWritesRef.current === 0) {
         const envelopeLayers = parseEnvelope(text);
         if (envelopeLayers) {
           e.preventDefault();

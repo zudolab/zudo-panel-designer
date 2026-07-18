@@ -363,6 +363,52 @@ describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('overlapping writes: an EARLIER write settling does not clear the pending state while a LATER write is still in flight', async () => {
+    // copy A (shape), copy B (text) before A settles, settle ONLY A, then
+    // paste. The OS clipboard now holds envelope A, but the latest copy is B —
+    // a single boolean would read "no write pending" (A cleared it) and paste
+    // stale A; the outstanding-writes counter keeps B winning.
+    let resolveA!: () => void;
+    const writeA = new Promise<void>((resolve) => {
+      resolveA = resolve;
+    });
+    const writeB = new Promise<void>(() => {}); // never settles → B stays in flight
+    const writeText = vi.fn().mockReturnValueOnce(writeA).mockReturnValueOnce(writeB);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    try {
+      const doc = baseDoc([shapeLayer, textLayer]);
+      const ctx = createCtx(doc, ['shape-1']);
+      const { result } = renderHook(() => useClipboard(ctx));
+
+      act(() => result.current.handleCopy()); // copy A = shapeLayer, write A in flight
+      act(() => ctx.selectIds(['text-1']));
+      act(() => result.current.handleCopy()); // copy B = textLayer, write B in flight; internal = [textLayer]
+
+      // Settle ONLY write A — the OS clipboard now reflects envelope A.
+      await act(async () => {
+        resolveA();
+        await writeA;
+      });
+
+      const envelopeA = JSON.stringify({
+        app: 'zpd',
+        kind: 'layers',
+        version: 1,
+        layers: [shapeLayer],
+      });
+      act(() => dispatchPaste(window, { text: envelopeA }));
+
+      // Write B is still outstanding, so the internal snapshot (textLayer) wins.
+      expect(ctx.commit).toHaveBeenCalledTimes(1);
+      const pasted = ctx.doc.layers.find(
+        (l) => l.id !== 'shape-1' && l.id !== 'text-1' && l.type !== 'pattern',
+      );
+      expect(pasted?.type).toBe('text');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('useClipboard — paste priority: image > envelope > internal', () => {
