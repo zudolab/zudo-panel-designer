@@ -82,6 +82,19 @@ function parseParamDefs(moduleSrc, filePath) {
       defaultValue: Number(match[6]),
     });
   }
+  // Fail loud on drift: PARAM_DEF_RE assumes each def is a single-line object
+  // with fields in a fixed order. If a def reorders fields, wraps to multiple
+  // lines, or adds one, its regex match fails and it would be SILENTLY dropped
+  // from the table. Every def has exactly one `key:`, so a key count that
+  // disagrees with the matched-def count means a def slipped through — throw
+  // rather than emit a short row.
+  const keyCount = (m[1].match(/\bkey:/g) ?? []).length;
+  if (keyCount !== defs.length) {
+    throw new Error(
+      `paramDefs parse mismatch in ${filePath}: found ${keyCount} 'key:' entries but matched ${defs.length} defs — ` +
+        `a paramDef likely broke the single-line-fixed-order convention PARAM_DEF_RE expects`,
+    );
+  }
   if (defs.length === 0) {
     throw new Error(`'paramDefs: [...]' in ${filePath} parsed to zero param defs`);
   }

@@ -59,7 +59,8 @@ function readLedgeredPgenIds() {
   if (!existsSync(LEDGER_PATH)) fail(`ledger not found at ${LEDGER_PATH}`);
   const ledger = JSON.parse(readFileSync(LEDGER_PATH, 'utf8'));
   const ids = new Map(); // pgenId -> status
-  for (const rows of Object.values(ledger)) {
+  for (const [section, rows] of Object.entries(ledger)) {
+    if (!Array.isArray(rows)) fail(`ledger section '${section}' is not an array`);
     for (const row of rows) {
       if (row.pgenId != null) ids.set(row.pgenId, row.status);
     }
