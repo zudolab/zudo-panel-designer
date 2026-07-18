@@ -52,3 +52,53 @@ export async function toScreenPoint(
     y: box.y + mm.y * camera.pxPerMm + camera.offsetY,
   };
 }
+
+// Reads an axis-aligned block of device pixels from the editor canvas.
+// `from`/`to` are page-viewport px corners (the space toScreenPoint returns).
+// Region reads exist for PATTERNED content (#97): dot-grid paint has gaps, so
+// a single-pixel probe of "is the ghost there?" would be flaky — counting over
+// a region that spans at least one pattern pitch is deterministic.
+export async function readCanvasRegion(
+  page: Page,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): Promise<{ width: number; height: number; data: number[] }> {
+  return page.evaluate(
+    ({ x0, y0, x1, y1 }) => {
+      const canvas = document.querySelector('[data-testid="editor-canvas"]') as HTMLCanvasElement | null;
+      if (!canvas) throw new Error('editor-canvas not found');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('2d context unavailable');
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const px = Math.round((Math.min(x0, x1) - rect.left) * dpr);
+      const py = Math.round((Math.min(y0, y1) - rect.top) * dpr);
+      const w = Math.max(1, Math.round(Math.abs(x1 - x0) * dpr));
+      const h = Math.max(1, Math.round(Math.abs(y1 - y0) * dpr));
+      const img = ctx.getImageData(px, py, w, h);
+      return { width: w, height: h, data: Array.from(img.data) };
+    },
+    { x0: from.x, y0: from.y, x1: to.x, y1: to.y },
+  );
+}
+
+// Count of pixels in a readCanvasRegion result whose RGB differs from `rgb`
+// on any channel by more than `tolerance`. 0 == "the whole region is this
+// color (within anti-aliasing noise)"; > 0 == "something else painted here".
+export function countPixelsDiffering(
+  region: { data: number[] },
+  rgb: readonly [number, number, number],
+  tolerance: number,
+): number {
+  let count = 0;
+  for (let i = 0; i < region.data.length; i += 4) {
+    if (
+      Math.abs(region.data[i] - rgb[0]) > tolerance ||
+      Math.abs(region.data[i + 1] - rgb[1]) > tolerance ||
+      Math.abs(region.data[i + 2] - rgb[2]) > tolerance
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}

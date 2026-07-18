@@ -6,7 +6,7 @@
 // pointer release closes the gesture so the next scrub opens a fresh entry.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { PatternLayer, Pt } from '@zpd/core';
+import { MAX_PATTERN_SIZE_MM, patternCoverGeometry, type PatternLayer, type Pt } from '@zpd/core';
 import type { ToolContext } from '../types';
 import './pattern';
 import { getInspector } from '../registry/inspectors';
@@ -90,5 +90,86 @@ describe('pattern inspector — slider scrub == one undo entry', () => {
     fireEvent.pointerUp(pitch);
 
     expect(ctx.beginGesture).toHaveBeenCalledTimes(2); // two distinct scrubs, two entries
+  });
+});
+
+// Square geometry fields + "Cover panel" reset (#97, movable pattern square).
+// NumberField commits once per discrete edit (blur/Enter) with the default
+// commit:true — one undo entry each, same contract as the shape inspector.
+describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
+  it('commits x, y, and size as discrete edits', () => {
+    const onChange = vi.fn();
+    const ctx = stubCtx();
+    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+
+    const xField = screen.getByLabelText('x (mm)');
+    fireEvent.change(xField, { target: { value: '12' } });
+    fireEvent.blur(xField);
+    expect(onChange).toHaveBeenLastCalledWith({ x: 12 });
+
+    const yField = screen.getByLabelText('y (mm)');
+    fireEvent.change(yField, { target: { value: '-4.5' } });
+    fireEvent.blur(yField);
+    expect(onChange).toHaveBeenLastCalledWith({ y: -4.5 });
+
+    const sizeField = screen.getByLabelText('size (mm)');
+    fireEvent.change(sizeField, { target: { value: '40' } });
+    fireEvent.blur(sizeField);
+    expect(onChange).toHaveBeenLastCalledWith({ size: 40 });
+
+    expect(ctx.beginGesture).not.toHaveBeenCalled(); // discrete edits, no gesture
+  });
+
+  it('clamps size into the renderer draw-guard range (0 < size <= MAX_PATTERN_SIZE_MM)', () => {
+    const onChange = vi.fn();
+    const ctx = stubCtx();
+    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+
+    const sizeField = screen.getByLabelText('size (mm)');
+    fireEvent.change(sizeField, { target: { value: '5000' } });
+    fireEvent.blur(sizeField);
+    expect(onChange).toHaveBeenLastCalledWith({ size: MAX_PATTERN_SIZE_MM });
+
+    fireEvent.change(sizeField, { target: { value: '-3' } });
+    fireEvent.blur(sizeField);
+    expect(onChange).toHaveBeenLastCalledWith({ size: 0.1 });
+  });
+
+  it('"Cover panel" applies patternCoverGeometry(panel) via the shared core helper, one commit', () => {
+    const onChange = vi.fn();
+    const ctx = stubCtx(); // panel 60 × 128.5
+    render(<Inspector layer={{ ...layer, x: 20, y: 30, size: 12 }} onChange={onChange} ctx={ctx} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cover panel' }));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(
+      patternCoverGeometry({ widthMm: 60, heightMm: 128.5 }),
+    );
+  });
+
+  // No-op guards (#97 self-review): an unchanged commit would write a phantom
+  // undo entry AND wipe any redo branch (ctx.commit discards redo).
+  it('"Cover panel" on a square already at cover geometry commits nothing', () => {
+    const onChange = vi.fn();
+    const ctx = stubCtx();
+    const cover = patternCoverGeometry({ widthMm: 60, heightMm: 128.5 });
+    render(<Inspector layer={{ ...layer, ...cover }} onChange={onChange} ctx={ctx} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cover panel' }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('a size entry that clamps back to the current size commits nothing', () => {
+    const onChange = vi.fn();
+    const ctx = stubCtx();
+    render(
+      <Inspector layer={{ ...layer, size: MAX_PATTERN_SIZE_MM }} onChange={onChange} ctx={ctx} />,
+    );
+
+    const sizeField = screen.getByLabelText('size (mm)');
+    fireEvent.change(sizeField, { target: { value: '5000' } }); // clamps to the max — already there
+    fireEvent.blur(sizeField);
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

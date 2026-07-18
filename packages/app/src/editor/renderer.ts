@@ -206,9 +206,9 @@ export function cornerHandleRects(bbox: Rect, cam: Camera): HandleRect[] {
 }
 
 // Whether core's scaleLayer can change this layer at all (#52): patterns pass
-// through scaleLayer unchanged (they carry an x/y/size square since #96, but
-// pattern scaling stays excluded until the interaction sub — this gate is
-// deliberately unchanged), and a path with no points anywhere (the parser
+// through scaleLayer unchanged (#97 kept multi-scale pattern-free on purpose;
+// single-pattern sizing lives in the inspector — see inspectors/pattern.tsx),
+// and a path with no points anywhere (the parser
 // accepts them; pathBbox gives it a 0×0 box, not null) has no coordinates to
 // scale.
 function layerCanScale(layer: Layer): boolean {

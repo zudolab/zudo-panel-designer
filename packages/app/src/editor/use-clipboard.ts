@@ -37,21 +37,23 @@ interface ZpdClipboardEnvelope {
 }
 
 export interface UseClipboardReturn {
-  /** Copies the current selection (pattern layers excluded) to the internal + OS clipboard. */
+  /** Copies the current selection (patterns included, #97) to the internal + OS clipboard. */
   handleCopy(): void;
   /** Copy + delete the current selection as ONE undo entry. */
   handleCut(): void;
   /** Clones the current selection with fresh ids + cascade offset, ONE undo entry. */
   handleDuplicate(): void;
-  /** Selects every non-pattern layer. */
+  /** Selects every non-pattern layer (the deliberate #97 exception — see below). */
   handleSelectAll(): void;
 }
 
-// Pattern layers are the single panel-wide background (#3's eligibility
-// matrix) — the issue spec excludes them from copy/cut/duplicate/select-all.
+// The full directly-selected set — pattern squares included since #97
+// (multiple pattern squares are legitimately useful, so copy/cut/paste/
+// duplicate treat them like any layer). Select-all below is the ONE
+// deliberate pattern exception left in the clipboard.
 function copyableSelection(ctx: ToolContext): Layer[] {
   const ids = new Set(ctx.selectedIds);
-  return ctx.doc.layers.filter((l) => ids.has(l.id) && l.type !== 'pattern');
+  return ctx.doc.layers.filter((l) => ids.has(l.id));
 }
 
 // Parses OS clipboard text as a zpd layers envelope. Returns null for
@@ -80,10 +82,9 @@ function parseEnvelope(text: string): Layer[] | null {
   // type-specific field individually, so a same-version envelope from an
   // older/hand-edited source can't slip in a structurally incomplete layer
   // (e.g. a 'path' with no `points`) that would later throw in cloneLayer or
-  // insert NaN geometry into the document.
-  const layers = parsePanelConfig({ layers: candidate.layers }).layers.filter(
-    (l) => l.type !== 'pattern',
-  );
+  // insert NaN geometry into the document. Pattern layers paste like any
+  // other since #97 (they're copyable, so envelopes can carry them).
+  const layers = parsePanelConfig({ layers: candidate.layers }).layers;
   return layers.length > 0 ? layers : null;
 }
 
@@ -173,6 +174,10 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
   }, [ctx]);
 
   const handleSelectAll = useCallback(() => {
+    // Select-all still EXCLUDES patterns on purpose (#97): a background-ish
+    // cover square joining every Cmd/Ctrl+A would make "select everything and
+    // move it" drag the background along. Patterns join a selection only by
+    // direct click (two-tier hit) or the layer list.
     ctx.selectIds(ctx.doc.layers.filter((l) => l.type !== 'pattern').map((l) => l.id));
   }, [ctx]);
 

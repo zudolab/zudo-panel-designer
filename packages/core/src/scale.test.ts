@@ -191,7 +191,7 @@ describe('scaleLayer — path', () => {
 });
 
 describe('scaleLayer — pattern', () => {
-  it('returns the pattern layer unchanged (scaling stays excluded until the interaction sub)', () => {
+  it('returns the pattern layer unchanged (#97 keeps patterns out of group scaling; the inspector owns sizing)', () => {
     const pattern: PatternLayer = {
       id: 'pt1',
       name: 'grid',

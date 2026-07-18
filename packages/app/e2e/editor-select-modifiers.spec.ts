@@ -21,12 +21,13 @@ const RECT = { x: 8, y: 14, width: 24, height: 16 };
 const ELLIPSE = { x: 30, y: 40, width: 22, height: 22 };
 const RECT_CENTER = { x: 20, y: 22 };
 const ELLIPSE_CENTER = { x: 41, y: 51 };
-// The y 2..11 band sits over the default dot-grid pattern layer but is free
-// of every OTHER demo layer (the topmost, demo-rect, starts at y 14) — and
-// patterns are never canvas-hit-testable (hit-test.ts's invariant, also
-// relied on by editor-select.spec.ts's marquee-exclusion case), so it reads
-// as genuine empty space for click purposes.
-const EMPTY_SPACE = { x: 25, y: 5 };
+// #97 made pattern squares click-selectable (two-tier hit-test), so a point
+// over the cover-default pattern no longer reads as empty space — a plain
+// click there now selects the pattern (editor-movable-pattern.spec.ts covers
+// that). Genuine empty space must sit OUTSIDE the cover square too: for the
+// 12HP demo doc the square spans x ≈ -33.8..94.7 (patternCoverGeometry), so
+// x -42 clears it with margin while staying inside the fitted canvas gutter.
+const EMPTY_SPACE = { x: -42, y: 60 };
 
 async function click(
   page: Page,
