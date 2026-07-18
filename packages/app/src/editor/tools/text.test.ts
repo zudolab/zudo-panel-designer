@@ -77,6 +77,7 @@ describe('text tool — click to place', () => {
 
     expect(ctx.setActiveTool).toHaveBeenCalledWith('select');
     expect(ctx.select).toHaveBeenCalledWith(layer.id);
+    expect(ctx.requestRepaint).not.toHaveBeenCalled();
   });
 
   it('leaves any existing layers untouched, appending the new text layer on top', () => {

@@ -5,7 +5,7 @@
 // harness style as select.test.ts. Selection changes never touch history; the
 // 4 CSS px client-space threshold gates both marquee materialization and the
 // move gesture's first history entry.
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { marqueeHitIds, marqueeRect } from './select'; // also registers 'select'
 import { getTool } from '../registry/tools';
 import {
@@ -22,10 +22,12 @@ import {
   type PatternLayer,
   type Pt,
   type ShapeLayer,
+  type TextLayer,
 } from '@zpd/core';
 import { normalizeSelectedIds } from '../selection';
 import type { DraftRenderContext, PanelDims, ToolContext, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
+import { resetTextGeometryForTests, setTextMeasureForTests } from '../text-geometry';
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 const IDENTITY: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
@@ -187,7 +189,10 @@ const select = getTool('select')!;
 beforeEach(() => {
   // module-scope drag/marquee/hover state — reset between tests
   select.onDeactivate?.({} as ToolContext);
+  resetTextGeometryForTests();
 });
+
+afterEach(() => resetTextGeometryForTests());
 
 describe('marquee hit math', () => {
   it('uses INTERSECTION semantics: partial overlap selects, no containment needed', () => {
@@ -224,6 +229,33 @@ describe('marquee hit math', () => {
     const probe = { x: 16, y: 6, width: 1, height: 1 };
     expect(marqueeHitIds([rotated], probe)).toEqual(['r1']);
     expect(marqueeHitIds([rect('r1', 10, 10, 20, 10)], probe)).toEqual([]);
+  });
+
+  it('uses canonical multiline text metrics and drops invalid text geometry', () => {
+    setTextMeasureForTests((layer) => ({
+      x: layer.x,
+      y: layer.y,
+      width: 40,
+      height: 20,
+    }));
+    const text: TextLayer = {
+      id: 'text-marquee',
+      name: 'Text',
+      type: 'text',
+      content: 'AAAAA\nBB',
+      fontFamily: 'sans-serif',
+      sizeMm: 8,
+      x: 10,
+      y: 20,
+      rotation: 90,
+      color: 1,
+    };
+    // B0 rotated AABB is x20..40/y10..50. This probe only touches the
+    // rotation-expanded top edge, proving marquee shares the canonical box.
+    expect(marqueeHitIds([text], { x: 20, y: 10, width: 1, height: 1 })).toEqual([text.id]);
+    expect(
+      marqueeHitIds([{ ...text, sizeMm: 0 }], { x: 0, y: 0, width: 100, height: 100 }),
+    ).toEqual([]);
   });
 
   it('marqueeRect normalizes a drag in any direction to a positive-size rect', () => {

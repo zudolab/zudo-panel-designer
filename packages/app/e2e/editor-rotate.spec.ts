@@ -3,7 +3,7 @@
 // unreliable against React's event delegation. State is asserted through the
 // window.__zpdTest bridge (getDoc), never by pixel-probing the canvas.
 import { expect, test, type Page } from '@playwright/test';
-import { resizeRotatedRect, type ShapeLayer } from '@zpd/core';
+import { resizeRotatedRect, type ShapeLayer, type TextLayer } from '@zpd/core';
 import { bridge, openEditor, toScreenPoint } from './helpers';
 
 // Must match renderer.ts's ROTATE_HANDLE_OFFSET_PX: the rotate knob floats
@@ -102,4 +102,96 @@ test('@smoke resize a ROTATED shape: dims follow resizeRotatedRect via getDoc()'
   expect(rect.y).toBeCloseTo(expected.y, 3);
   expect(rect.width).toBeCloseTo(expected.width, 3);
   expect(rect.height).toBeCloseTo(expected.height, 3);
+});
+
+test('@smoke rotated text keeps its render pivot while a bundled font is delayed', async ({
+  page,
+}) => {
+  const layer: TextLayer = {
+    id: 'delayed-rotated-text',
+    name: 'Delayed rotated text',
+    type: 'text',
+    content: 'MMMMMMMMMM\nII',
+    fontFamily: 'Press Start 2P',
+    sizeMm: 8,
+    x: 20,
+    y: 30,
+    rotation: 35,
+    color: 2,
+  };
+  await page.addInitScript((textLayer) => {
+    localStorage.setItem(
+      'zpd.doc.v1',
+      JSON.stringify({
+        version: 1,
+        savedAt: 0,
+        config: {
+          version: 3,
+          app: 'zpd',
+          panel: { hp: 20, widthMm: 101.6, heightMm: 128.5 },
+          palette: ['Black', 'Gold', 'White'],
+          layers: [textLayer],
+          guides: [],
+        },
+      }),
+    );
+  }, layer);
+
+  let releaseFont: () => void = () => {};
+  const fontGate = new Promise<void>((resolve) => {
+    releaseFont = resolve;
+  });
+  let sawFontRequest: (url: string) => void = () => {};
+  const fontRequested = new Promise<string>((resolve) => {
+    sawFontRequest = resolve;
+  });
+  await page.route('**/*.woff2', async (route) => {
+    if (!route.request().url().includes('press-start-2p')) {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    sawFontRequest(route.request().url());
+    await fontGate;
+    await route.fulfill({ response });
+  });
+
+  await openEditor(page);
+  await fontRequested;
+  await expect.poll(() => bridge(page).getTextGeometry(layer.id)).toMatchObject({ loading: true });
+  const provisional = await bridge(page).getTextGeometry(layer.id);
+  if (!provisional) throw new Error('provisional rotated text geometry not captured');
+
+  // The provisional box is fully interactive while the local face is held.
+  const provisionalCenter = await toScreenPoint(page, provisional.pivot);
+  await page.mouse.click(provisionalCenter.x, provisionalCenter.y);
+  expect(await bridge(page).getSelectedIds()).toEqual([layer.id]);
+  const beforeReleaseDoc = await bridge(page).getDoc();
+  const beforeReleaseHistory = await bridge(page).getHistory();
+  const beforeReleaseHistoryBytes = JSON.stringify(beforeReleaseHistory);
+  const beforeReleaseSerialized = await bridge(page).serialize();
+  const beforeReleaseSelection = await bridge(page).getSelectedIds();
+
+  releaseFont();
+  await expect.poll(() => bridge(page).getTextGeometry(layer.id)).toMatchObject({ loading: false });
+  const loaded = await bridge(page).getTextGeometry(layer.id);
+  if (!loaded) throw new Error('loaded rotated text geometry not captured');
+
+  expect(loaded.pivot.x).toBeCloseTo(provisional.pivot.x, 6);
+  expect(loaded.pivot.y).toBeCloseTo(provisional.pivot.y, 6);
+  expect(loaded.box.width).not.toBeCloseTo(provisional.box.width, 3);
+  expect(loaded.metricRevision).toBeGreaterThan(provisional.metricRevision);
+  expect(await bridge(page).getSelectedIds()).toEqual(beforeReleaseSelection);
+  expect(await bridge(page).getDoc()).toEqual(beforeReleaseDoc);
+  const afterReleaseHistory = await bridge(page).getHistory();
+  expect(afterReleaseHistory).toEqual(beforeReleaseHistory);
+  expect(JSON.stringify(afterReleaseHistory)).toBe(beforeReleaseHistoryBytes);
+  expect(await bridge(page).serialize()).toEqual(beforeReleaseSerialized);
+  const docLayer = (await bridge(page).getDoc()).layers[0] as TextLayer;
+  expect(docLayer).toMatchObject({
+    x: layer.x,
+    y: layer.y,
+    sizeMm: layer.sizeMm,
+    rotation: layer.rotation,
+  });
 });

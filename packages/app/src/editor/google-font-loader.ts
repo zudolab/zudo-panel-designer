@@ -1,79 +1,145 @@
-// Ported from pgen's google-font-loader.ts (~35 lines) for zpd's Google Font
-// browser (issue #67). Two deliberate deviations from the reference:
-//  - regular weight only: TextLayer has no fontWeight field and the
-//    renderer's ctx.font string carries no weight component, so the css2
-//    request asks for just the default face — not the reference's 4-variant
-//    ital/wght request, which can also fail outright for families that don't
-//    ship those faces.
-//  - sampleText is forwarded to document.fonts.load so unicode-range
-//    subsets (e.g. Japanese fonts split into per-glyph-range faces) fetch
-//    the glyphs a caller is about to render, not just the default Latin
-//    range.
-const fontLoadPromises = new Map<string, Promise<void>>();
-const loadedFonts = new Set<string>();
-// Per-family set of sample texts already sent to document.fonts.load. The
-// <link> stylesheet is deduplicated by family alone (below) — but two
-// callers sharing a family with DIFFERENT sample text (e.g. two text layers
-// on the same CJK font, one Latin, one Japanese) each need their own
-// explicit load call, or the second caller's unicode-range subset would
-// never actually get requested (review finding, #67).
-const requestedSamples = new Map<string, Set<string>>();
+// Google Font loading is split into two independently memoized resources:
+// one stylesheet per family, and one FontFaceSet.load attempt per exact
+// (family, sampleText).  Keeping the latter exact is important for fonts with
+// unicode-range subsets: a Latin layer and a Japanese layer can share the CSS
+// while still requesting different binary faces.
 
-const FONT_LOAD_TIMEOUT_MS = 10000;
+export type FontInitialResult = 'ready' | 'failed' | 'timed-out';
+export type FontAttemptStatus = 'pending' | 'ready' | 'failed' | 'timed-out' | 'late-ready';
 
-// Family-level readiness for the Google-fetched (non-curated) families. This
-// is the loader's INTERNAL memoization surface: fonts.ts is the single PUBLIC
-// font-readiness API (its isFontLoaded/isFontLoading) and delegates the
-// family-only question here for a caller that knows just the family, not the
-// per-layer sample text (the Font Explorer's cards). Not meant for feature
-// components to import directly.
-export function isGoogleFontLoaded(family: string): boolean {
-  return loadedFonts.has(family);
+export interface FontLoadAttempt {
+  /** Stable, never-rejecting initial wait (including the 10 second timeout). */
+  readonly initial: Promise<FontInitialResult>;
+  /** Compatibility wait used by ensureFont/loadGoogleFont. Never rejects. */
+  readonly done: Promise<void>;
+  getStatus(): FontAttemptStatus;
+  /** Fires only for timed-out -> late-ready, and at most once per callback. */
+  onLateReady(callback: () => void): () => void;
 }
 
-function requestFontFace(family: string, sampleText: string | undefined): Promise<unknown> {
-  const key = sampleText ?? '';
-  const seen = requestedSamples.get(family) ?? new Set<string>();
-  if (seen.has(key)) return Promise.resolve();
-  seen.add(key);
-  requestedSamples.set(family, seen);
+const stylesheetPromises = new Map<string, Promise<void>>();
+const attemptsByFamily = new Map<string, Map<string | undefined, FontLoadAttempt>>();
+const attemptedFamilies = new Set<string>();
 
-  const fontSet = typeof document === 'undefined' ? undefined : document.fonts;
-  return fontSet?.load ? fontSet.load(`16px "${family}"`, sampleText) : Promise.resolve();
-}
+export const FONT_LOAD_TIMEOUT_MS = 10000;
 
-export function loadGoogleFont(family: string, sampleText?: string): Promise<void> {
-  const existing = fontLoadPromises.get(family);
-  if (existing) {
-    // stylesheet already requested for this family — still make sure THIS
-    // sample's glyphs get their own load call; fire-and-forget, doesn't
-    // gate the family's memoized promise or repeat the <link>/timeout race.
-    requestFontFace(family, sampleText).catch(() => {});
-    return existing;
+function ensureStylesheet(family: string): Promise<void> {
+  const existing = stylesheetPromises.get(family);
+  if (existing) return existing;
+
+  if (typeof document === 'undefined') {
+    const unavailable = Promise.resolve();
+    stylesheetPromises.set(family, unavailable);
+    return unavailable;
   }
 
   const link = document.createElement('link');
   link.rel = 'stylesheet';
   link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family)}&display=swap`;
-  document.head.appendChild(link);
-
-  // Wait for the stylesheet to load so @font-face rules are registered,
-  // then wait for the actual font binary to be ready.
-  const stylesheetLoaded = new Promise<void>((resolve) => {
+  const promise = new Promise<void>((resolve) => {
+    // A stylesheet failure is not allowed to reject callers. FontFaceSet.load
+    // still gets a chance because the face may already be registered/cached.
     link.onload = () => resolve();
     link.onerror = () => resolve();
   });
-  const fontReady = stylesheetLoaded
-    .then(() => requestFontFace(family, sampleText))
-    .then(() => {})
-    .catch(() => {
-      // a FontFaceSet.load rejection must not surface — the fallback face
-      // keeps rendering, same contract as a timed-out load below
-    });
-  const timeout = new Promise<void>((resolve) => setTimeout(resolve, FONT_LOAD_TIMEOUT_MS));
-  const promise = Promise.race([fontReady, timeout]).then(() => {
-    loadedFonts.add(family);
-  });
-  fontLoadPromises.set(family, promise);
+  stylesheetPromises.set(family, promise);
+  document.head.appendChild(link);
   return promise;
+}
+
+function createAttempt(family: string, sampleText: string | undefined): FontLoadAttempt {
+  let status: FontAttemptStatus = 'pending';
+  let settleInitial: (result: FontInitialResult) => void = () => {};
+  const lateReadyCallbacks = new Set<() => void>();
+  const initial = new Promise<FontInitialResult>((resolve) => {
+    settleInitial = resolve;
+  });
+  const done = initial.then(() => {});
+
+  const settle = (result: FontInitialResult) => {
+    if (status !== 'pending') return;
+    status = result;
+    if (result !== 'timed-out') lateReadyCallbacks.clear();
+    attemptedFamilies.add(family);
+    settleInitial(result);
+  };
+
+  const timeoutId = setTimeout(() => settle('timed-out'), FONT_LOAD_TIMEOUT_MS);
+  const fontSet = typeof document === 'undefined' ? undefined : document.fonts;
+
+  if (!fontSet?.load) {
+    clearTimeout(timeoutId);
+    // Still register the family stylesheet when a document exists, but do not
+    // dim or retry forever in runtimes without FontFaceSet (notably jsdom).
+    void ensureStylesheet(family);
+    settle('failed');
+  } else {
+    // This promise remains observed after timeout. A late success is useful:
+    // geometry can perform one final accurate measure/repaint. A late failure
+    // deliberately changes nothing and emits nothing.
+    ensureStylesheet(family)
+      .then(() => fontSet.load(`16px "${family}"`, sampleText))
+      .then(
+        () => {
+          if (status === 'pending') {
+            clearTimeout(timeoutId);
+            settle('ready');
+          } else if (status === 'timed-out') {
+            status = 'late-ready';
+            for (const callback of [...lateReadyCallbacks]) callback();
+            lateReadyCallbacks.clear();
+          }
+        },
+        () => {
+          if (status === 'pending') {
+            clearTimeout(timeoutId);
+            settle('failed');
+          }
+        },
+      );
+  }
+
+  return {
+    initial,
+    done,
+    getStatus: () => status,
+    onLateReady(callback) {
+      // Registration after the transition does not replay it: callers inspect
+      // getStatus() first and can measure immediately when it is late-ready.
+      if (status !== 'pending' && status !== 'timed-out') return () => {};
+      lateReadyCallbacks.add(callback);
+      return () => lateReadyCallbacks.delete(callback);
+    },
+  };
+}
+
+export function ensureGoogleFontAttempt(family: string, sampleText?: string): FontLoadAttempt {
+  let samples = attemptsByFamily.get(family);
+  if (!samples) {
+    samples = new Map();
+    attemptsByFamily.set(family, samples);
+  }
+  const existing = samples.get(sampleText);
+  if (existing) return existing;
+  const attempt = createAttempt(family, sampleText);
+  samples.set(sampleText, attempt);
+  return attempt;
+}
+
+export function getGoogleFontAttemptStatus(
+  family: string,
+  sampleText?: string,
+): FontAttemptStatus | 'idle' {
+  return attemptsByFamily.get(family)?.get(sampleText)?.getStatus() ?? 'idle';
+}
+
+// Family-level readiness is retained for the Font Explorer. Here "loaded"
+// means the initial attempt is over (ready, failed, or timed out), matching the
+// old no-retry contract; exact rendering state comes from the attempt above.
+export function isGoogleFontLoaded(family: string): boolean {
+  return attemptedFamilies.has(family);
+}
+
+export function loadGoogleFont(family: string, sampleText?: string): Promise<void> {
+  return ensureGoogleFontAttempt(family, sampleText).done;
 }

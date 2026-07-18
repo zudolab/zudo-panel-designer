@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   mergeBboxes,
   PALETTE,
+  rotatedRectAABB,
   type ImageLayer,
   type Layer,
   type PatternLayer,
@@ -22,6 +23,7 @@ import {
   CORNER_HANDLE_IDS,
   cornerHandleRects,
   layerBbox,
+  measureTextBbox,
   multiResizeBbox,
   reconcileImageCache,
   renderScene,
@@ -30,14 +32,28 @@ import {
   rotateHandleScreenPos,
   selectionBboxes,
 } from './renderer';
-import { ensureFont, isFontLoading } from './fonts';
+import {
+  ensureFontAttempt,
+  type FontAttemptStatus,
+  type FontInitialResult,
+  type FontLoadAttempt,
+} from './fonts';
+import {
+  getTextGeometry,
+  reconcileTextGeometry,
+  resetTextGeometryForTests,
+  resetTextGeometryNamespace,
+  setTextMeasureForTests,
+} from './text-geometry';
 import type { Camera } from './camera';
 import type { PanelDims } from './types';
+import { outsidePanelRegion } from './outside-panel-region';
+import { hitTestCanonicalText, marqueeHitIds } from './tools/select';
 
 vi.mock('./fonts', () => ({
-  ensureFont: vi.fn(() => Promise.resolve()),
-  isFontLoaded: vi.fn(() => false),
-  isFontLoading: vi.fn(() => false),
+  ensureFontAttempt: vi.fn(),
+  fontRequestKey: (family: string, sampleText?: string) =>
+    `${family.length}:${family}:${sampleText ?? ''}`,
 }));
 
 // renderer.ts pulls exactly patternByName from @zpd/patterns; mocking it lets
@@ -75,9 +91,7 @@ describe('selectionBboxes', () => {
 
   it('skips hidden layers so their chrome vanishes with the layer paint', () => {
     const layers: Layer[] = [shape('a', 0, 0), shape('b', 20, 20, { hidden: true })];
-    expect(selectionBboxes(layers, ['a', 'b'])).toEqual([
-      { x: 0, y: 0, width: 10, height: 10 },
-    ]);
+    expect(selectionBboxes(layers, ['a', 'b'])).toEqual([{ x: 0, y: 0, width: 10, height: 10 }]);
   });
 
   it('drops ids absent from the doc (stale after delete/undo)', () => {
@@ -103,9 +117,7 @@ describe('selectionBboxes', () => {
   it('normalizes a mirrored member (negative width) to its visual rect', () => {
     // x 20, width -30 spans -10..20 visually → normalized bbox x -10, width 30.
     const layers: Layer[] = [shape('m', 20, 0, { width: -30 })];
-    expect(selectionBboxes(layers, ['m'])).toEqual([
-      { x: -10, y: 0, width: 30, height: 10 },
-    ]);
+    expect(selectionBboxes(layers, ['m'])).toEqual([{ x: -10, y: 0, width: 30, height: 10 }]);
   });
 
   it('the combined bbox stays correct when a member is mirrored', () => {
@@ -385,6 +397,9 @@ describe('renderScene — text loading-dim + repaint-on-load (#67)', () => {
   // recorded here instead so the ghost-combining test can check the specific
   // value the ghost pass set, not just the final one.
   let alphaHistory: unknown[];
+  let canvasCalls: { method: string; args: unknown[] }[];
+  let fontStatus: FontAttemptStatus;
+  let settleInitial: (result: FontInitialResult) => void;
   const originalGetContext = HTMLCanvasElement.prototype.getContext;
   const CAM: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
 
@@ -401,7 +416,22 @@ describe('renderScene — text loading-dim + repaint-on-load (#67)', () => {
   };
 
   beforeEach(() => {
+    resetTextGeometryForTests();
+    fontStatus = 'pending';
+    let settle: (result: FontInitialResult) => void = () => {};
+    const initial = new Promise<FontInitialResult>((resolve) => {
+      settle = resolve;
+    });
+    settleInitial = settle;
+    const attempt: FontLoadAttempt = {
+      initial,
+      done: initial.then(() => {}),
+      getStatus: () => fontStatus,
+      onLateReady: () => () => {},
+    };
+    vi.mocked(ensureFontAttempt).mockReturnValue(attempt);
     alphaHistory = [];
+    canvasCalls = [];
     HTMLCanvasElement.prototype.getContext = ((): CanvasRenderingContext2D => {
       store = {};
       return new Proxy(store, {
@@ -412,7 +442,9 @@ describe('renderScene — text loading-dim + repaint-on-load (#67)', () => {
           // (including text, via measureTextBbox) regardless of layer type —
           // a bare no-op would return undefined and crash on `.width`.
           if (p === 'measureText') return () => ({ width: 0 });
-          return () => undefined;
+          return (...args: unknown[]) => {
+            canvasCalls.push({ method: p, args });
+          };
         },
         set: (t, p: string, v) => {
           if (p === 'globalAlpha') alphaHistory.push(v);
@@ -424,6 +456,7 @@ describe('renderScene — text loading-dim + repaint-on-load (#67)', () => {
   });
 
   afterEach(() => {
+    resetTextGeometryForTests();
     HTMLCanvasElement.prototype.getContext = originalGetContext;
     vi.clearAllMocks();
   });
@@ -445,15 +478,14 @@ describe('renderScene — text loading-dim + repaint-on-load (#67)', () => {
   }
 
   it('dims a loading text layer to 30% opacity', () => {
-    vi.mocked(isFontLoading).mockReturnValue(true);
     renderWith(textLayer);
-    expect(store.globalAlpha).toBe(0.3);
+    expect(alphaHistory).toContain(0.3);
   });
 
   it('paints at full opacity once the font is no longer loading', () => {
-    vi.mocked(isFontLoading).mockReturnValue(false);
+    fontStatus = 'ready';
     renderWith(textLayer);
-    expect(store.globalAlpha).toBe(1);
+    expect(alphaHistory).toContain(1);
   });
 
   it('combines the loading dim with the outside-panel ghost alpha instead of overwriting it', () => {
@@ -461,20 +493,465 @@ describe('renderScene — text loading-dim + repaint-on-load (#67)', () => {
     // ghost pass, which pre-sets globalAlpha to OUTSIDE_GHOST_ALPHA (0.35)
     // before drawLayer runs
     const offPanelLayer: TextLayer = { ...textLayer, x: 1000, y: 1000 };
-    vi.mocked(isFontLoading).mockReturnValue(true);
     renderWith(offPanelLayer, { showOutsidePanel: true });
     expect(alphaHistory).toContain(0.35 * 0.3);
   });
 
-  it('kicks off ensureFont with the layer content as sample text, and repaints once it resolves', async () => {
+  it('owns the exact font attempt and repaints once its initial wait resolves', async () => {
     const requestRepaint = vi.fn();
-    vi.mocked(ensureFont).mockReturnValue(Promise.resolve());
     renderWith(textLayer, { requestRepaint });
 
-    expect(ensureFont).toHaveBeenCalledWith('Some Google Font', 'HELLO');
+    expect(ensureFontAttempt).toHaveBeenCalledWith('Some Google Font', 'HELLO');
+    fontStatus = 'ready';
+    settleInitial('ready');
     await Promise.resolve();
     await Promise.resolve();
     expect(requestRepaint).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the same preserved pivot and recentered box origin for transform and paint', async () => {
+    const layer = { ...textLayer, content: 'AAAAA\nBB', sizeMm: 8, x: 10, y: 20, rotation: 90 };
+    setTextMeasureForTests((next) => ({
+      x: next.x,
+      y: next.y,
+      width: fontStatus === 'ready' ? 60 : 40,
+      height: 20,
+    }));
+    renderWith(layer);
+    expect(canvasCalls).toContainEqual({ method: 'translate', args: [30, 30] });
+    expect(canvasCalls).toContainEqual({ method: 'translate', args: [-30, -30] });
+    expect(canvasCalls).toContainEqual({ method: 'fillText', args: ['AAAAA', 10, 20] });
+    expect(alphaHistory).toContain(0.3);
+
+    canvasCalls = [];
+    alphaHistory = [];
+    fontStatus = 'ready';
+    settleInitial('ready');
+    await Promise.resolve();
+    renderWith(layer);
+    expect(canvasCalls).toContainEqual({ method: 'translate', args: [30, 30] });
+    expect(canvasCalls).toContainEqual({ method: 'translate', args: [-30, -30] });
+    expect(canvasCalls).toContainEqual({ method: 'fillText', args: ['AAAAA', 0, 20] });
+    expect(alphaHistory).toContain(1);
+  });
+
+  it('does not request a font or paint invalid text sizes', () => {
+    vi.mocked(ensureFontAttempt).mockClear();
+    renderWith({ ...textLayer, sizeMm: 0, rotation: 90 });
+    expect(ensureFontAttempt).not.toHaveBeenCalled();
+    expect(canvasCalls.some((call) => call.method === 'fillText')).toBe(false);
+  });
+});
+
+// --- canonical rotated-text geometry (#111) ---------------------------------
+
+interface ControlledFontAttempt {
+  attempt: FontLoadAttempt;
+  settle(result: FontInitialResult): void;
+  lateReady(): void;
+}
+
+function controlledFontAttempt(): ControlledFontAttempt {
+  let status: FontAttemptStatus = 'pending';
+  let settled = false;
+  let resolveInitial: (result: FontInitialResult) => void = () => {};
+  const lateCallbacks = new Set<() => void>();
+  const initial = new Promise<FontInitialResult>((resolve) => {
+    resolveInitial = resolve;
+  });
+  const attempt: FontLoadAttempt = {
+    initial,
+    done: initial.then(() => {}),
+    getStatus: () => status,
+    onLateReady(callback) {
+      if (status !== 'pending' && status !== 'timed-out') return () => {};
+      lateCallbacks.add(callback);
+      return () => lateCallbacks.delete(callback);
+    },
+  };
+  return {
+    attempt,
+    settle(result) {
+      if (settled) return;
+      settled = true;
+      status = result;
+      if (result !== 'timed-out') lateCallbacks.clear();
+      resolveInitial(result);
+    },
+    lateReady() {
+      if (status !== 'timed-out') return;
+      status = 'late-ready';
+      for (const callback of [...lateCallbacks]) callback();
+      lateCallbacks.clear();
+    },
+  };
+}
+
+const rotatedText = (extra: Partial<TextLayer> = {}): TextLayer => ({
+  id: 'text-oracle',
+  name: 'Rotated text',
+  type: 'text',
+  content: 'AAAAA\nBB',
+  fontFamily: 'Oracle Font',
+  sizeMm: 8,
+  x: 10,
+  y: 20,
+  rotation: 90,
+  color: 1,
+  ...extra,
+});
+
+function expectRectClose(actual: Rect | null, expected: Rect): void {
+  expect(actual).not.toBeNull();
+  expect(actual!.x).toBeCloseTo(expected.x);
+  expect(actual!.y).toBeCloseTo(expected.y);
+  expect(actual!.width).toBeCloseTo(expected.width);
+  expect(actual!.height).toBeCloseTo(expected.height);
+}
+
+describe('canonical rotated text geometry (#111)', () => {
+  let font: ControlledFontAttempt;
+
+  beforeEach(() => {
+    resetTextGeometryForTests();
+    font = controlledFontAttempt();
+    vi.mocked(ensureFontAttempt).mockReturnValue(font.attempt);
+    // Numeric oracle: fallback width = 5*size (40 at 8mm), loaded width =
+    // 7.5*size (60 at 8mm). Height is always 1.25*size*lineCount.
+    setTextMeasureForTests((layer) => ({
+      x: layer.x,
+      y: layer.y,
+      width:
+        layer.sizeMm *
+        (font.attempt.getStatus() === 'ready' || font.attempt.getStatus() === 'late-ready'
+          ? 7.5
+          : 5),
+      height: layer.sizeMm * 1.25 * layer.content.split('\n').length,
+    }));
+  });
+
+  afterEach(() => {
+    resetTextGeometryForTests();
+    vi.clearAllMocks();
+  });
+
+  it('measures maximum line width while counting blank and trailing lines at 1.25 line height', () => {
+    const original = HTMLCanvasElement.prototype.getContext;
+    try {
+      resetTextGeometryForTests();
+      HTMLCanvasElement.prototype.getContext = (() =>
+        ({
+          font: '',
+          measureText: (text: string) => ({ width: text.length * 3 }),
+        }) as unknown as CanvasRenderingContext2D) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+      const multiline = rotatedText({ content: 'A\n\nBBBB\n' });
+      expect(measureTextBbox(multiline)).toEqual({ x: 10, y: 20, width: 12, height: 40 });
+      expect(measureTextBbox(rotatedText({ content: '' }))).toEqual({
+        x: 10,
+        y: 20,
+        width: 0,
+        height: 10,
+      });
+    } finally {
+      HTMLCanvasElement.prototype.getContext = original;
+      resetTextGeometryForTests();
+    }
+  });
+
+  it('locks B0 -> B1 to one pivot and exposes the same raw/AABB/chrome/handle oracle', async () => {
+    const layer = rotatedText();
+    const repaint = vi.fn();
+    reconcileTextGeometry([layer], repaint);
+
+    const fallback = getTextGeometry(layer)!;
+    expectRectClose(fallback.box, { x: 10, y: 20, width: 40, height: 20 });
+    expect(fallback.pivot).toEqual({ x: 30, y: 30 });
+    expect(fallback.loading).toBe(true);
+    expectRectClose(rotatedRectAABB(fallback.box, 90), {
+      x: 20,
+      y: 10,
+      width: 20,
+      height: 40,
+    });
+    expectRectClose(layerBbox(layer), fallback.box);
+    expectRectClose(selectionBboxes([layer], [layer.id])[0], {
+      x: 20,
+      y: 10,
+      width: 20,
+      height: 40,
+    });
+    expect(rotateHandleScreenPos(fallback.box, 90, IDENTITY).x).toBeCloseTo(60);
+    expect(rotateHandleScreenPos(fallback.box, 90, IDENTITY).y).toBeCloseTo(30);
+    expect(
+      outsidePanelRegion(true, [layer], { cssW: 100, cssH: 100 }, IDENTITY, {
+        widthMm: 40,
+        heightMm: 50,
+      })!.ghostLayers,
+    ).toEqual([]);
+
+    font.settle('ready');
+    await Promise.resolve();
+    expect(repaint).toHaveBeenCalledTimes(1);
+    const loaded = getTextGeometry(layer)!;
+    expectRectClose(loaded.box, { x: 0, y: 20, width: 60, height: 20 });
+    expect(loaded.pivot).toEqual({ x: 30, y: 30 });
+    expect(loaded.loading).toBe(false);
+    expect(loaded.metricRevision).toBeGreaterThan(fallback.metricRevision);
+    expectRectClose(rotatedRectAABB(loaded.box, 90), {
+      x: 20,
+      y: 0,
+      width: 20,
+      height: 60,
+    });
+    expect(
+      outsidePanelRegion(true, [layer], { cssW: 100, cssH: 100 }, IDENTITY, {
+        widthMm: 40,
+        heightMm: 50,
+      })!.ghostLayers,
+    ).toEqual([layer]);
+    expect(getTextGeometry(layer)!.metricRevision).toBe(loaded.metricRevision);
+  });
+
+  it('makes point (30,55) miss B0 and hit B1 for both direct and marquee consumers', async () => {
+    const layer = rotatedText();
+    reconcileTextGeometry([layer]);
+    getTextGeometry(layer);
+    const probe = { x: 30, y: 55 };
+    expect(hitTestCanonicalText(layer, probe)).toBe(false);
+    expect(marqueeHitIds([layer], { ...probe, width: 0, height: 0 })).toEqual([]);
+
+    font.settle('ready');
+    await Promise.resolve();
+    expect(hitTestCanonicalText(layer, probe)).toBe(true);
+    expect(marqueeHitIds([layer], { ...probe, width: 0, height: 0 })).toEqual([layer.id]);
+  });
+
+  it('translates a cached pivot and preserves it across nonzero rotation edits', () => {
+    const layer = rotatedText();
+    reconcileTextGeometry([layer]);
+    const first = getTextGeometry(layer)!;
+    const moved = { ...layer, x: 15, y: 27, rotation: 45 };
+    reconcileTextGeometry([moved]);
+    const next = getTextGeometry(moved)!;
+    expect(next.pivot).toEqual({ x: first.pivot.x + 5, y: first.pivot.y + 7 });
+    expectRectClose(next.box, { x: 15, y: 27, width: 40, height: 20 });
+    expect(next.metricRevision).toBe(first.metricRevision);
+  });
+
+  it('evicts at zero rotation and captures a fresh pivot when rotation becomes nonzero again', () => {
+    const firstLayer = rotatedText();
+    reconcileTextGeometry([firstLayer]);
+    expect(getTextGeometry(firstLayer)!.pivot).toEqual({ x: 30, y: 30 });
+
+    const zero = { ...firstLayer, x: 100, y: 50, rotation: 0 };
+    reconcileTextGeometry([zero]);
+    expect(getTextGeometry(zero)!.pivot).toEqual({ x: 120, y: 60 });
+
+    const rotatedAgain = { ...zero, rotation: 30 };
+    reconcileTextGeometry([rotatedAgain]);
+    expect(getTextGeometry(rotatedAgain)!.pivot).toEqual({ x: 120, y: 60 });
+  });
+
+  it('applies the locked fixed-anchor size transform and recenters newly measured metrics', async () => {
+    const layer = rotatedText();
+    reconcileTextGeometry([layer]);
+    getTextGeometry(layer);
+    font.settle('ready');
+    await Promise.resolve();
+    const loaded = getTextGeometry(layer)!;
+    expect(loaded.pivot).toEqual({ x: 30, y: 30 });
+
+    const scaled = { ...layer, x: 20, y: 40, sizeMm: 16 };
+    reconcileTextGeometry([scaled]);
+    const geometry = getTextGeometry(scaled)!;
+    expect(geometry.pivot).toEqual({ x: 60, y: 60 });
+    expectRectClose(geometry.box, { x: 0, y: 40, width: 120, height: 40 });
+    expectRectClose(rotatedRectAABB(geometry.box, 90), {
+      x: 40,
+      y: 0,
+      width: 40,
+      height: 120,
+    });
+  });
+
+  it('forces fresh captures for content and family revisions', () => {
+    const layer = rotatedText();
+    reconcileTextGeometry([layer]);
+    const first = getTextGeometry(layer)!;
+
+    setTextMeasureForTests((next) => ({
+      x: next.x,
+      y: next.y,
+      width: next.fontFamily === 'Other Oracle Font' ? 32 : 16,
+      height: 20,
+    }));
+    const contentEdit = { ...layer, content: 'X' };
+    reconcileTextGeometry([contentEdit]);
+    const contentGeometry = getTextGeometry(contentEdit)!;
+    expect(contentGeometry.pivot).toEqual({ x: 18, y: 30 });
+    expect(contentGeometry.metricRevision).toBeGreaterThan(first.metricRevision);
+
+    const familyEdit = { ...contentEdit, fontFamily: 'Other Oracle Font' };
+    reconcileTextGeometry([familyEdit]);
+    const familyGeometry = getTextGeometry(familyEdit)!;
+    expect(familyGeometry.pivot).toEqual({ x: 26, y: 30 });
+    expect(familyGeometry.metricRevision).toBeGreaterThan(contentGeometry.metricRevision);
+  });
+
+  it('retains hidden entries, transfers equal snapshots to a new incarnation, and prunes delete/type replacement', () => {
+    const layer = rotatedText();
+    reconcileTextGeometry([layer]);
+    const first = getTextGeometry(layer)!;
+
+    const hidden = { ...layer, hidden: true };
+    reconcileTextGeometry([hidden]);
+    const retained = getTextGeometry(hidden)!;
+    expect(retained.pivot).toEqual(first.pivot);
+    expect(retained.metricRevision).toBe(first.metricRevision);
+    expect(retained.documentIncarnation).toBeGreaterThan(first.documentIncarnation);
+
+    const equalSnapshot = { ...hidden };
+    reconcileTextGeometry([equalSnapshot]);
+    const transferred = getTextGeometry(equalSnapshot)!;
+    expect(transferred.pivot).toEqual(first.pivot);
+    expect(transferred.metricRevision).toBe(first.metricRevision);
+    expect(transferred.documentIncarnation).toBeGreaterThan(retained.documentIncarnation);
+
+    const unhidden = { ...equalSnapshot, hidden: false };
+    reconcileTextGeometry([unhidden]);
+    const restored = getTextGeometry(unhidden)!;
+    expect(restored.pivot).toEqual(first.pivot);
+    expect(restored.metricRevision).toBe(first.metricRevision);
+
+    reconcileTextGeometry([]);
+    const reused = rotatedText({ x: 100, y: 50 });
+    reconcileTextGeometry([reused]);
+    expect(getTextGeometry(reused)!.pivot).toEqual({ x: 120, y: 60 });
+
+    const replacement: ShapeLayer = shape(layer.id, 0, 0);
+    reconcileTextGeometry([replacement]);
+    const reusedAfterType = rotatedText({ x: 200, y: 80 });
+    reconcileTextGeometry([reusedAfterType]);
+    expect(getTextGeometry(reusedAfterType)!.pivot).toEqual({ x: 220, y: 90 });
+  });
+
+  it('evicts invalid sizes before font loading/geometry, then captures fresh when valid again', () => {
+    const layer = rotatedText();
+    reconcileTextGeometry([layer]);
+    getTextGeometry(layer);
+    vi.mocked(ensureFontAttempt).mockClear();
+
+    for (const sizeMm of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const invalid = { ...layer, sizeMm };
+      reconcileTextGeometry([invalid]);
+      expect(getTextGeometry(invalid)).toBeNull();
+    }
+    expect(ensureFontAttempt).not.toHaveBeenCalled();
+
+    setTextMeasureForTests((valid) => ({
+      x: valid.x,
+      y: valid.y,
+      width: 24,
+      height: 10,
+    }));
+    const validAgain = { ...layer, x: 50, y: 60, sizeMm: 4 };
+    reconcileTextGeometry([validAgain]);
+    expect(getTextGeometry(validAgain)!.pivot).toEqual({ x: 62, y: 65 });
+    expect(ensureFontAttempt).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a fresh same-request owner/pivot when the old namespace completion arrives', async () => {
+    const layer = rotatedText();
+    reconcileTextGeometry([layer], vi.fn());
+    expect(getTextGeometry(layer)!.pivot).toEqual({ x: 30, y: 30 });
+
+    resetTextGeometryNamespace();
+    setTextMeasureForTests((next) => ({
+      x: next.x,
+      y: next.y,
+      width: 12,
+      height: 10,
+    }));
+    const nextDocLayer = rotatedText({ x: 10, y: 20 });
+    const nextRepaint = vi.fn();
+    reconcileTextGeometry([nextDocLayer], nextRepaint);
+    expect(getTextGeometry(nextDocLayer)!.pivot).toEqual({ x: 16, y: 25 });
+
+    // The font resource is shared, so its old pending observer may legitimately
+    // wake the new owner. It must only remeasure around the NEW pivot.
+    font.settle('ready');
+    await Promise.resolve();
+    expect(nextRepaint).toHaveBeenCalledTimes(1);
+    const afterCompletion = getTextGeometry(nextDocLayer)!;
+    expect(afterCompletion.pivot).toEqual({ x: 16, y: 25 });
+    expectRectClose(afterCompletion.box, { x: 10, y: 20, width: 12, height: 10 });
+  });
+
+  it('ignores stale completions after a signature change but notifies the current owner once', async () => {
+    const oldFont = controlledFontAttempt();
+    const newFont = controlledFontAttempt();
+    vi.mocked(ensureFontAttempt).mockImplementation((_family, sample) =>
+      sample === 'NEW' ? newFont.attempt : oldFont.attempt,
+    );
+    const repaint = vi.fn();
+    const layer = rotatedText();
+    reconcileTextGeometry([layer], repaint);
+    getTextGeometry(layer);
+
+    const edited = { ...layer, content: 'NEW' };
+    reconcileTextGeometry([edited]);
+    getTextGeometry(edited);
+    oldFont.settle('ready');
+    await Promise.resolve();
+    expect(repaint).not.toHaveBeenCalled();
+
+    newFont.settle('ready');
+    await Promise.resolve();
+    expect(repaint).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedupes repeated normal/ghost reads and emits one initial plus one late-ready repaint', async () => {
+    const repaint = vi.fn();
+    const layer = rotatedText();
+    reconcileTextGeometry([layer], repaint);
+    // These repeated reads model outside culling + ghost paint + main paint +
+    // chrome in one frame; they must share one async callback owner.
+    for (let i = 0; i < 6; i += 1) getTextGeometry(layer);
+
+    const fallback = getTextGeometry(layer)!;
+    font.settle('timed-out');
+    await Promise.resolve();
+    expect(repaint).toHaveBeenCalledTimes(1);
+    const timedOut = getTextGeometry(layer)!;
+    expectRectClose(timedOut.box, fallback.box);
+    expect(timedOut.loading).toBe(false);
+    expect(timedOut.metricRevision).toBe(fallback.metricRevision);
+
+    font.lateReady();
+    expect(repaint).toHaveBeenCalledTimes(2);
+    const late = getTextGeometry(layer)!;
+    expectRectClose(late.box, { x: 0, y: 20, width: 60, height: 20 });
+    expect(late.pivot).toEqual({ x: 30, y: 30 });
+    const revision = late.metricRevision;
+    font.lateReady();
+    getTextGeometry(layer);
+    expect(repaint).toHaveBeenCalledTimes(2);
+    expect(getTextGeometry(layer)!.metricRevision).toBe(revision);
+  });
+
+  it('turns a rejected attempt full-alpha while freezing the fallback box', async () => {
+    const repaint = vi.fn();
+    const layer = rotatedText();
+    reconcileTextGeometry([layer], repaint);
+    const fallback = getTextGeometry(layer)!;
+    font.settle('failed');
+    await Promise.resolve();
+    expect(repaint).toHaveBeenCalledTimes(1);
+    const failed = getTextGeometry(layer)!;
+    expect(failed.loading).toBe(false);
+    expectRectClose(failed.box, fallback.box);
+    expect(failed.pivot).toEqual(fallback.pivot);
+    expect(failed.metricRevision).toBe(fallback.metricRevision);
   });
 });
 
@@ -543,9 +1020,7 @@ describe('pattern square (#96)', () => {
       gen: { draw: ReturnType<typeof vi.fn> };
     } {
       const gen = { draw: vi.fn(() => calls.push({ method: 'gen.draw', args: [] })) };
-      vi.mocked(patternByName).mockReturnValue(
-        gen as unknown as ReturnType<typeof patternByName>,
-      );
+      vi.mocked(patternByName).mockReturnValue(gen as unknown as ReturnType<typeof patternByName>);
       const canvas = document.createElement('canvas');
       canvas.width = 200;
       canvas.height = 200;
@@ -578,7 +1053,9 @@ describe('pattern square (#96)', () => {
 
       const indexOf = (method: string, args?: unknown[]) =>
         calls.findIndex(
-          (c) => c.method === method && (args === undefined || JSON.stringify(c.args) === JSON.stringify(args)),
+          (c) =>
+            c.method === method &&
+            (args === undefined || JSON.stringify(c.args) === JSON.stringify(args)),
         );
       const translateIdx = indexOf('translate', [12, 34]);
       const squareRectIdx = indexOf('rect', [0, 0, 40, 40]);

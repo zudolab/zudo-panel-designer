@@ -21,10 +21,12 @@ import {
 } from '@zpd/core';
 import { patternByName } from '@zpd/patterns';
 import type { Camera } from './camera';
-import { ensureFont, isFontLoaded, isFontLoading } from './fonts';
 import { guideScreenCoord, type GuideDraft } from './guides';
 import { outsidePanelRegion } from './outside-panel-region';
+import { getTextGeometry, reconcileTextGeometry } from './text-geometry';
 import type { DraftRenderContext, PanelDims } from './types';
+
+export { measureTextBbox } from './text-geometry';
 
 const WORKSPACE_BG = '#26282c';
 const SELECT_COLOR = '#4da3ff';
@@ -58,38 +60,6 @@ export interface RenderExtras {
   requestRepaint: () => void;
 }
 
-let measureCtx: CanvasRenderingContext2D | null = null;
-function getMeasureCtx(): CanvasRenderingContext2D | null {
-  if (!measureCtx) {
-    measureCtx = document.createElement('canvas').getContext('2d');
-  }
-  return measureCtx;
-}
-
-// Text bbox in mm. 1 canvas px == 1 mm here, so the font size is the mm size.
-// 1.25 line height mirrors the render below. Falls back to a rough estimate
-// when no 2D context is available (jsdom), which never runs the real paint.
-export function measureTextBbox(layer: {
-  content: string;
-  fontFamily: string;
-  sizeMm: number;
-  x: number;
-  y: number;
-}): Rect {
-  const lineHeight = layer.sizeMm * 1.25;
-  const lines = layer.content.split('\n');
-  const ctx = getMeasureCtx();
-  let width = 0;
-  if (ctx) {
-    ctx.font = `${layer.sizeMm}px "${layer.fontFamily}"`;
-    for (const line of lines) width = Math.max(width, ctx.measureText(line).width);
-  } else {
-    const longest = Math.max(...lines.map((l) => l.length), 1);
-    width = longest * layer.sizeMm * 0.6;
-  }
-  return { x: layer.x, y: layer.y, width, height: lineHeight * lines.length };
-}
-
 // Layer bbox in mm (pre-rotation). Pattern layers are bbox-bound since #96:
 // their bounds are the layer's own x/y/size square, not the panel rect, so no
 // layer type needs the panel dims here anymore.
@@ -108,7 +78,7 @@ export function layerBbox(layer: Layer): Rect | null {
     case 'image':
       return { x: layer.x, y: layer.y, width: layer.width, height: layer.height };
     case 'text':
-      return measureTextBbox(layer);
+      return getTextGeometry(layer)?.box ?? null;
     case 'path':
       return pathBbox(layer.points, layer.extraSubpaths);
     case 'pattern':
@@ -216,9 +186,7 @@ function layerCanScale(layer: Layer): boolean {
     case 'pattern':
       return false;
     case 'path':
-      return (
-        layer.points.length > 0 || (layer.extraSubpaths?.some((s) => s.length > 0) ?? false)
-      );
+      return layer.points.length > 0 || (layer.extraSubpaths?.some((s) => s.length > 0) ?? false);
     default:
       return true;
   }
@@ -238,9 +206,7 @@ export function multiResizeBbox(
   if (selectedIds.length < 2) return null;
   const boxes = selectionBboxes(layers, selectedIds);
   if (boxes.length < 2) return null;
-  const scalable = layers.some(
-    (l) => selectedIds.includes(l.id) && !l.hidden && layerCanScale(l),
-  );
+  const scalable = layers.some((l) => selectedIds.includes(l.id) && !l.hidden && layerCanScale(l));
   return scalable ? mergeBboxes(boxes) : null;
 }
 
@@ -266,15 +232,18 @@ function drawLayer(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
   images: Map<string, HTMLImageElement>,
-  requestRepaint: () => void,
 ): void {
+  const textGeometry = layer.type === 'text' ? getTextGeometry(layer) : null;
+  // Invalid text sizes are preserved in the model for inspector recovery, but
+  // they have no render geometry and must not reach font loading or fillText.
+  if (layer.type === 'text' && !textGeometry) return;
   ctx.save();
   const rotation = layerRotation(layer);
   if (rotation) {
-    const bbox = layerBbox(layer);
+    const bbox = textGeometry?.box ?? layerBbox(layer);
     if (bbox) {
-      const cx = bbox.x + bbox.width / 2;
-      const cy = bbox.y + bbox.height / 2;
+      const cx = textGeometry?.pivot.x ?? bbox.x + bbox.width / 2;
+      const cy = textGeometry?.pivot.y ?? bbox.y + bbox.height / 2;
       ctx.translate(cx, cy);
       ctx.rotate((rotation * Math.PI) / 180);
       ctx.translate(-cx, -cy);
@@ -355,17 +324,9 @@ function drawLayer(
       break;
     }
     case 'text': {
-      // fire-and-forget, guarded so an already-settled (family, content)
-      // pair doesn't re-arm a repaint every single frame (that would loop
-      // forever, since this runs on every paint): kicks off the load once
-      // per pair, then repaints once it resolves so the fallback face drawn
-      // right now gets replaced by the real glyphs (#67). Keyed on content
-      // too (not just fontFamily) so a second text layer sharing a Google
-      // Font but needing different glyphs (e.g. a CJK subset) still gets
-      // its own load attempt instead of being skipped as "already loaded".
-      if (!isFontLoaded(layer.fontFamily, layer.content)) {
-        ensureFont(layer.fontFamily, layer.content).then(() => requestRepaint());
-      }
+      // textGeometry was resolved before the transform above, so paint origin,
+      // transform pivot, chrome and hit testing all consume one result.
+      const geometry = textGeometry!;
       ctx.fillStyle = PALETTE[layer.color].hex;
       ctx.font = `${layer.sizeMm}px "${layer.fontFamily}"`;
       ctx.textBaseline = 'top';
@@ -374,12 +335,10 @@ function drawLayer(
       // overwriting it — otherwise a loading/loaded google font would blow
       // away the ghost dim and always paint at 1 or 0.3 regardless of it.
       const inheritedAlpha = ctx.globalAlpha;
-      ctx.globalAlpha = isFontLoading(layer.fontFamily, layer.content)
-        ? inheritedAlpha * LOADING_FONT_ALPHA
-        : inheritedAlpha;
+      ctx.globalAlpha = geometry.loading ? inheritedAlpha * LOADING_FONT_ALPHA : inheritedAlpha;
       const lineHeight = layer.sizeMm * 1.25;
       layer.content.split('\n').forEach((line, i) => {
-        ctx.fillText(line, layer.x, layer.y + i * lineHeight);
+        ctx.fillText(line, geometry.box.x, geometry.box.y + i * lineHeight);
       });
       break;
     }
@@ -426,6 +385,7 @@ export function renderScene(
   cam: Camera,
   extras: RenderExtras,
 ): void {
+  reconcileTextGeometry(doc.layers, extras.requestRepaint);
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const dpr = window.devicePixelRatio || 1;
@@ -490,7 +450,7 @@ export function renderScene(
     ctx.translate(cam.offsetX, cam.offsetY);
     ctx.scale(cam.pxPerMm, cam.pxPerMm);
     for (const layer of outsideRegion.ghostLayers) {
-      drawLayer(ctx, layer, extras.images, extras.requestRepaint);
+      drawLayer(ctx, layer, extras.images);
     }
     ctx.restore();
   }
@@ -504,7 +464,7 @@ export function renderScene(
   ctx.scale(cam.pxPerMm, cam.pxPerMm);
   for (const layer of doc.layers) {
     if (layer.hidden) continue;
-    drawLayer(ctx, layer, extras.images, extras.requestRepaint);
+    drawLayer(ctx, layer, extras.images);
   }
   ctx.restore();
 
@@ -621,10 +581,8 @@ function drawGuides(
 // paint pass skips them (renderer.ts) so their chrome must vanish too. This is
 // also the set the combined bbox unions over. Kept pure + exported so the
 // selection-bounds rule is unit-testable without a Canvas.
-export function selectionBboxes(
-  layers: readonly Layer[],
-  selectedIds: readonly string[],
-): Rect[] {
+export function selectionBboxes(layers: readonly Layer[], selectedIds: readonly string[]): Rect[] {
+  reconcileTextGeometry(layers);
   const boxes: Rect[] = [];
   for (const id of selectedIds) {
     const layer = layers.find((l) => l.id === id);

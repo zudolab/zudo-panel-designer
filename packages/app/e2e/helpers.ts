@@ -25,12 +25,15 @@ export async function openEditor(page: Page): Promise<void> {
 export function bridge(page: Page) {
   return {
     getDoc: () => page.evaluate(() => window.__zpdTest!.getDoc()),
+    getHistory: () => page.evaluate(() => window.__zpdTest!.getHistory()),
     getLayers: () => page.evaluate(() => window.__zpdTest!.getLayers()),
     getLayerCount: () => page.evaluate(() => window.__zpdTest!.getLayerCount()),
     getPanelHp: () => page.evaluate(() => window.__zpdTest!.getPanelHp()),
     getSelectedId: () => page.evaluate(() => window.__zpdTest!.getSelectedId()),
     getSelectedIds: () => page.evaluate(() => window.__zpdTest!.getSelectedIds()),
     getCamera: () => page.evaluate(() => window.__zpdTest!.getCamera()),
+    getTextGeometry: (id: string) =>
+      page.evaluate((layerId) => window.__zpdTest!.getTextGeometry(layerId), id),
     serialize: () => page.evaluate(() => window.__zpdTest!.serialize()),
   };
 }
@@ -65,7 +68,9 @@ export async function readCanvasRegion(
 ): Promise<{ width: number; height: number; data: number[] }> {
   return page.evaluate(
     ({ x0, y0, x1, y1 }) => {
-      const canvas = document.querySelector('[data-testid="editor-canvas"]') as HTMLCanvasElement | null;
+      const canvas = document.querySelector(
+        '[data-testid="editor-canvas"]',
+      ) as HTMLCanvasElement | null;
       if (!canvas) throw new Error('editor-canvas not found');
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('2d context unavailable');

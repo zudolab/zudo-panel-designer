@@ -171,11 +171,9 @@ function FontExplorerDialog({ props, close, ctx }: DialogProps<FontExplorerProps
         l.id === layerId && l.type === 'text' ? { ...l, fontFamily: family } : l,
       );
       ctx.commit({ ...ctx.doc, layers: nextLayers });
-      // Repaint once the real face is ready — the canvas draws the fallback
-      // face immediately, same contract as the inspector's direct edit. The
-      // layer's own content is forwarded so a CJK font fetches the glyphs
-      // actually being rendered, not just the Latin range.
-      ensureFont(family, (layer as TextLayer).content).then(() => ctx.requestRepaint());
+      // Start the exact-sample request now. Canonical text geometry owns the
+      // one readiness repaint, avoiding a dialog + renderer double callback.
+      void ensureFont(family, (layer as TextLayer).content);
       close();
     },
     [ctx, props.layerId, close],

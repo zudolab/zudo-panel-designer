@@ -34,6 +34,7 @@ registerTool({
     ctx.commit({ ...ctx.doc, layers: [...ctx.doc.layers, layer] });
     ctx.setActiveTool('select');
     ctx.select(layer.id);
-    ensureFont(layer.fontFamily, layer.content).then(() => ctx.requestRepaint());
+    // The renderer's canonical geometry owns readiness invalidation.
+    void ensureFont(layer.fontFamily, layer.content);
   },
 });

@@ -8,8 +8,15 @@
 // import.meta.env.DEV covers `vite dev`, and the `?e2e=1` query flag covers
 // the Playwright suite, which runs against a production `vite build` +
 // `vite preview` (see playwright.config.ts) where DEV is false.
-import { serializePanelConfig, type DocState, type Layer, type PanelConfig } from '@zpd/core';
+import {
+  serializePanelConfig,
+  type DocState,
+  type HistoryState,
+  type Layer,
+  type PanelConfig,
+} from '@zpd/core';
 import type { Camera } from './camera';
+import { peekTextGeometry, type TextGeometry } from './text-geometry';
 
 export interface ZpdTestLayerSummary {
   id: string;
@@ -20,6 +27,7 @@ export interface ZpdTestLayerSummary {
 
 export interface ZpdTestBridge {
   getDoc(): DocState;
+  getHistory(): HistoryState<DocState>;
   getLayers(): ZpdTestLayerSummary[];
   getLayerCount(): number;
   getPanelHp(): number;
@@ -28,6 +36,7 @@ export interface ZpdTestBridge {
   getSelectedId(): string | null;
   getSelectedIds(): string[];
   getCamera(): Camera | null;
+  getTextGeometry(id: string): TextGeometry | null;
   serialize(): PanelConfig;
 }
 
@@ -46,6 +55,7 @@ function isTestContext(): boolean {
 
 export interface TestBridgeSource {
   getDoc(): DocState;
+  getHistory(): HistoryState<DocState>;
   getSelectedId(): string | null;
   getSelectedIds(): readonly string[];
   getCamera(): Camera | null;
@@ -55,6 +65,7 @@ export function installTestBridge(source: TestBridgeSource): void {
   if (typeof window === 'undefined' || !isTestContext()) return;
   window.__zpdTest = {
     getDoc: () => source.getDoc(),
+    getHistory: () => source.getHistory(),
     getLayers: () =>
       source.getDoc().layers.map((l) => ({
         id: l.id,
@@ -67,6 +78,7 @@ export function installTestBridge(source: TestBridgeSource): void {
     getSelectedId: () => source.getSelectedId(),
     getSelectedIds: () => [...source.getSelectedIds()],
     getCamera: () => source.getCamera(),
+    getTextGeometry: (id) => peekTextGeometry(id),
     serialize: () => serializePanelConfig(source.getDoc()),
   };
 }
