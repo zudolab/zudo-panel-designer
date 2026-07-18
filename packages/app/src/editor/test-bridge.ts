@@ -10,6 +10,7 @@
 // `vite preview` (see playwright.config.ts) where DEV is false.
 import { serializePanelConfig, type DocState, type Layer, type PanelConfig } from '@zpd/core';
 import type { Camera } from './camera';
+import { peekTextGeometry, type TextGeometry } from './text-geometry';
 
 export interface ZpdTestLayerSummary {
   id: string;
@@ -28,6 +29,7 @@ export interface ZpdTestBridge {
   getSelectedId(): string | null;
   getSelectedIds(): string[];
   getCamera(): Camera | null;
+  getTextGeometry(id: string): TextGeometry | null;
   serialize(): PanelConfig;
 }
 
@@ -67,6 +69,7 @@ export function installTestBridge(source: TestBridgeSource): void {
     getSelectedId: () => source.getSelectedId(),
     getSelectedIds: () => [...source.getSelectedIds()],
     getCamera: () => source.getCamera(),
+    getTextGeometry: (id) => peekTextGeometry(id),
     serialize: () => serializePanelConfig(source.getDoc()),
   };
 }

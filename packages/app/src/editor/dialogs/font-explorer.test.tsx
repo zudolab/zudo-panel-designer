@@ -248,7 +248,7 @@ describe('font-explorer dialog', () => {
     expect(preview.value).toBe('custom');
   });
 
-  it('applies the picked family: one commit, ensureFont with the layer content, then close', () => {
+  it('applies the picked family with one geometry-owned readiness callback', () => {
     const { ctx, close } = renderDialog();
     const first = cardButtons()[0];
     const family = first
@@ -262,6 +262,7 @@ describe('font-explorer dialog', () => {
     const nextDoc = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
     expect(nextDoc.layers[0]).toMatchObject({ id: 't1', fontFamily: family });
     expect(ensureFontMock).toHaveBeenCalledWith(family, 'Hello');
+    expect(ctx.requestRepaint).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalledTimes(1);
   });
 

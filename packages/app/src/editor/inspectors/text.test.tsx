@@ -16,7 +16,9 @@ import { FONT_FAVORITES_STORAGE_KEY, toggleFontFavorite } from '../use-font-favo
 
 function resetFavorites() {
   localStorage.clear();
-  window.dispatchEvent(new StorageEvent('storage', { key: FONT_FAVORITES_STORAGE_KEY, newValue: null }));
+  window.dispatchEvent(
+    new StorageEvent('storage', { key: FONT_FAVORITES_STORAGE_KEY, newValue: null }),
+  );
 }
 
 beforeEach(resetFavorites);
@@ -78,7 +80,8 @@ describe('text inspector', () => {
 
   it('lists the curated fonts and commits a font change as one undo entry', () => {
     const onChange = vi.fn();
-    render(<Inspector layer={baseLayer} onChange={onChange} ctx={stubCtx()} />);
+    const ctx = stubCtx();
+    render(<Inspector layer={baseLayer} onChange={onChange} ctx={ctx} />);
 
     const select = screen.getByDisplayValue('Oswald') as HTMLSelectElement;
     const optionFamilies = Array.from(select.options).map((o) => o.value);
@@ -86,6 +89,7 @@ describe('text inspector', () => {
 
     fireEvent.change(select, { target: { value: 'Orbitron' } });
     expect(onChange).toHaveBeenCalledWith({ fontFamily: 'Orbitron' }, { commit: true });
+    expect(ctx.requestRepaint).not.toHaveBeenCalled();
   });
 
   it('keeps a non-curated fontFamily selectable instead of silently swapping it', () => {
