@@ -3,5 +3,6 @@
 // branches never conflict (see .claude/skills/port-pgen-patterns/SKILL.md).
 
 import type { PanelPatternGenerator } from '../types';
+import { smithTruchet } from './smith-truchet';
 
-export const groupCurves: PanelPatternGenerator[] = [];
+export const groupCurves: PanelPatternGenerator[] = [smithTruchet];

@@ -3,5 +3,6 @@
 // never conflict (see .claude/skills/port-pgen-patterns/SKILL.md).
 
 import type { PanelPatternGenerator } from '../types';
+import { igeta } from './igeta';
 
-export const groupJapanese: PanelPatternGenerator[] = [];
+export const groupJapanese: PanelPatternGenerator[] = [igeta];

@@ -97,9 +97,27 @@
       "notes": "hand-written before the port program"
     }
   ],
-  "japanese": [],
+  "japanese": [
+    {
+      "zpdName": "igeta",
+      "pgenId": "igeta",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-18",
+      "notes": "trial port: dropped bg fill + colorOffset fg cycling; cell + bar width now mm params; inset ratio 0.28 kept as source const"
+    }
+  ],
   "ornament": [],
-  "curves": [],
+  "curves": [
+    {
+      "zpdName": "smith-truchet",
+      "pgenId": "smith-truchet",
+      "family": "Mazes, Truchet & Paths",
+      "status": "ported",
+      "date": "2026-07-18",
+      "notes": "trial port: per-tile rand() orientation -> hash01 on center-origin indices; granularity -> mm tile pitch; px line width -> mm param; dropped bg fill"
+    }
+  ],
   "ringsCircuits": [],
   "tilings": []
 }
