@@ -89,11 +89,20 @@ describe('estimateTextBbox / hitTestLayer — text', () => {
   });
 });
 
-describe('hitTestLayer — pattern (never canvas-hit-testable)', () => {
-  it('always misses regardless of point', () => {
-    const pattern: PatternLayerLike = { type: 'pattern' };
-    expect(hitTestLayer(pattern, 0, 0)).toBe(false);
-    expect(hitTestLayer(pattern, 1000, 1000)).toBe(false);
+// Patterns hit on their x/y/size square since #97 (movable pattern square) —
+// they were never-hit-testable before the interaction sub flipped this.
+describe('hitTestLayer — pattern (square bbox)', () => {
+  const pattern: PatternLayerLike = { type: 'pattern', x: 10, y: 20, size: 30 };
+
+  it('hits inside the square, misses outside', () => {
+    expect(hitTestLayer(pattern, 25, 35)).toBe(true);
+    expect(hitTestLayer(pattern, 5, 35)).toBe(false); // left of the square
+    expect(hitTestLayer(pattern, 25, 55)).toBe(false); // below the square
+  });
+
+  it('is boundary-inclusive like a rect', () => {
+    expect(hitTestLayer(pattern, 10, 20)).toBe(true);
+    expect(hitTestLayer(pattern, 40, 50)).toBe(true);
   });
 });
 
@@ -201,10 +210,37 @@ describe('hitTestDoc', () => {
     const doc: HitTestDocLike = { layers: [a, b] };
     expect(hitTestDoc(doc, 100, 100)).toBeNull();
   });
+});
 
-  it('never returns a pattern layer even directly under the point', () => {
-    const pattern: PatternLayerLike & { id: string } = { id: 'p', type: 'pattern' };
-    const doc: HitTestDocLike = { layers: [pattern] };
-    expect(hitTestDoc(doc, 0, 0)).toBeNull();
+// Two-tier scan (#97): a covering pattern square must never swallow clicks on
+// the objects it covers, even though new patterns are appended on TOP.
+describe('hitTestDoc — two-tier pattern fallback (#97)', () => {
+  const a: ShapeLayerLike & { id: string } = { id: 'a', type: 'shape', shape: 'rect', x: 0, y: 0, width: 10, height: 10 };
+  const cover: PatternLayerLike & { id: string } = { id: 'p1', type: 'pattern', x: -5, y: -5, size: 100 };
+  const coverTop: PatternLayerLike & { id: string } = { id: 'p2', type: 'pattern', x: -5, y: -5, size: 100 };
+
+  it('a pattern ON TOP of the stack does not swallow hits on layers beneath it', () => {
+    const doc: HitTestDocLike = { layers: [a, cover] }; // pattern appended on top
+    expect(hitTestDoc(doc, 5, 5)).toBe(a);
+  });
+
+  it('falls back to the pattern tier when no non-pattern layer hits', () => {
+    const doc: HitTestDocLike = { layers: [a, cover] };
+    expect(hitTestDoc(doc, 50, 50)).toBe(cover); // outside a, inside the square
+  });
+
+  it('the pattern tier is itself topmost-first', () => {
+    const doc: HitTestDocLike = { layers: [cover, coverTop, a] };
+    expect(hitTestDoc(doc, 50, 50)).toBe(coverTop);
+  });
+
+  it('skips hidden patterns in the fallback tier', () => {
+    const doc: HitTestDocLike = { layers: [{ ...cover, hidden: true }, a] };
+    expect(hitTestDoc(doc, 50, 50)).toBeNull();
+  });
+
+  it('misses a point outside every square', () => {
+    const doc: HitTestDocLike = { layers: [cover] };
+    expect(hitTestDoc(doc, 200, 200)).toBeNull();
   });
 });
