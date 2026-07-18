@@ -3,9 +3,9 @@ import { resolveParam, centeredStart } from '../param-utils';
 
 // Ported from pgen `sayagata` (interlocking Buddhist key-fret / manji lattice).
 // Each cell carries an L-armed manji glyph, drawn as continuous polylines whose
-// arms link to neighbours into the woven key-fret band. Dropped from the
-// source: bg fill and fg-pool colour cycling (colorOffset). armReach kept as a
-// source constant (0.7).
+// arms reach toward neighbours to read as the woven key-fret band. Dropped from
+// the source: bg fill and fg-pool colour cycling (colorOffset). armReach kept
+// as a source constant (0.7).
 const ARM_REACH = 0.7; // source default: fret arm length relative to the cell
 
 export const sayagata: PanelPatternGenerator = {

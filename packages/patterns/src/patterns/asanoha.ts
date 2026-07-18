@@ -1,7 +1,7 @@
 import type { PanelPatternGenerator } from '../types';
 import { resolveParam, centeredStart } from '../param-utils';
 
-// Ported from pgen `asanoha` (hemp-leaf). Pointy-top hex lattice; each hex
+// Ported from pgen `asanoha` (hemp-leaf). Flat-top hex lattice; each hex
 // carries its outline, six centre-to-vertex spokes, and six radiating kite
 // diamonds — the classic six-point hemp-leaf star, pure stroke linework.
 // Dropped from the source: bg fill, per-cluster fg-pool colour cycling
@@ -22,14 +22,15 @@ export const asanoha: PanelPatternGenerator = {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Pointy-top hex lattice: X pitch (colW) != Y pitch (rowH); alternate
-    // columns drop by half a row for the interlace.
+    // Flat-top hex lattice: X pitch (colW = 1.5·r) != Y pitch (rowH = √3·r);
+    // alternate columns drop by half a row (rowH/2) so the hexes share edges.
     const colW = r * 1.5;
     const rowH = r * Math.sqrt(3);
 
-    // Hex vertex k (first vertex at top).
-    const vx = (cx: number, k: number): number => cx + r * Math.cos((Math.PI / 3) * k - Math.PI / 2);
-    const vy = (cy: number, k: number): number => cy + r * Math.sin((Math.PI / 3) * k - Math.PI / 2);
+    // Hex vertex k, flat-top: first vertex points right (0 rad). Flat-top verts
+    // are what the colW/rowH/column-offset pitches above tessellate cleanly.
+    const vx = (cx: number, k: number): number => cx + r * Math.cos((Math.PI / 3) * k);
+    const vy = (cy: number, k: number): number => cy + r * Math.sin((Math.PI / 3) * k);
 
     for (let x = centeredStart(widthMm, colW); x <= widthMm + colW; x += colW) {
       const ix = Math.round((x - widthMm / 2) / colW);
