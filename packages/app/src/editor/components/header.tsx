@@ -66,7 +66,7 @@ export function Header({
 
         <span className="mx-1 h-5 w-px bg-neutral-700" />
 
-        <ChromeButton title="Keyboard shortcuts" onClick={() => ctx.openDialog('shortcuts')}>
+        <ChromeButton title="Keyboard shortcuts" onClick={() => ctx.openDialog('shortcut-panel')}>
           ?
         </ChromeButton>
         <ChromeButton
