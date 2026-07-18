@@ -147,4 +147,29 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
       patternCoverGeometry({ widthMm: 60, heightMm: 128.5 }),
     );
   });
+
+  // No-op guards (#97 self-review): an unchanged commit would write a phantom
+  // undo entry AND wipe any redo branch (ctx.commit discards redo).
+  it('"Cover panel" on a square already at cover geometry commits nothing', () => {
+    const onChange = vi.fn();
+    const ctx = stubCtx();
+    const cover = patternCoverGeometry({ widthMm: 60, heightMm: 128.5 });
+    render(<Inspector layer={{ ...layer, ...cover }} onChange={onChange} ctx={ctx} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cover panel' }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('a size entry that clamps back to the current size commits nothing', () => {
+    const onChange = vi.fn();
+    const ctx = stubCtx();
+    render(
+      <Inspector layer={{ ...layer, size: MAX_PATTERN_SIZE_MM }} onChange={onChange} ctx={ctx} />,
+    );
+
+    const sizeField = screen.getByLabelText('size (mm)');
+    fireEvent.change(sizeField, { target: { value: '5000' } }); // clamps to the max — already there
+    fireEvent.blur(sizeField);
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });

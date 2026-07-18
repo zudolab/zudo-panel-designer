@@ -91,11 +91,29 @@ function PatternInspector({ layer, onChange, ctx }: InspectorProps<PatternLayer>
         <NumberField value={layer.y} onCommit={(v) => onChange({ y: v })} />
       </Field>
       <Field label="size (mm)">
-        <NumberField value={layer.size} onCommit={(v) => onChange({ size: clampSize(v) })} />
+        <NumberField
+          value={layer.size}
+          onCommit={(v) => {
+            // Skip the commit when clamping lands on the CURRENT size (e.g.
+            // typing 5000 while already at the max): NumberField's own
+            // parsed !== value guard can't see through the clamp, and a no-op
+            // commit would write a phantom undo entry and wipe any redo
+            // branch (ctx.commit always discards redo — see history.ts).
+            const size = clampSize(v);
+            if (size !== layer.size) onChange({ size });
+          }}
+        />
       </Field>
       <ActionButton
         title="Recenter and resize the square to cover the whole panel"
-        onClick={() => onChange(patternCoverGeometry(ctx.panel))}
+        onClick={() => {
+          // Same no-op guard: the default doc already has cover geometry, so
+          // an unguarded click would phantom-commit and clear the redo stack.
+          const cover = patternCoverGeometry(ctx.panel);
+          if (cover.x !== layer.x || cover.y !== layer.y || cover.size !== layer.size) {
+            onChange(cover);
+          }
+        }}
       >
         Cover panel
       </ActionButton>
