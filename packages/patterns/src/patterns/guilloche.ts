@@ -5,9 +5,12 @@ import { resolveParam, centeredStart } from '../param-utils';
 //   x = (R-r)*cos t + d*cos(t*(R-r)/r),  y = (R-r)*sin t - d*sin(t*(R-r)/r).
 // pgen randomises R, r and the pen distance and extends one curve past the
 // canvas for a cropped-crossing look; here we fix them as params and draw a
-// closed medallion per cell. Choosing r = R/(lobes+1) makes (R-r)/r an integer,
-// so the curve closes in exactly one revolution. Dropped: withAlpha, multi-curve
-// overlay, granularity, crop-beyond-bounds. Single stroke colour.
+// woven medallion per cell. Choosing r = R/(lobes+1) makes (R-r)/r an integer,
+// so each curve closes in exactly one revolution. The guilloche's dense
+// banknote-engraving look comes from OVERLAYING several copies of the curve
+// with the epicyclic (pen) term rotated by an even phase spread — the cusps
+// interweave into a rosette band instead of a single sparse outline. Dropped:
+// withAlpha, granularity, crop-beyond-bounds. Single stroke colour.
 export const guilloche: PanelPatternGenerator = {
   name: 'guilloche',
   displayName: 'Guilloche',
@@ -31,8 +34,11 @@ export const guilloche: PanelPatternGenerator = {
     const d = r * penDistance;
     const Rr = R - r;
     const ratio = Rr / r; // integer (= lobes) → curve closes in one revolution
-    // step count grows with lobe density, capped for the mm-space budget
-    const steps = Math.min(240, Math.max(150, rDivisor * 30));
+    // Overlaid phase-rotated copies weave the rosette band. 10 reads as a dense
+    // guilloche; step count grows with lobe density, both capped so the busiest
+    // cell (small cell on a tall panel) stays well under the primitive budget.
+    const copies = 10;
+    const steps = Math.min(200, Math.max(140, rDivisor * 26));
     const dt = (Math.PI * 2) / steps;
     ctx.strokeStyle = color;
     ctx.lineWidth = lineWidth;
@@ -42,15 +48,18 @@ export const guilloche: PanelPatternGenerator = {
       for (let x = centeredStart(widthMm, cell); x <= widthMm + cell; x += cell) {
         const cx = x + cell / 2;
         const cy = y + cell / 2;
-        ctx.beginPath();
-        for (let i = 0; i <= steps; i++) {
-          const t = i * dt;
-          const px = cx + Rr * Math.cos(t) + d * Math.cos(t * ratio);
-          const py = cy + Rr * Math.sin(t) - d * Math.sin(t * ratio);
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
+        for (let c = 0; c < copies; c++) {
+          const phase = (c / copies) * Math.PI * 2;
+          ctx.beginPath();
+          for (let i = 0; i <= steps; i++) {
+            const t = i * dt;
+            const px = cx + Rr * Math.cos(t) + d * Math.cos(t * ratio + phase);
+            const py = cy + Rr * Math.sin(t) - d * Math.sin(t * ratio + phase);
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
         }
-        ctx.stroke();
       }
     }
   },
