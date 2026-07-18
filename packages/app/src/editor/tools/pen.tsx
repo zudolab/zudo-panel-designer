@@ -79,6 +79,19 @@ export function canFinishOpen(draft: PenDraft | null): draft is PenDraft {
   return !!draft && draft.points.length >= 2;
 }
 
+export type PenHintBucket = 'zero' | 'one' | 'two' | 'three-plus';
+
+// The hint bar only cares about capability thresholds, not cursor/handle
+// geometry. Keeping that distinction explicit lets the canvas repaint every
+// move without asking the separate React root to render unchanged chrome.
+export function derivePenHintBucket(draft: PenDraft | null): PenHintBucket {
+  const count = draft?.points.length ?? 0;
+  if (count === 0) return 'zero';
+  if (count === 1) return 'one';
+  if (count === 2) return 'two';
+  return 'three-plus';
+}
+
 // closed path = filled gold shape, no stroke.
 export function buildClosedPathLayer(draft: PenDraft): PathLayer {
   return {
@@ -112,8 +125,14 @@ export function buildOpenPathLayer(draft: PenDraft): PathLayer {
 let draft: PenDraft | null = null;
 let penDragging = false; // between pointerDown and pointerUp for the anchor just placed
 let currentCtx: ToolContext | null = null; // for the hint-bar buttons' click handlers
-let hintContainer: HTMLDivElement | null = null;
-let hintRoot: Root | null = null;
+
+interface PenHintMount {
+  container: HTMLDivElement;
+  root: Root;
+  renderedBucket: PenHintBucket | null;
+}
+
+let activeHintMount: PenHintMount | null = null;
 
 function finishClosed(ctx: ToolContext): void {
   const current = draft;
@@ -153,13 +172,13 @@ function notify(ctx: ToolContext): void {
 // the SAME finishClosed/finishOpen/resetDraft functions the gestures call —
 // no parallel button-only logic.
 export interface PenHintBarProps {
-  draft: PenDraft | null;
+  bucket: PenHintBucket;
   onClosePath(): void;
   onFinishOpen(): void;
   onCancel(): void;
 }
 
-export function PenHintBar({ draft, onClosePath, onFinishOpen, onCancel }: PenHintBarProps) {
+export function PenHintBar({ bucket, onClosePath, onFinishOpen, onCancel }: PenHintBarProps) {
   return (
     <div className="pointer-events-none fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded border border-neutral-700 bg-neutral-900/90 px-3 py-1.5 text-xs whitespace-nowrap text-neutral-300 shadow-lg backdrop-blur select-none">
       <span>
@@ -167,13 +186,13 @@ export function PenHintBar({ draft, onClosePath, onFinishOpen, onCancel }: PenHi
         cancel
       </span>
       <span className="pointer-events-auto flex gap-1.5">
-        <ChromeButton disabled={!canClosePath(draft)} onClick={onClosePath}>
+        <ChromeButton disabled={bucket !== 'three-plus'} onClick={onClosePath}>
           ⬠ Close path
         </ChromeButton>
-        <ChromeButton disabled={!canFinishOpen(draft)} onClick={onFinishOpen}>
+        <ChromeButton disabled={bucket === 'zero' || bucket === 'one'} onClick={onFinishOpen}>
           Finish open
         </ChromeButton>
-        <ChromeButton disabled={!draft} onClick={onCancel}>
+        <ChromeButton disabled={bucket === 'zero'} onClick={onCancel}>
           Cancel
         </ChromeButton>
       </span>
@@ -182,16 +201,47 @@ export function PenHintBar({ draft, onClosePath, onFinishOpen, onCancel }: PenHi
 }
 
 function renderHintBar(): void {
-  if (!hintRoot || !currentCtx) return;
-  const ctx = currentCtx;
-  hintRoot.render(
+  const mount = activeHintMount;
+  if (!mount) return;
+  const bucket = derivePenHintBucket(draft);
+  if (mount.renderedBucket === bucket) return;
+  mount.renderedBucket = bucket;
+
+  // A rendered callback may outlive its activation until deferred cleanup
+  // runs. It must both belong to the current mount and resolve the latest
+  // event context at click time.
+  const runWithCurrentContext = (action: (ctx: ToolContext) => void) => {
+    if (activeHintMount !== mount) return;
+    const ctx = currentCtx;
+    if (ctx) action(ctx);
+  };
+
+  mount.root.render(
     <PenHintBar
-      draft={draft}
-      onClosePath={() => finishClosed(ctx)}
-      onFinishOpen={() => finishOpen(ctx)}
-      onCancel={() => resetDraft(ctx)}
+      bucket={bucket}
+      onClosePath={() => runWithCurrentContext(finishClosed)}
+      onFinishOpen={() => runWithCurrentContext(finishOpen)}
+      onCancel={() => runWithCurrentContext(resetDraft)}
     />,
   );
+}
+
+function retireHintMount(): void {
+  const retiringMount = activeHintMount;
+  if (!retiringMount) return;
+
+  // Clear ownership before scheduling work so repeated deactivation is a
+  // no-op and callbacks from the retired tree cannot target a reactivation.
+  activeHintMount = null;
+  // Retire the old chrome immediately while leaving React's root/container
+  // cleanup off this stack. A rapid reactivation can therefore expose only
+  // one active hint marker even before the scheduled cleanup runs.
+  retiringMount.container.hidden = true;
+  retiringMount.container.removeAttribute('data-pen-hint-root');
+  setTimeout(() => {
+    retiringMount.root.unmount();
+    retiringMount.container.remove();
+  }, 0);
 }
 
 registerTool({
@@ -207,24 +257,27 @@ registerTool({
   onActivate(ctx: ToolContext) {
     draft = null;
     penDragging = false;
+    retireHintMount();
     currentCtx = ctx;
     // self-contained hint bar: ToolModule has no chrome slot, so the pen owns
-    // its own mounted React tree (unmounted in onDeactivate). Guarded for the
-    // node test environment, which has no document.
+    // its own mounted React tree (retired by onDeactivate, then unmounted
+    // asynchronously). Guarded for environments that have no document.
     if (typeof document === 'undefined') return;
-    hintContainer = document.createElement('div');
-    document.body.appendChild(hintContainer);
-    hintRoot = createRoot(hintContainer);
+    const container = document.createElement('div');
+    container.dataset.penHintRoot = '';
+    document.body.appendChild(container);
+    activeHintMount = {
+      container,
+      root: createRoot(container),
+      renderedBucket: null,
+    };
     renderHintBar();
   },
   onDeactivate() {
     draft = null;
     penDragging = false;
     currentCtx = null;
-    hintRoot?.unmount();
-    hintRoot = null;
-    hintContainer?.remove();
-    hintContainer = null;
+    retireHintMount();
   },
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
     currentCtx = ctx;
@@ -238,6 +291,7 @@ registerTool({
   },
   onPointerMove(e: ToolPointerEvent, ctx: ToolContext) {
     if (!draft) return;
+    currentCtx = ctx;
     draft = penDragging ? dragLastAnchorHandle(draft, e.mm) : setCursor(draft, e.mm);
     notify(ctx);
   },
@@ -245,6 +299,7 @@ registerTool({
     penDragging = false;
   },
   onKeyDown(e: ToolKeyEvent, ctx: ToolContext) {
+    currentCtx = ctx;
     if (e.key === 'Enter') {
       finishOpen(ctx);
       return true;

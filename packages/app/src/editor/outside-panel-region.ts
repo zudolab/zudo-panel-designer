@@ -8,6 +8,7 @@
 import { normalizeRect, rotatedRectAABB, type Layer } from '@zpd/core';
 import type { Camera } from './camera';
 import { layerBbox, layerRotation } from './renderer';
+import { reconcileTextGeometry } from './text-geometry';
 import type { PanelDims } from './types';
 
 export interface PxRect {
@@ -73,7 +74,10 @@ function crossesPanelBoundary(layer: Layer, panel: PanelDims): boolean {
     };
   }
   return (
-    bbox.x < 0 || bbox.y < 0 || bbox.x + bbox.width > panel.widthMm || bbox.y + bbox.height > panel.heightMm
+    bbox.x < 0 ||
+    bbox.y < 0 ||
+    bbox.x + bbox.width > panel.widthMm ||
+    bbox.y + bbox.height > panel.heightMm
   );
 }
 
@@ -86,6 +90,7 @@ export function outsidePanelRegion(
   cam: Camera,
   panel: PanelDims,
 ): OutsidePanelRegion | null {
+  reconcileTextGeometry(layers);
   if (!showOutsidePanel) return null;
   return {
     outerRect: { x: 0, y: 0, width: viewport.cssW, height: viewport.cssH },

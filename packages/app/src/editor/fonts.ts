@@ -17,7 +17,16 @@ import '@fontsource/share-tech-mono';
 import '@fontsource/archivo-black';
 import '@fontsource/monoton';
 import '@fontsource/press-start-2p';
-import { isGoogleFontLoaded, loadGoogleFont } from './google-font-loader';
+import {
+  ensureGoogleFontAttempt,
+  FONT_LOAD_TIMEOUT_MS,
+  isGoogleFontLoaded,
+  type FontAttemptStatus,
+  type FontInitialResult,
+  type FontLoadAttempt,
+} from './google-font-loader';
+
+export type { FontAttemptStatus, FontInitialResult, FontLoadAttempt } from './google-font-loader';
 
 export interface FontEntry {
   family: string; // both the display label and the CSS font-family value
@@ -54,8 +63,7 @@ const CSS_GENERIC_FAMILIES = new Set([
 
 export const DEFAULT_FONT_FAMILY = 'Oswald';
 
-const loaded = new Set<string>();
-const pending = new Map<string, Promise<void>>();
+const attempts = new Map<string, FontLoadAttempt>();
 
 // Curated + generic families are sample-agnostic (one bundled file / the
 // browser's own built-in face — no unicode-range subsetting concern), so
@@ -67,9 +75,10 @@ const pending = new Map<string, Promise<void>>();
 // Length-prefixing `family` (rather than joining with a separator character)
 // makes the split point unambiguous, so two different (family, sampleText)
 // pairs can never collide onto the same key.
-function fontKey(family: string, sampleText: string | undefined): string {
+export function fontRequestKey(family: string, sampleText: string | undefined): string {
   if (CURATED_FAMILIES.has(family) || CSS_GENERIC_FAMILIES.has(family)) return family;
-  return `${family.length}:${family}${sampleText ?? ''}`;
+  const sampleKey = sampleText === undefined ? 'u' : `s${sampleText.length}:${sampleText}`;
+  return `${family.length}:${family}:${sampleKey}`;
 }
 
 // An empty / whitespace-only family (e.g. a legacy or imported text layer that
@@ -88,7 +97,8 @@ function isGoogleFetchedFamily(family: string): boolean {
 
 export function isFontLoaded(family: string, sampleText?: string): boolean {
   if (isNonLoadableFamily(family)) return true;
-  if (loaded.has(fontKey(family, sampleText))) return true;
+  const status = getFontAttemptStatus(family, sampleText);
+  if (status !== 'idle' && status !== 'pending') return true;
   // Family-level query (no sampleText) for a Google-fetched family: delegate
   // to the loader's family-deduped readiness so a caller that knows only the
   // family — the Font Explorer's cards — sees a font warmed via loadGoogleFont
@@ -105,7 +115,89 @@ export function isFontLoaded(family: string, sampleText?: string): boolean {
 // true (#67).
 export function isFontLoading(family: string, sampleText?: string): boolean {
   if (isNonLoadableFamily(family)) return false;
-  return pending.has(fontKey(family, sampleText));
+  return getFontAttemptStatus(family, sampleText) === 'pending';
+}
+
+function settledAttempt(result: FontInitialResult): FontLoadAttempt {
+  const initial = Promise.resolve(result);
+  return {
+    initial,
+    done: initial.then(() => {}),
+    getStatus: () => result,
+    onLateReady: () => () => {},
+  };
+}
+
+const EMPTY_FAMILY_ATTEMPT = settledAttempt('ready');
+
+function createLocalAttempt(family: string): FontLoadAttempt {
+  let status: FontAttemptStatus = 'pending';
+  let settleInitial: (result: FontInitialResult) => void = () => {};
+  const callbacks = new Set<() => void>();
+  const initial = new Promise<FontInitialResult>((resolve) => {
+    settleInitial = resolve;
+  });
+  const done = initial.then(() => {});
+  const settle = (result: FontInitialResult) => {
+    if (status !== 'pending') return;
+    status = result;
+    if (result !== 'timed-out') callbacks.clear();
+    settleInitial(result);
+  };
+  const fontSet = typeof document === 'undefined' ? undefined : document.fonts;
+  if (!fontSet?.load) {
+    settle('failed');
+  } else {
+    const timeoutId = setTimeout(() => settle('timed-out'), FONT_LOAD_TIMEOUT_MS);
+    fontSet.load(`16px "${family}"`).then(
+      () => {
+        if (status === 'pending') {
+          clearTimeout(timeoutId);
+          settle('ready');
+        } else if (status === 'timed-out') {
+          status = 'late-ready';
+          for (const callback of [...callbacks]) callback();
+          callbacks.clear();
+        }
+      },
+      () => {
+        if (status === 'pending') {
+          clearTimeout(timeoutId);
+          settle('failed');
+        }
+      },
+    );
+  }
+  return {
+    initial,
+    done,
+    getStatus: () => status,
+    onLateReady(callback) {
+      if (status !== 'pending' && status !== 'timed-out') return () => {};
+      callbacks.add(callback);
+      return () => callbacks.delete(callback);
+    },
+  };
+}
+
+export function ensureFontAttempt(family: string, sampleText?: string): FontLoadAttempt {
+  if (isNonLoadableFamily(family)) return EMPTY_FAMILY_ATTEMPT;
+  const key = fontRequestKey(family, sampleText);
+  const existing = attempts.get(key);
+  if (existing) return existing;
+  const attempt = isGoogleFetchedFamily(family)
+    ? ensureGoogleFontAttempt(family, sampleText)
+    : createLocalAttempt(family);
+  attempts.set(key, attempt);
+  return attempt;
+}
+
+export function getFontAttemptStatus(
+  family: string,
+  sampleText?: string,
+): FontAttemptStatus | 'idle' {
+  if (isNonLoadableFamily(family)) return 'ready';
+  return attempts.get(fontRequestKey(family, sampleText))?.getStatus() ?? 'idle';
 }
 
 // Idempotent: kicks off the font load once per (family, sample) and resolves
@@ -119,42 +211,10 @@ export function isFontLoading(family: string, sampleText?: string): boolean {
 // forwarded to the Google Font path so unicode-range subsets fetch the
 // glyphs actually being rendered, not just the default Latin range.
 export function ensureFont(family: string, sampleText?: string): Promise<void> {
-  // Nothing to load for an empty/whitespace family — resolve immediately
-  // without touching the network or document.fonts (see isNonLoadableFamily).
-  if (isNonLoadableFamily(family)) return Promise.resolve();
-  const key = fontKey(family, sampleText);
-  if (loaded.has(key)) return Promise.resolve();
-  const existing = pending.get(key);
-  if (existing) return existing;
+  return ensureFontAttempt(family, sampleText).done;
+}
 
-  if (isGoogleFetchedFamily(family)) {
-    const promise = loadGoogleFont(family, sampleText).then(() => {
-      loaded.add(key);
-      pending.delete(key);
-    });
-    pending.set(key, promise);
-    return promise;
-  }
-
-  const fontSet = typeof document === 'undefined' ? undefined : document.fonts;
-  if (!fontSet?.load) {
-    loaded.add(key);
-    return Promise.resolve();
-  }
-
-  const promise = fontSet
-    .load(`16px "${family}"`)
-    .then(() => {})
-    .catch(() => {
-      // never block rendering on a font failure; fallback face renders
-    })
-    .finally(() => {
-      // marked loaded (== "attempted") even on failure — otherwise the
-      // renderer's per-frame caller would retry a permanently-failing
-      // family forever
-      loaded.add(key);
-      pending.delete(key);
-    });
-  pending.set(key, promise);
-  return promise;
+/** Clears module memoization between deterministic unit tests. */
+export function resetFontStateForTests(): void {
+  attempts.clear();
 }

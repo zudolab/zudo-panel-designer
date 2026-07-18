@@ -12,16 +12,12 @@ export function resolveParam(
   defs: PatternParamDef[],
   key: string,
 ): number {
-  const raw = params[key];
-  const finiteRaw = typeof raw === 'number' && Number.isFinite(raw);
   const def = defs.find((d) => d.key === key);
   if (!def) {
-    // No param def to clamp against (a draw() asked for a key it never
-    // declared — a programmer error). Prefer a finite provided value over a
-    // silent 0, which would bypass the positive-pitch/count clamp invariant the
-    // draw loops rely on and could hang or crash them.
-    return finiteRaw ? raw : Number.NaN;
+    throw new Error(`resolveParam: unknown parameter key "${key}"`);
   }
+  const raw = params[key];
+  const finiteRaw = typeof raw === 'number' && Number.isFinite(raw);
   const value = finiteRaw ? raw : def.defaultValue;
   return Math.min(def.max, Math.max(def.min, value));
 }

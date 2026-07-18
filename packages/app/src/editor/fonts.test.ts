@@ -16,15 +16,41 @@ import {
   CURATED_FONTS,
   DEFAULT_FONT_FAMILY,
   ensureFont,
+  ensureFontAttempt,
   isFontLoaded,
   isFontLoading,
+  resetFontStateForTests,
+  type FontAttemptStatus,
+  type FontLoadAttempt,
 } from './fonts';
-import { isGoogleFontLoaded, loadGoogleFont } from './google-font-loader';
+import { ensureGoogleFontAttempt, isGoogleFontLoaded, loadGoogleFont } from './google-font-loader';
 
 vi.mock('./google-font-loader', () => ({
+  FONT_LOAD_TIMEOUT_MS: 10000,
   loadGoogleFont: vi.fn(),
+  ensureGoogleFontAttempt: vi.fn(),
   isGoogleFontLoaded: vi.fn(() => false),
 }));
+
+function attemptFromPromise(promise: Promise<void> | undefined): FontLoadAttempt {
+  let status: FontAttemptStatus = 'pending';
+  const initial = Promise.resolve(promise).then(
+    () => {
+      status = 'ready';
+      return 'ready' as const;
+    },
+    () => {
+      status = 'failed';
+      return 'failed' as const;
+    },
+  );
+  return {
+    initial,
+    done: initial.then(() => {}),
+    getStatus: () => status,
+    onLateReady: () => () => {},
+  };
+}
 
 function stubFontFaceSet() {
   const known = new Set<string>();
@@ -45,12 +71,17 @@ beforeEach(() => {
   // a non-curated family reads as unloaded until this session's own tracking
   // says otherwise. afterEach's resetAllMocks clears this, so re-set per test.
   vi.mocked(isGoogleFontLoaded).mockReturnValue(false);
+  vi.mocked(ensureGoogleFontAttempt).mockImplementation((family, sampleText) =>
+    attemptFromPromise(vi.mocked(loadGoogleFont)(family, sampleText)),
+  );
+  resetFontStateForTests();
 });
 
 afterEach(() => {
   // @ts-expect-error test-only teardown of the stubbed FontFaceSet
   delete document.fonts;
   vi.resetAllMocks();
+  vi.useRealTimers();
 });
 
 describe('curated font list', () => {
@@ -224,6 +255,30 @@ describe('isFontLoading / isFontLoaded — sync truth', () => {
     resolveAbc();
     await abcPromise;
     expect(isFontLoaded('Independent CJK Font', 'ABC')).toBe(true);
+  });
+
+  it('keeps one local-face late observer after timeout', async () => {
+    vi.useFakeTimers();
+    const fonts = stubFontFaceSet();
+    let resolveLoad: (value: never[]) => void = () => {};
+    fonts.load.mockImplementation(
+      () =>
+        new Promise<never[]>((resolve) => {
+          resolveLoad = resolve;
+        }),
+    );
+    const attempt = ensureFontAttempt('Oswald', 'ignored for bundled faces');
+    const late = vi.fn();
+    attempt.onLateReady(late);
+
+    await vi.advanceTimersByTimeAsync(10000);
+    await expect(attempt.initial).resolves.toBe('timed-out');
+    expect(attempt.getStatus()).toBe('timed-out');
+    resolveLoad([]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(attempt.getStatus()).toBe('late-ready');
+    expect(late).toHaveBeenCalledTimes(1);
   });
 });
 

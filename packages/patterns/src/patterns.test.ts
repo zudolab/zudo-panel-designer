@@ -27,6 +27,13 @@ const PAINT_METHODS = new Set(['fill', 'stroke', 'fillRect', 'strokeRect']);
 // blowup (real draws land in the hundreds to low thousands of calls).
 const MAX_CALLS_PER_DRAW = 200_000;
 
+// Extreme scans are comfortably over Vitest's 5s default under load.
+const EXTREME_DRAW_TIMEOUT_MS = 20_000;
+
+// This matrix performs two complete draws for every generator/parameter/panel
+// case. It runs in ~12s alone but shares CPU with the full suite in CI.
+const DETERMINISM_TIMEOUT_MS = 60_000;
+
 function countCalls(ctx: ReturnType<typeof createMockCtx>, method: string): number {
   return ctx.calls.filter((c) => c.method === method).length;
 }
@@ -36,6 +43,14 @@ function countCalls(ctx: ReturnType<typeof createMockCtx>, method: string): numb
 // otherwise pass a plain "any call" check without painting a single pixel.
 function countPaintOps(ctx: ReturnType<typeof createMockCtx>): number {
   return ctx.calls.filter((c) => PAINT_METHODS.has(c.method)).length;
+}
+
+function containsNonFiniteNumber(value: unknown, visitedArrays: WeakSet<unknown[]>): boolean {
+  if (typeof value === 'number') return !Number.isFinite(value);
+  if (!Array.isArray(value)) return false;
+  if (visitedArrays.has(value)) return false;
+  visitedArrays.add(value);
+  return value.some((item) => containsNonFiniteNumber(item, visitedArrays));
 }
 
 // Every generator's draw loops are guarded by resolveParam's clamp (see
@@ -49,18 +64,44 @@ function assertNoNonFiniteArgs(ctx: ReturnType<typeof createMockCtx>): void {
   // registry grows (the pgen port program adds dozens of generators). The check
   // is identical in meaning — it fails iff any recorded numeric arg is
   // non-finite — just O(calls) cheap instead of O(args) of expect() overhead.
+  const visitedArrays = new WeakSet<unknown[]>();
   const offender = ctx.calls.find((call) =>
-    call.args.some((arg) => typeof arg === 'number' && !Number.isFinite(arg)),
+    call.args.some((arg) => containsNonFiniteNumber(arg, visitedArrays)),
   );
   expect(
-    offender,
-    offender && `non-finite arg in ${offender.method}(${offender.args.join(', ')})`,
-  ).toBeUndefined();
+    offender === undefined,
+    offender && `non-finite numeric arg in ${offender.method}`,
+  ).toBe(true);
 }
 
 function assertWithinCallBudget(ctx: ReturnType<typeof createMockCtx>): void {
   expect(ctx.calls.length).toBeLessThan(MAX_CALLS_PER_DRAW);
 }
+
+describe('non-finite canvas arg guard', () => {
+  it('rejects a non-finite numeric leaf inside an array argument', () => {
+    const ctx = createMockCtx();
+    ctx.setLineDash([Number.NaN]);
+
+    expect(() => assertNoNonFiniteArgs(ctx)).toThrowError(
+      /non-finite numeric arg in setLineDash/,
+    );
+  });
+
+  it('traverses cyclic arrays safely and continues checking their other leaves', () => {
+    const ctx = createMockCtx();
+    const cyclic: unknown[] = [];
+    cyclic.push(cyclic, [Number.POSITIVE_INFINITY]);
+    ctx.calls.push({ method: 'setLineDash', args: [cyclic] });
+
+    expect(() => assertNoNonFiniteArgs(ctx)).toThrowError(
+      /non-finite numeric arg in setLineDash/,
+    );
+
+    cyclic.splice(1);
+    expect(() => assertNoNonFiniteArgs(ctx)).not.toThrow();
+  });
+});
 
 describe('registry', () => {
   it('ships a registry of patterns with unique stable names', () => {
@@ -164,10 +205,7 @@ describe('draw', () => {
         }
       }
     },
-    // Now exercises 4 realistic + 3 degenerate panel sizes per extreme, plus
-    // a finite-arg scan over every recorded call — comfortably over the 5s
-    // default under load, though quick in isolation.
-    20_000,
+    EXTREME_DRAW_TIMEOUT_MS,
   );
 
   it(
@@ -190,24 +228,44 @@ describe('draw', () => {
         }
       }
     },
-    20_000,
+    EXTREME_DRAW_TIMEOUT_MS,
   );
 });
 
 describe('determinism', () => {
-  it('draws an identical call log for identical inputs', () => {
-    for (const gen of PATTERN_GENERATORS) {
-      const params = defaultParams(gen.name);
-      for (const [w, h] of [...PANEL_SIZES, ...DEGENERATE_PANEL_SIZES]) {
-        const opts = { widthMm: w, heightMm: h, color: '#d4af37', params };
-        const first = createMockCtx();
-        gen.draw(first, opts);
-        const second = createMockCtx();
-        gen.draw(second, opts);
-        expect(second.calls).toEqual(first.calls);
+  it(
+    'draws identical call logs at defaults and one-parameter-at-a-time extremes',
+    () => {
+      for (const gen of PATTERN_GENERATORS) {
+        const paramCases: { label: string; params: Record<string, number> }[] = [
+          { label: 'defaults', params: defaultParams(gen.name) },
+        ];
+        for (const target of gen.paramDefs) {
+          for (const [extremeName, extreme] of [
+            ['min', target.min],
+            ['max', target.max],
+          ] as const) {
+            paramCases.push({
+              label: `${target.key}=${extremeName}`,
+              params: { ...defaultParams(gen.name), [target.key]: extreme },
+            });
+          }
+        }
+
+        for (const { label, params } of paramCases) {
+          for (const [w, h] of [...PANEL_SIZES, ...DEGENERATE_PANEL_SIZES]) {
+            const opts = { widthMm: w, heightMm: h, color: '#d4af37' };
+            const first = createMockCtx();
+            gen.draw(first, { ...opts, params: { ...params } });
+            const second = createMockCtx();
+            gen.draw(second, { ...opts, params: { ...params } });
+            expect(second.calls, `${gen.name} ${label} at ${w}x${h}`).toEqual(first.calls);
+          }
+        }
       }
-    }
-  });
+    },
+    DETERMINISM_TIMEOUT_MS,
+  );
 });
 
 describe('param clamping', () => {

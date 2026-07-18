@@ -28,6 +28,7 @@ import {
   type PatternLayer,
 } from '@zpd/core';
 import { layerBbox, layerRotation } from './renderer';
+import { reconcileTextGeometry } from './text-geometry';
 import type { ToolContext } from './types';
 
 export type Reference = 'selection' | 'panel';
@@ -66,11 +67,13 @@ type NonPatternLayer = Exclude<Layer, PatternLayer>;
 // could yank a legitimately selected shape there too. Excluded here, before
 // the target ever reaches layerAlignRect.
 function hasGeometry(layer: NonPatternLayer): boolean {
+  if (layer.type === 'text') return layerBbox(layer) !== null;
   if (layer.type !== 'path') return true;
   return layer.points.length > 0 || (layer.extraSubpaths ?? []).some((sub) => sub.length > 0);
 }
 
 export function eligibleLayers(doc: DocState, selectedIds: readonly string[]): NonPatternLayer[] {
+  reconcileTextGeometry(doc.layers);
   return doc.layers.filter(
     (l): l is NonPatternLayer =>
       selectedIds.includes(l.id) && l.type !== 'pattern' && hasGeometry(l),
@@ -145,6 +148,7 @@ export function applyAlign(
   type: AlignType,
   reference: Reference,
 ): void {
+  reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
   const targets = eligibleLayers(ctx.doc, selectedIds);
   applyResults(
     ctx,
@@ -163,6 +167,7 @@ export function applyDistribute(
   axis: DistributeAxis,
   reference: Reference,
 ): void {
+  reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
   const targets = eligibleLayers(ctx.doc, selectedIds);
   applyResults(
     ctx,

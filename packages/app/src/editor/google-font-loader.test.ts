@@ -3,12 +3,16 @@
 // jsdom never actually fetches the <link rel="stylesheet"> this module
 // appends (no real network, per the task's hard rule), so every test drives
 // the link's load/error handlers by hand and stubs document.fonts the same
-// way fonts.test.ts does. Each test uses its own unique family name — the
-// module's memoization (fontLoadPromises/loadedFonts/requestedSamples) is
-// permanent by design (see the dedupe test), so reusing a family across
-// tests would leak state between them.
+// way fonts.test.ts does. Each test uses its own unique family name because
+// the production memoization is intentionally permanent.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isGoogleFontLoaded, loadGoogleFont } from './google-font-loader';
+import {
+  ensureGoogleFontAttempt,
+  FONT_LOAD_TIMEOUT_MS,
+  getGoogleFontAttemptStatus,
+  isGoogleFontLoaded,
+  loadGoogleFont,
+} from './google-font-loader';
 
 function stubFontFaceSet(loadImpl?: (spec: string, text?: string) => Promise<unknown>) {
   const fonts = { load: vi.fn(loadImpl ?? (() => Promise.resolve([]))) };
@@ -43,6 +47,7 @@ describe('loadGoogleFont', () => {
     await promise;
 
     expect(fonts.load).toHaveBeenCalledWith('16px "Roboto Slab"', undefined);
+    expect(getGoogleFontAttemptStatus('Roboto Slab')).toBe('ready');
   });
 
   it('forwards sample text to document.fonts.load so unicode-range subsets load', async () => {
@@ -70,6 +75,7 @@ describe('loadGoogleFont', () => {
 
     lastLink().onload?.(new Event('load'));
     await expect(promise).resolves.toBeUndefined();
+    expect(getGoogleFontAttemptStatus('Rejecting Font')).toBe('failed');
   });
 
   it('resolves even when document.fonts is entirely absent', async () => {
@@ -79,6 +85,7 @@ describe('loadGoogleFont', () => {
 
     lastLink().onload?.(new Event('load'));
     await expect(promise).resolves.toBeUndefined();
+    expect(getGoogleFontAttemptStatus('No FontFaceSet Font')).toBe('failed');
   });
 
   it('dedupes concurrent loads for the same family — one link, one document.fonts.load call', async () => {
@@ -110,12 +117,73 @@ describe('loadGoogleFont', () => {
     await vi.advanceTimersByTimeAsync(2);
     expect(settled).toBe(true);
   });
+
+  it('keeps a pre-timeout late-ready subscription and emits exactly one final notification', async () => {
+    vi.useFakeTimers();
+    let resolveFace: (value: unknown[]) => void = () => {};
+    stubFontFaceSet(
+      () =>
+        new Promise<unknown[]>((resolve) => {
+          resolveFace = resolve;
+        }),
+    );
+    const attempt = ensureGoogleFontAttempt('Late Exact Font', '日本語');
+    const notifications: string[] = [];
+    void attempt.initial.then(() => notifications.push('initial'));
+    attempt.onLateReady(() => notifications.push('late'));
+
+    lastLink().onload?.(new Event('load'));
+    await vi.advanceTimersByTimeAsync(FONT_LOAD_TIMEOUT_MS);
+    await attempt.initial;
+    expect(attempt.getStatus()).toBe('timed-out');
+    expect(notifications).toEqual(['initial']);
+
+    resolveFace([]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(attempt.getStatus()).toBe('late-ready');
+    expect(notifications).toEqual(['initial', 'late']);
+  });
+
+  it('keeps a timed-out fallback frozen when the underlying face later rejects', async () => {
+    vi.useFakeTimers();
+    let rejectFace: (reason: Error) => void = () => {};
+    stubFontFaceSet(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFace = reject;
+        }),
+    );
+    const attempt = ensureGoogleFontAttempt('Late Reject Font', 'X');
+    const late = vi.fn();
+    attempt.onLateReady(late);
+    lastLink().onload?.(new Event('load'));
+    await vi.advanceTimersByTimeAsync(FONT_LOAD_TIMEOUT_MS);
+    await attempt.initial;
+    rejectFace(new Error('decode failed'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(attempt.getStatus()).toBe('timed-out');
+    expect(late).not.toHaveBeenCalled();
+  });
+
+  it('shares a same-sample attempt but loads different samples independently behind one stylesheet', async () => {
+    const fonts = stubFontFaceSet();
+    const latin = ensureGoogleFontAttempt('Subset Font', 'ABC');
+    expect(ensureGoogleFontAttempt('Subset Font', 'ABC')).toBe(latin);
+    const japanese = ensureGoogleFontAttempt('Subset Font', '日本語');
+    expect(japanese).not.toBe(latin);
+    expect(document.head.querySelectorAll('link[rel="stylesheet"]')).toHaveLength(1);
+    lastLink().onload?.(new Event('load'));
+    await Promise.all([latin.initial, japanese.initial]);
+    expect(fonts.load).toHaveBeenCalledTimes(2);
+    expect(fonts.load).toHaveBeenCalledWith('16px "Subset Font"', 'ABC');
+    expect(fonts.load).toHaveBeenCalledWith('16px "Subset Font"', '日本語');
+  });
 });
 
-// isGoogleFontLoaded is the loader's family-level readiness — the internal
-// memoization fonts.ts delegates to for a family-only query (see fonts.ts).
-// It is the loader's SOLE public readiness export; the old family-level
-// isFontLoading was dead and was removed in the consolidation (finding #5).
+// isGoogleFontLoaded is the family-level "done trying" view used by the Font
+// Explorer; exact sample state lives on FontLoadAttempt/get...Status.
 describe('isGoogleFontLoaded — family-level sync truth', () => {
   it('is false before a load starts', () => {
     expect(isGoogleFontLoaded('Untouched Font')).toBe(false);
@@ -137,12 +205,10 @@ describe('isGoogleFontLoaded — family-level sync truth', () => {
     stubFontFaceSet(() => new Promise(() => {}));
     const promise = loadGoogleFont('Timeout Truth Font');
 
-    await vi.advanceTimersByTimeAsync(FONT_LOAD_TIMEOUT_MS_FOR_TEST);
+    await vi.advanceTimersByTimeAsync(FONT_LOAD_TIMEOUT_MS);
     await promise;
 
     expect(isGoogleFontLoaded('Timeout Truth Font')).toBe(true);
+    expect(getGoogleFontAttemptStatus('Timeout Truth Font')).toBe('timed-out');
   });
 });
-
-// mirrors the module-private FONT_LOAD_TIMEOUT_MS constant for the test above
-const FONT_LOAD_TIMEOUT_MS_FOR_TEST = 10000;

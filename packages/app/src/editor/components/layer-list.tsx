@@ -1,7 +1,7 @@
 // Layer list — top of the stack first (visual top == last array index).
 // Select / show-hide / reorder / rename / delete go through @zpd/core
 // layer-ops so ordering + immutability semantics live in one place.
-import { useRef, useState } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 import {
   PALETTE,
   removeLayer,
@@ -35,13 +35,25 @@ export interface LayerListProps {
 
 export function LayerList({ ctx, selectedIds }: LayerListProps) {
   const layers = ctx.doc.layers;
+  const visibleLayers = [...layers].reverse();
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
+  const [focusedLayerId, setFocusedLayerId] = useState<string | null>(null);
+  const selectionButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   // Shift-range anchor (#45). A ref, not state: it only steers the NEXT click
   // and must never trigger a re-render of its own.
   const anchorRef = useRef<string | null>(null);
 
-  const handleRowClick = (id: string, e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }) => {
+  const currentFocusId = visibleLayers.some((layer) => layer.id === focusedLayerId)
+    ? focusedLayerId
+    : (visibleLayers.find((layer) => selectedIds.includes(layer.id))?.id ??
+      visibleLayers[0]?.id ??
+      null);
+
+  const handleRowClick = (
+    id: string,
+    e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+  ) => {
     const next = nextListSelection(
       { selectedIds, anchorId: anchorRef.current },
       layers.map((l) => l.id),
@@ -60,7 +72,17 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     if (next !== layers) ctx.commit({ ...ctx.doc, layers: next });
   };
   const remove = (id: string) => {
-    ctx.commit({ ...ctx.doc, layers: removeLayer(layers, id) });
+    const renderedIndex = visibleLayers.findIndex((layer) => layer.id === id);
+    const nextLayers = removeLayer(layers, id);
+    const nextVisibleLayers = [...nextLayers].reverse();
+    const nextFocusId =
+      renderedIndex < 0
+        ? currentFocusId
+        : (nextVisibleLayers[Math.min(renderedIndex, nextVisibleLayers.length - 1)]?.id ?? null);
+
+    ctx.commit({ ...ctx.doc, layers: nextLayers });
+    setFocusedLayerId(nextFocusId);
+    if (nextFocusId) selectionButtonRefs.current.get(nextFocusId)?.focus();
     // Multi-capable drop-from-selection (#44); for today's 0/1 selection this
     // is exactly the old `if (selectedId === id) ctx.select(null)`.
     if (selectedIds.includes(id)) ctx.selectIds(selectedIds.filter((x) => x !== id));
@@ -82,21 +104,63 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     setRenamingId(null);
   };
 
+  const moveSelectionFocus = (id: string, event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      // Keep the editor's window-level shortcut handler from turning Space
+      // into temporary pan mode. Do not preventDefault: the button's native
+      // Enter/Space click must remain the selection activation path.
+      event.stopPropagation();
+      return;
+    }
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const index = visibleLayers.findIndex((layer) => layer.id === id);
+    if (index < 0) return;
+    const offset = event.key === 'ArrowUp' ? -1 : 1;
+    const nextIndex = Math.min(Math.max(index + offset, 0), visibleLayers.length - 1);
+    const nextId = visibleLayers[nextIndex]?.id;
+    if (!nextId) return;
+
+    setFocusedLayerId(nextId);
+    selectionButtonRefs.current.get(nextId)?.focus();
+  };
+
   return (
     <ul className="flex flex-col gap-0.5">
-      {[...layers].reverse().map((layer) => (
+      {visibleLayers.map((layer) => (
         <li
           key={layer.id}
-          onClick={(e) => handleRowClick(layer.id, e)}
           className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs ${
-            selectedIds.includes(layer.id) ? 'bg-sky-500/20 text-sky-100' : 'text-neutral-300 hover:bg-neutral-800'
+            selectedIds.includes(layer.id)
+              ? 'bg-sky-500/20 text-sky-100'
+              : 'text-neutral-300 hover:bg-neutral-800'
           }`}
         >
-          <span className="w-4 text-center">{TYPE_ICON[layer.type]}</span>
-          <span
-            className="h-3 w-3 rounded-sm border border-neutral-600"
-            style={{ background: PALETTE[layerColorIndex(layer)].hex }}
-          />
+          <button
+            ref={(node) => {
+              if (node) selectionButtonRefs.current.set(layer.id, node);
+              else selectionButtonRefs.current.delete(layer.id);
+            }}
+            type="button"
+            aria-label={`Select layer ${layer.name || layer.type}`}
+            aria-pressed={selectedIds.includes(layer.id)}
+            tabIndex={currentFocusId === layer.id ? 0 : -1}
+            onFocus={() => setFocusedLayerId(layer.id)}
+            onKeyDown={(event) => moveSelectionFocus(layer.id, event)}
+            onClick={(event) => handleRowClick(layer.id, event)}
+            className="flex shrink-0 items-center gap-1.5 rounded-sm p-0.5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
+          >
+            <span className="w-4 text-center" aria-hidden="true">
+              {TYPE_ICON[layer.type]}
+            </span>
+            <span
+              aria-hidden="true"
+              className="h-3 w-3 rounded-sm border border-neutral-600"
+              style={{ background: PALETTE[layerColorIndex(layer)].hex }}
+            />
+          </button>
           {renamingId === layer.id ? (
             <input
               autoFocus
@@ -117,8 +181,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
             />
           ) : (
             <span
-              onDoubleClick={(e) => {
-                e.stopPropagation();
+              onDoubleClick={() => {
                 startRename(layer);
               }}
               title="Double-click to rename"
@@ -128,16 +191,40 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
             </span>
           )}
           <span className="flex items-center gap-0.5 text-neutral-400">
-            <button title="Bring forward" onClick={(e) => { e.stopPropagation(); move(layer.id, 1); }}>
+            <button
+              title="Bring forward"
+              onClick={(e) => {
+                e.stopPropagation();
+                move(layer.id, 1);
+              }}
+            >
               ▲
             </button>
-            <button title="Send backward" onClick={(e) => { e.stopPropagation(); move(layer.id, -1); }}>
+            <button
+              title="Send backward"
+              onClick={(e) => {
+                e.stopPropagation();
+                move(layer.id, -1);
+              }}
+            >
               ▼
             </button>
-            <button title="Show / hide" onClick={(e) => { e.stopPropagation(); toggle(layer.id); }}>
+            <button
+              title="Show / hide"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggle(layer.id);
+              }}
+            >
               {layer.hidden ? '🚫' : '👁'}
             </button>
-            <button title="Delete" onClick={(e) => { e.stopPropagation(); remove(layer.id); }}>
+            <button
+              title="Delete"
+              onClick={(e) => {
+                e.stopPropagation();
+                remove(layer.id);
+              }}
+            >
               ✕
             </button>
           </span>

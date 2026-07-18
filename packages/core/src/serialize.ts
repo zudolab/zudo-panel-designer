@@ -9,7 +9,7 @@
 // the whole document.
 import { createDefaultDoc, DEFAULT_PANEL_HP } from './default-doc';
 import { PALETTE } from './palette';
-import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
+import { MAX_PANEL_HP, PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
 import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
 import { mintId } from './types';
 import type {
@@ -163,11 +163,11 @@ function parseBase(value: Record<string, unknown>): ParsedBase {
   return hidden === undefined ? { id, name } : { id, name, hidden };
 }
 
-// Out-of-range hp (missing, non-numeric, non-finite, <= 0) falls back to the
-// default doc's panel size rather than propagating a nonsensical dimension.
+// Invalid/non-positive hp falls back to the default; finite positive hp is
+// bounded by the largest product size before any dimensions are derived.
 function parseHp(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? value
+    ? Math.min(value, MAX_PANEL_HP)
     : DEFAULT_PANEL_HP;
 }
 

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createDefaultDoc,
+  MAX_PANEL_HP,
   PANEL_HEIGHT_MM,
   panelWidthMm,
   patternCoverGeometry,
@@ -126,7 +127,7 @@ describe('readDoc', () => {
   });
 
   it('round-trips a document written by writeDoc', () => {
-    const doc = createDefaultDoc(24);
+    const doc = createDefaultDoc(MAX_PANEL_HP);
     writeDoc(doc);
     const restored = readDoc();
     expect(restored).toEqual(doc);
