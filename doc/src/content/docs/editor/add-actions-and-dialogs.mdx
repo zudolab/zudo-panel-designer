@@ -45,21 +45,28 @@ interface DialogProps<P = unknown> {
 }
 ```
 
-Because the store lives outside React (`openDialog`/`closeDialog` in `registry/dialogs.ts`), anything can open a dialog — including a tool's pointer handler, which is not a React component. `DialogHost` renders the open dialog's component inside a `role="dialog" aria-modal="true"` backdrop; clicking the backdrop (but not the dialog body itself, which stops propagation) closes it.
+Because the store lives outside React (`openDialog`/`closeDialog` in `registry/dialogs.ts`), anything can open a dialog — including a tool's pointer handler, which is not a React component. `DialogHost` is the single owner of every dialog's modal chrome: it renders the open dialog's component inside a `role="dialog" aria-modal="true"` backdrop; clicking the backdrop (but not the dialog body itself, which stops propagation) closes it, as does pressing **Escape** anywhere on the page. It also traps focus inside the dialog while it's open, focuses the first focusable descendant on open (deferred to a dialog component that already moved focus itself, e.g. auto-focusing a search box or a Cancel button), and restores focus to whatever was focused before the dialog opened once it closes. Registered dialog components supply content only — none of this chrome is reimplemented per dialog.
 
 ### Built-in dialogs
 
 | Dialog id | File | Opened from |
 |---|---|---|
-| `shortcuts` | `dialogs/shortcuts.tsx` | Header's **?** button. |
+| `shortcut-panel` | `dialogs/shortcut-panel.tsx` | Header's **?** button, or the bare `?` key. |
+| `command-palette` | `dialogs/command-palette.tsx` | `⌘/Ctrl+Shift+K`. |
+| `font-explorer` | `dialogs/font-explorer.tsx` | Text inspector's **Browse Google Fonts…** button, or the command palette's *Browse Google Fonts* command. |
 | `pattern-picker` | `dialogs/pattern-picker.tsx` | Pattern inspector's **Browse…**, or the **Add pattern…** add-action. |
 | `trace` | `dialogs/trace.tsx` | Image inspector's **Convert to vector…**. |
+| `confirm-dialog` | `components/confirm-dialog.tsx` | Any code path needing a Confirm/Cancel gate before a destructive action — e.g. New panel and JSON import both replace the whole document. Core infra, not a Wave-5 extension: it self-registers via a direct import in `dialog-host.tsx` rather than the `dialogs/*` auto-discovery glob. |
 
-#### Shortcuts dialog
+#### Shortcuts overlay & command palette
 
-A static reference table of every keyboard/mouse shortcut in the app (tool letters, zoom keys, undo/redo, delete, nudge, Esc) — the concrete example the README points to for how a dialog is built. It is opened the same way as before, from the header's **?** button, and its contents are unchanged.
+The keyboard-shortcuts reference and the command palette are both generated **live** from the same [command registry](./shortcuts-and-commands.mdx) — the old hand-maintained static shortcuts table is gone. The `?`-triggered overlay is now searchable and category-grouped; `⌘/Ctrl+Shift+K` opens a fuzzy-searchable command palette that can run any chordless (palette-only) command too, such as Align, New Panel, or Import/Download JSON. See [Shortcuts & Command Palette](./shortcuts-and-commands.mdx) for the full contract.
 
-The [sidebar Help panel](./interface.mdx#right-sidebar) **complements** this dialog rather than replacing it: the Help panel explains the one tool that is currently active (its per-tool `description`), while the Shortcuts dialog stays the always-available, at-a-glance reference for the app's keyboard and mouse shortcuts. Reach for the dialog when you want the shortcut table; glance at the Help footer when you want to know what the tool in your hand does.
+The [sidebar Help panel](./interface.mdx#right-sidebar) **complements** the shortcuts overlay rather than replacing it: the Help panel explains the one tool that is currently active (its per-tool `description`), while the shortcuts overlay stays the always-available, searchable reference for the app's keyboard shortcuts. Reach for the overlay when you want the shortcut table; glance at the Help footer when you want to know what the tool in your hand does.
+
+#### Font Explorer dialog
+
+Browses the full 1,942-family Google Fonts catalog with search, category filters (including a Japanese filter derived from font subsets), and starrable favorites — the second tier of the font picker, alongside the text inspector's curated dropdown. See [Fonts → The Google Fonts Explorer](./fonts.mdx#the-google-fonts-explorer).
 
 #### Pattern picker dialog
 

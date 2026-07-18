@@ -1,0 +1,77 @@
+---
+title: Autosave & New Panel
+description: localStorage autosave, silent boot restore, the save-status chip, and the New panel reset.
+sidebar_position: 11
+---
+
+zpd has no server-side project storage — the working document lives in the browser tab, and `use-autosave.ts` mirrors it into `localStorage` continuously so a reload (or an accidental tab close) doesn't lose work. This is local-only: nothing leaves the browser, and nothing syncs across browsers or devices.
+
+## Boot restore
+
+On mount, `Editor()` reads the stored document once via a lazy `useState` initializer: `readDoc() ?? createDemoDoc()`. If `doc-store.ts` finds a valid entry under the `zpd.doc.v1` key, that document loads silently — there is no "restore this session?" prompt. The editor falls back to the demo document (`demo-doc.ts`'s `createDemoDoc()`, one layer of every type, so the shell exercises every inspector on first load) whenever `readDoc()` can't produce a document to restore — not just on a true first visit, but also an unparseable/corrupt payload, an unrecognized stored shape, or `localStorage` being unavailable or throwing on read. `readDoc()` never throws either way; every one of those cases returns `null` rather than propagating an error.
+
+The stored payload is a small versioned envelope:
+
+```ts
+interface StoredDocPayload {
+  version: number; // DOC_STORAGE_VERSION
+  savedAt: number;
+  config: unknown; // serializePanelConfig(doc) output
+}
+```
+
+`readDoc()` runs the `config` field through core's defensive `parsePanelConfig()` (see [Defensive Parsing](../export/defensive-parsing.mdx)), so a corrupted or hand-edited payload degrades to safe defaults rather than crashing the boot. `readDoc()`/`writeDoc()` never throw — every `localStorage` access (including the property read itself, which can throw under locked-down privacy settings) is wrapped and reduced to a tagged result.
+
+## Debounced autosave
+
+Every commit to the document schedules a write 500ms later (`AUTOSAVE_DEBOUNCE_MS`). The effect that owns the timer is keyed on `doc`, so each new commit clears the previous run's pending timer before scheduling its own — rapid edits (a drag, a fast run of undo/redo) coalesce into a single write instead of one per commit.
+
+Two early-flush triggers bypass the debounce so a pending write is never lost when the tab goes away:
+
+- **`pagehide`** — the modern replacement for `beforeunload`; it also fires on bfcache navigation and mobile tab switches.
+- **`visibilitychange`** turning `'hidden'` — mobile OSes can kill a backgrounded tab's process without ever firing `pagehide`.
+
+There is deliberately **no `beforeunload` confirmation prompt** ("Leave site? Changes may not be saved") — continuous local persistence replaces the need for one.
+
+## The save-status chip
+
+`components/save-status.tsx` renders a small, non-interactive pill (`role="status"`) in the header, next to the app name. It reflects one of three states:
+
+| State | Copy | Style |
+|---|---|---|
+| `unsaved` | "Unsaved changes…" | neutral pill |
+| `saved` | "Saved locally `HH:MM`" (24-hour, local time) | neutral pill |
+| `failed` (quota) | "Save failed (document too large for local storage)" | red pill, same text as the `title` tooltip |
+| `failed` (other) | "Save failed" | red pill, tooltip "Save failed — local storage is unavailable" |
+
+`unsaved` is derived, not stored explicitly: the hook compares the last write's target document by reference against the current `doc` — any new commit makes that reference stale, which alone means "unsaved," with nothing to reset by hand.
+
+### Save failures
+
+`writeDoc()` tags every failure with a reason — `'quota'`, `'unavailable'`, or `'error'` — and the autosave hook fires a one-per-session warning toast (`toastWarning`) the first time a write fails, so a repeated quota failure on every subsequent debounce doesn't spam the toast queue:
+
+- **`quota`** — a `QuotaExceededError` (or Firefox's `NS_ERROR_DOM_QUOTA_REACHED`). zpd's `image` layers embed base64 data URLs, so a design with a few large images can realistically exceed the browser's per-origin `localStorage` quota. Toast: *"This panel is too large to save locally — some changes may be lost if you close the tab."*
+- **`unavailable`** — `localStorage` itself is inaccessible (private-browsing lockdown, third-party-storage blocking, SSR). Toast: *"Local storage is unavailable in this browser — changes are not being saved."*
+- **`error`** — any other write failure (e.g. the document failed to serialize). Toast: *"Could not save your changes locally."*
+
+:::note
+The chip's copy is deliberately conservative about what it promises: this is `localStorage` **in this browser only** — not an account, not a synced project, not a guarantee against the tab's storage being cleared.
+:::
+
+## New panel
+
+The header's **New panel** button (and the command palette's *File → New Panel*, the same underlying `newPanelAction()`) starts a fresh document. It always confirms first:
+
+> **Start a new panel?**
+> This replaces the current panel with the default starter panel. This cannot be undone.
+> [Cancel] [**New panel**]
+
+On confirm, it replaces the whole document with `createDefaultDoc()` — the same plain starter document (one dot-grid pattern layer) a script or a fresh `@zpd/core` consumer would get, **not** the richer first-visit demo document described above (that one-layer-of-every-type doc only ever appears on a truly empty boot).
+
+`replaceDoc()` (`replace-doc.ts`) is the shared whole-document-replacement primitive behind both New panel and JSON import (see [Round-Trip → Importing](../export/round-trip.mdx#importing)) — unlike a normal `ctx.commit()`/`ctx.replace()`, it:
+
+- discards the *entire* undo/redo history (`ctx.reset`) — a new document's edit history isn't meaningful against the old one,
+- clears the current selection (stale layer ids from the old document must not linger), and
+- evicts renderer image-cache entries that no longer match the new layer set.
+
+New panel doesn't clear `localStorage` directly — it just replaces the in-memory document, and the next debounced autosave overwrites the stored entry with the new starter panel, same as any other edit.

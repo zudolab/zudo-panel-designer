@@ -1,0 +1,81 @@
+---
+title: Shortcuts & Command Palette
+description: The contextual command registry, the searchable shortcuts overlay (?), and the fuzzy command palette (⌘⇧K).
+sidebar_position: 14
+---
+
+`commands.ts` is a flat, contextual **command registry**: every app-level action reachable from a keyboard shortcut — tool switches, undo/redo, clipboard, delete, align, file operations, help — is one `CommandDef` entry. Two UI surfaces consume this list directly: the keyboard-driven fallback dispatcher in `Editor.tsx`, and the two dialogs this page covers, the searchable **shortcuts overlay** (`?`) and the fuzzy **command palette** (`⌘/Ctrl+Shift+K`). A command's chord, label, or availability can never drift out of sync between "what fires on keydown" and "what a shortcuts UI lists," because both read the exact same array.
+
+:::note
+This replaces the old hand-maintained static shortcuts table (`dialogs/shortcuts.tsx`) — that file is gone; its dialog id and file are now `shortcut-panel`.
+:::
+
+## The command registry
+
+```ts
+interface CommandDef {
+  id: string;
+  label: string;
+  category: string; // Tool | Edit | View | Align | File | Text | Help
+  chord?: Chord;              // absent = not keyboard-reachable (palette-only)
+  displayOnly?: boolean;      // real gesture owned elsewhere (Paste, Nudge)
+  preventDefault?: boolean;
+  run(ctx: CommandContext): void;
+  isEnabled(ctx: CommandContext): boolean;
+  shortcutDisplay?: string;   // overrides the chord-derived display string
+}
+```
+
+Every command reads `ctx` **fresh on every invocation** — commands are never pre-bound closures baked in at registration time, a deliberate divergence from the reference port's `CommandCallbacks` indirection layer. Tool-switch commands aren't hand-listed either: `toolCommands()` derives one command per tool from the [tool registry](./extension-architecture.mdx) on every call, so a tool's own `shortcut` field stays the single source of truth for both the toolbar and this list.
+
+Two flags change how a command participates in the two surfaces below, independently:
+
+- **`chord` absent** ("chordless") — the command has no keyboard shortcut at all; it's reachable only from the command palette. Align, Distribute, New Panel, Import/Download JSON, the three zoom actions, and Browse Google Fonts are all chordless by design.
+- **`displayOnly: true`** — the command *does* have a chord (or an explicit `shortcutDisplay`) worth showing, but its real gesture is owned by other code and `run()` is never invoked through the registry. Paste (the real gesture is the native `paste` event — see [Clipboard → Paste](./clipboard.mdx#paste)) and Nudge (`Arrows`, Shift = ×10 — `Editor.tsx`'s own arrow-key switch) are the only two.
+
+### Chord matching
+
+```ts
+interface Chord {
+  key: string | readonly string[]; // one key, or several meaning the same shortcut
+  meta?: boolean;  // undefined = don't care; true/false = must/must-not be held
+  shift?: boolean;
+  alt?: boolean;
+}
+```
+
+`meta` matches `metaKey` **or** `ctrlKey`, on any platform — chords were never platform-gated (`⌘/Ctrl+Z` undoes on both Mac and Windows/Linux). `is-mac.ts` (`navigator.platform.includes('Mac')`, with iPad/iPhone and touch-capable `MacIntel` excluded) only decides **which glyph to show** — `⌘`/`⌥`/`⇧` vs `Ctrl+`/`Alt+`/`Shift+` — never which physical key is accepted.
+
+### Dispatch order
+
+`Editor.tsx`'s global `keydown` handler routes every key exactly the way the rest of the app does (see [Tools → The pointer/keyboard event contract](./tools.mdx#the-pointer-keyboard-event-contract)):
+
+1. The **active tool's** `onKeyDown` gets first refusal.
+2. If it doesn't claim the key, `dispatchCommand()` finds the first enabled, non-`displayOnly` command whose chord matches and runs it (`preventDefault()`-ing first, if the command asks for it).
+3. If nothing in the registry matched, a small bespoke switch handles **arrow-key nudge** — four keys plus a Shift-scaled step size don't collapse into one `Chord`, so nudging stays outside the registry (`edit-nudge` exists only as a `displayOnly` entry so it can still be listed).
+
+Keyboard input is ignored globally while an `<input>`/`<textarea>`/`<select>` is focused, so typing into the layer-rename field or a number field never fires a shortcut.
+
+## The keyboard shortcuts overlay
+
+Opened by the bare `?` key (no modifier — the `help-shortcuts` command's chord is just `{ key: '?' }`) or the header's **?** button. `dialogs/shortcut-panel.tsx` lists every command that has *something* to show — a real `chord`, or an explicit `shortcutDisplay` — which includes both runnable commands (tool switches, undo/redo, clipboard, delete, deselect, help/palette) and the two `displayOnly` entries (Paste, Nudge), grouped by `category` and filterable by a search box:
+
+- **Search** — a text input (placeholder "Search shortcuts…") filters by substring match against a command's `label` **or** `category` (e.g. typing "edit" surfaces the whole Edit group). An empty result shows *"No shortcuts match "‹query›""*.
+- **Grouping** — matches are grouped under uppercase category headers, in registry order.
+- **Focus** — the search input autofocuses on open (a layout-effect trick deliberately wins the race against the dialog host's generic "focus the first focusable descendant" fallback, since the Close button sits earlier in DOM order — without it, a keystroke meant as a filter query could instead re-trigger an editor shortcut behind the modal).
+
+Chordless commands (Align, New Panel, Import/Download JSON, zoom, Browse Google Fonts) do **not** appear here — they have nothing to show. Reach for the command palette to run those.
+
+## The command palette
+
+Opened by `⌘/Ctrl+Shift+K`. `dialogs/command-palette.tsx` is a fuzzy-searchable, keyboard-navigable list of every **runnable** command (`displayOnly` entries are excluded — running Paste or Nudge from a list would silently do nothing):
+
+- **Fuzzy search** — a hand-rolled subsequence matcher (`fuzzyScore`): every character of the query must appear in the target, in order, not necessarily contiguously (`"cpy"` matches `"Copy"`). It scores against the command's `label` and `category` combined, so a query like `"align"` surfaces every Align command even when none of their labels contain that substring literally. Lower score = tighter match (a contiguous run costs nothing; each gap between matched characters adds its length); results are sorted best-match-first.
+- **Recents, when the query is empty** — up to 8 most-recently-run command ids persist to `localStorage` under `zpd.palette-recents.v1`, most-recent-first, deduped. They lead the list ahead of everything else (in natural registry order) until you start typing, at which point fuzzy ranking takes over completely.
+- **Keyboard nav** — `↑`/`↓` move the highlight (clamped to the list bounds), `Enter` runs the highlighted command, `Escape` is deliberately *not* handled here — it bubbles up to the shared dialog-host Escape-to-close listener (see below).
+- **Disabled rows stay visible but inert** — a command whose `isEnabled(ctx)` is currently false (e.g. *Browse Google Fonts*, enabled only when a `text` layer is selected) still appears, dimmed and unclickable, rather than disappearing from the list.
+- Running a command records it as a recent and closes the palette — **unless** the command itself opened a *different* dialog (e.g. *Keyboard Shortcuts* opens `shortcut-panel`, *Browse Google Fonts* opens `font-explorer`). Since the dialog store only tracks one open dialog at a time, the palette checks it's still the one open before closing over whatever `run()` just opened.
+
+## Shared dialog chrome
+
+Both dialogs (like every registered dialog — see [Add-Actions & Dialogs](./add-actions-and-dialogs.mdx#dialogs)) render through `components/dialog-host.tsx`, which is the single owner of: the `role="dialog" aria-modal="true"` backdrop, a focus trap confined to the dialog while it's open, initial focus on the first focusable descendant (deferred to a component that already moved focus itself, like the shortcuts overlay's search box), **Escape-to-close**, and restoring focus to whatever was focused before the dialog opened. Registered dialog components supply content only — none of this chrome is reimplemented per dialog.

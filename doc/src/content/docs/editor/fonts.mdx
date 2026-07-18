@@ -3,7 +3,7 @@ title: Fonts
 sidebar_position: 10
 ---
 
-Text layers are rendered as physical silkscreen printing, not a monitor — so the font list in the text inspector isn't "whatever's installed," it's a small **curated** set chosen for legibility at silkscreen sizes and printing tolerances. `fonts.ts` is the single source of that list.
+Text layers are rendered as physical silkscreen printing, not a monitor — so the font picker isn't "whatever's installed." It's a two-tier system: a small **curated** dropdown chosen for legibility at silkscreen sizes and printing tolerances (`fonts.ts`), plus an opt-in **Google Fonts Explorer** modal (`dialogs/font-explorer.tsx`) for anyone who wants to reach past the curated set into the full public catalog.
 
 ## Self-hosted, no CDN
 
@@ -43,23 +43,46 @@ These are OFL-licensed font files bundled into the app build — there is no run
 
 The common thread is bold, geometric, or monospace faces that stay legible when printed small and thin by a silkscreen process — a delicate serif or a light-weight sans would blur or drop out entirely at typical panel label sizes.
 
+In the text inspector's font `<select>`, any curated family you've starred in the Google Fonts Explorer (see below) sorts to the top of the list, prefixed with a `★`, since a native `<select>` can't render its own star control.
+
 ## Loading a face on demand
 
-Only the *definitions* (`@font-face` CSS) load eagerly with the module; the actual font file bytes load lazily, on first use, via `ensureFont(family)`:
+Only the *definitions* (`@font-face` CSS) for the curated set load eagerly with the module; the actual font file bytes load lazily, on first use, via `ensureFont(family, sampleText?)`:
 
 ```ts
-export function ensureFont(family: string): Promise<void>
+export function ensureFont(family: string, sampleText?: string): Promise<void>
 ```
 
-`ensureFont` is idempotent per family — it kicks off `document.fonts.load()` once, caches the in-flight promise, and resolves once the face is actually usable. It's called from two places:
+`ensureFont` is idempotent per `(family, sampleText)` pair — for a curated or CSS-generic family it kicks off `document.fonts.load()` once per family (`sampleText` doesn't matter, there's only ever one bundled file); for anything else it routes through `loadGoogleFont` (below), tracked per family **and** sample, since two text layers sharing a Google Font but rendering different scripts (e.g. one Latin, one Japanese) each need their own glyph-range fetch. It caches the in-flight promise and resolves once the face is actually usable. It's called from two places:
 
-- The **text tool**, immediately after placing a new text layer.
-- The **text inspector**, whenever the user changes the selected layer's font.
+- The **text tool**, immediately after placing a new text layer, with the layer's own content as the sample.
+- The **text inspector**, whenever the user changes the selected layer's font — including from the Font Explorer.
 
 Both callers chain `.then(() => ctx.requestRepaint())`, so the canvas repaints with the real glyphs as soon as they're ready — until then, the renderer's `ctx.font = ...` draws with the browser's fallback face, which is a normal, harmless transient state rather than an error.
 
-`ensureFont` never throws or hangs a caller: if a family fails to load, or the runtime has no `FontFaceSet` API at all (e.g. `jsdom`'s default test environment), the promise still resolves — it's just never marked "ready," so the fallback face keeps rendering indefinitely instead of the call blocking anything.
+`ensureFont` never throws or hangs a caller: if a family fails to load, or the runtime has no `FontFaceSet` API at all (e.g. `jsdom`'s default test environment), the promise still resolves — it's just never marked "ready," so the fallback face keeps rendering indefinitely instead of the call blocking anything. A family that isn't in `CURATED_FONTS` and isn't a CSS generic keyword (`serif`, `sans-serif`, `monospace`, `cursive`, `fantasy`, `system-ui` — a legacy/imported layer's built-in fallback, not a real font to fetch) is treated as a Google Font and routed to `loadGoogleFont`.
 
 :::note
-A layer's `fontFamily` isn't validated against `CURATED_FONTS` — a hand-edited JSON import, or the demo document's generic `sans-serif`, is preserved and shown as a synthesized extra option in the inspector's `<select>` rather than being silently swapped out. See [Inspectors → Text](./inspectors.mdx#built-in-inspectors-text).
+A layer's `fontFamily` isn't validated against `CURATED_FONTS` — a hand-edited JSON import, the demo document's generic `sans-serif`, or (now) a family picked in the Font Explorer, is preserved and shown as a synthesized extra option in the inspector's `<select>` rather than being silently swapped out. See [Inspectors → Text](./inspectors.mdx#built-in-inspectors-text).
 :::
+
+## The Google Fonts Explorer
+
+The text inspector's **Browse Google Fonts…** button (also reachable, when a text layer is selected, from the [command palette](./shortcuts-and-commands.mdx#the-command-palette)'s *Browse Google Fonts* command) opens `font-explorer`, a modal browsing all **1,942 families** in the bundled Google Fonts catalog (`data/google-fonts-catalog.json` — family, category, variants, and the language/script `subsets` Google publishes per family).
+
+- **Search** — a text box filters by substring match against the family name.
+- **Category filter** — toggle buttons for **All**, **Sans Serif**, **Serif**, **Display**, **Handwriting**, **Monospace**, and **Japanese**. Only one is active at a time (clicking the active one clears it back to All).
+- **Japanese filter, via subsets** — the **Japanese** category isn't a hand-picked family list; it's derived live from the catalog's own data as `subsets.includes('japanese')` (68 of the 1,942 families qualify). Selecting it also swaps the default preview sample from `"The quick brown fox"` to `"こんにちは日本語"`, since a Japanese font's Latin glyphs are usually an afterthought.
+- **Preview text** — an editable field lets you type your own sample; once you do, your text sticks across category changes instead of reverting to the category default.
+- **Favorites-first ordering** — favorited families sort to the front of the filtered/searched result set, same as the curated dropdown.
+- **Card grid, paged and lazy-loaded** — 60 cards per page (`PAGE_SIZE`), with the next page fetched via an `IntersectionObserver` sentinel as you scroll. Each card lazy-loads its own font file only once it scrolls near the visible area (another `IntersectionObserver`, 100px root margin), so opening the dialog never fires ~2,000 font requests at once. A loading spinner appears only if the fetch is still pending 200ms after it starts (`SPINNER_DELAY_MS`) — a cached/fast load never flashes one.
+- **Applying a font** — clicking a card's name/preview commits that family onto the target text layer (one undo entry) and closes the dialog; clicking the family already applied is a no-op (skipped, so it doesn't push a phantom undo entry). The currently-applied family's card is highlighted.
+- **Starring** — a `★`/`☆` toggle button in each card's corner adds or removes that family from favorites, independent of applying it.
+
+### Favorites
+
+`use-font-favorites.ts` persists starred families as a plain string array under the `zpd.font-favorites.v1` `localStorage` key — a single module-level store (`useSyncExternalStore`), not per-component state, so starring a font in the Explorer is reflected in the curated dropdown immediately, and a `storage` event from another tab (or a test clearing storage) reloads the set live. There is no account system behind this — it's local to the browser, same scope as [autosave](./autosave.mdx).
+
+### Loading a Google Font
+
+`google-font-loader.ts` requests a family only when it's actually needed: it injects a `<link rel="stylesheet">` pointing at `fonts.googleapis.com/css2?family=…&display=swap` (regular weight only — `TextLayer` has no font-weight field), waits for the stylesheet, then calls `document.fonts.load()` with the requested sample text so unicode-range-subsetted faces (common for CJK fonts, which ship separate per-script files) actually fetch the glyphs being rendered rather than just the default Latin range. A 10-second timeout (`FONT_LOAD_TIMEOUT_MS`) caps how long a caller waits — past that, the promise resolves anyway and the fallback face keeps rendering. Per-family stylesheet requests are deduplicated; a second caller needing a *different* sample on an already-requested family still gets its own `document.fonts.load()` call, so its glyph range is actually requested.
