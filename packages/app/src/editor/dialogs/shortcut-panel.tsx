@@ -10,7 +10,7 @@
 // content only. Ported (downsized) from pgen's shared/shortcut-panel.tsx:
 // dropped the D1-backed user-shortcut-override plumbing (zpd has no
 // settings surface — remapping is explicitly out of scope for this sub).
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   allCommands,
   commandShortcutDisplay,
@@ -42,6 +42,19 @@ export function filterShortcuts(commands: readonly CommandDef[], query: string):
 function ShortcutPanelDialog({ close }: DialogProps) {
   const [query, setQuery] = useState('');
   const mac = useMemo(() => isMac(), []);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // The Close button sits BEFORE the search input in DOM order (top-right,
+  // standard placement), so DialogHost's "focus the first focusable
+  // descendant" fallback would land on Close, not the field the user
+  // actually wants to type into — a keystroke meant as a filter would then
+  // bubble past isEditableTarget (Close isn't an input) and fire an editor
+  // shortcut behind the modal. This layout effect wins instead: it's a
+  // child effect, which runs before the host's (see dialog-host.tsx and
+  // confirm-dialog.tsx's identical Cancel-autofocus reasoning).
+  useLayoutEffect(() => {
+    searchRef.current?.focus();
+  }, []);
 
   const filtered = useMemo(
     () => filterShortcuts(shortcuttableCommands(allCommands(), mac), query),
@@ -66,6 +79,7 @@ function ShortcutPanelDialog({ close }: DialogProps) {
         Search shortcuts
       </label>
       <input
+        ref={searchRef}
         id="shortcut-panel-search"
         type="search"
         value={query}

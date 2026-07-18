@@ -114,6 +114,13 @@ describe('shortcut-panel dialog', () => {
     expect(screen.getByText('Tool')).toBeTruthy();
   });
 
+  it('focuses the search input on mount, not the Close button that precedes it in DOM order', () => {
+    const ShortcutPanelDialog = getShortcutPanelDialog();
+    render(<ShortcutPanelDialog props={{}} close={vi.fn()} ctx={stubCtx()} />);
+
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Search shortcuts…'));
+  });
+
   it('search filters the visible rows live', () => {
     const ShortcutPanelDialog = getShortcutPanelDialog();
     render(<ShortcutPanelDialog props={{}} close={vi.fn()} ctx={stubCtx()} />);
