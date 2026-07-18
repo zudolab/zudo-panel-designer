@@ -62,16 +62,20 @@ interface PanelPatternGenerator {
 
 ```ts
 function resolveParam(params, defs, key) {
+  const def = defs.find((d) => d.key === key);
+  if (!def) {
+    throw new Error(`resolveParam: unknown parameter key "${key}"`);
+  }
   const raw = params[key];
   const finiteRaw = typeof raw === 'number' && Number.isFinite(raw);
-  const def = defs.find((d) => d.key === key);
-  if (!def) return finiteRaw ? raw : Number.NaN; // no def to clamp against
   const value = finiteRaw ? raw : def.defaultValue;
   return Math.min(def.max, Math.max(def.min, value));
 }
 ```
 
 `resolveParam` は、入ってくる値が欠けているか非有限のときは def の `defaultValue` にフォールバックし、その後つねに `[min, max]` にクランプします。このクランプは見た目のためではありません。正のピッチ/カウントを保証するもので、呼び出し側が古い値・ゼロ・負の値を渡しても、すべての描画ループが有限のままであることを保ちます（ゼロや負のピッチは、さもなければ `for` ループを永遠に回してしまいます）。
+
+要求する `key` は `defs` に存在しなければなりません。宣言されていないキーを要求することはジェネレータ側のプログラミングエラーなので、`params` 側の値が欠けている場合、有限の場合、非有限の場合のいずれでも、`resolveParam` は必ずそのキー名を含むエラーを送出します。宣言されていないキーが `0`、生の値、`NaN` のいずれかへフォールバックすることを前提にしてはいけません。定義がなければ、強制できる範囲の不変条件もないためです。
 
 ## ファイル構成
 

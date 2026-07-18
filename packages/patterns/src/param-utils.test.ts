@@ -1,5 +1,41 @@
 import { describe, it, expect } from 'vitest';
-import { hash01 } from './param-utils';
+import { hash01, resolveParam } from './param-utils';
+import type { PatternParamDef } from './types';
+
+const PARAM_DEFS: PatternParamDef[] = [
+  {
+    key: 'pitch',
+    label: 'Pitch (mm)',
+    min: 2,
+    max: 10,
+    step: 0.5,
+    defaultValue: 5,
+  },
+];
+
+describe('resolveParam', () => {
+  it.each([
+    ['absent raw value', {}],
+    ['finite raw value', { undeclared: 4 }],
+    ['non-finite raw value', { undeclared: Number.NaN }],
+  ])('throws for an undeclared key with an %s', (_label, params) => {
+    expect(() => resolveParam(params, PARAM_DEFS, 'undeclared')).toThrowError(
+      'resolveParam: unknown parameter key "undeclared"',
+    );
+  });
+
+  it('defaults missing and non-finite values for a declared key', () => {
+    expect(resolveParam({}, PARAM_DEFS, 'pitch')).toBe(5);
+    expect(resolveParam({ pitch: Number.NaN }, PARAM_DEFS, 'pitch')).toBe(5);
+    expect(resolveParam({ pitch: Number.POSITIVE_INFINITY }, PARAM_DEFS, 'pitch')).toBe(5);
+  });
+
+  it('preserves in-range values and clamps declared values to their range', () => {
+    expect(resolveParam({ pitch: 7 }, PARAM_DEFS, 'pitch')).toBe(7);
+    expect(resolveParam({ pitch: -100 }, PARAM_DEFS, 'pitch')).toBe(2);
+    expect(resolveParam({ pitch: 100 }, PARAM_DEFS, 'pitch')).toBe(10);
+  });
+});
 
 // hash01 backs "was rand() in pgen" per-cell choices (tile orientation, cell
 // skip, jitter) for ported patterns — see .claude/skills/port-pgen-patterns/.
