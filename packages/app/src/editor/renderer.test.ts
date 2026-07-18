@@ -602,8 +602,8 @@ describe('pattern square (#96)', () => {
       expect(clips.every((c) => c.args.length === 0)).toBe(true);
     });
 
-    it.each([0, -1, NaN, Infinity])(
-      'skips the draw entirely for a non-finite/non-positive size (%s)',
+    it.each([0, -1, NaN, Infinity, 1e7])(
+      'skips the draw entirely for a non-finite/non-positive/absurd size (%s)',
       (size) => {
         const { gen } = renderPattern({ ...patternLayer, size });
         expect(gen.draw).not.toHaveBeenCalled();

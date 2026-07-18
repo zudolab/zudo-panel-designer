@@ -5,6 +5,7 @@
 // @zpd/core + @zpd/patterns APIs.
 import {
   buildPath2D,
+  MAX_PATTERN_SIZE_MM,
   mergeBboxes,
   normalizeRect,
   PALETTE,
@@ -304,10 +305,17 @@ function drawLayer(
     }
     case 'pattern': {
       const gen = patternByName(layer.patternType);
-      // Generators assume a positive draw span — a malformed size must never
-      // reach draw() (the parse boundary guarantees finite size > 0, but docs
-      // are also built in memory by tests/the bridge).
-      if (gen && Number.isFinite(layer.size) && layer.size > 0) {
+      // Generators assume a positive draw span and LOOP over all of it (the
+      // canvas clip bounds pixels, not JS work) — a malformed or absurd size
+      // must never reach draw(). The parse boundary guarantees
+      // 0 < size <= MAX_PATTERN_SIZE_MM, but docs are also built in memory
+      // by tests/the bridge.
+      if (
+        gen &&
+        Number.isFinite(layer.size) &&
+        layer.size > 0 &&
+        layer.size <= MAX_PATTERN_SIZE_MM
+      ) {
         ctx.save();
         ctx.translate(layer.x, layer.y);
         // The square clip is its OWN clip op so it composes (intersects) with

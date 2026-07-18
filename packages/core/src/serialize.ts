@@ -10,7 +10,7 @@
 import { createDefaultDoc, DEFAULT_PANEL_HP } from './default-doc';
 import { PALETTE } from './palette';
 import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
-import { patternCoverGeometry } from './pattern-geometry';
+import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
 import { mintId } from './types';
 import type {
   ColorIndex,
@@ -131,7 +131,9 @@ interface PanelDimsMm {
 // hand-edited v3 file may carry broken values — both degrade the same way:
 // a missing/non-finite/non-positive `size` falls back to the cover size, then
 // a missing/non-finite `x`/`y` centers the RESULTING size on the panel. A full
-// v1/v2 migration is therefore exactly "cover geometry via the helper".
+// v1/v2 migration is therefore exactly "cover geometry via the helper". A
+// finite but absurd size is clamped to MAX_PATTERN_SIZE_MM — generators loop
+// over the whole span, so an unbounded size is a freeze-on-open DoS vector.
 //
 // NOTE the migration contract: cover geometry preserves the panel COVERAGE and
 // the pattern's CENTER (centeredStart pins one lattice tick to the draw span's
@@ -145,7 +147,8 @@ function parsePatternGeometry(
 ): { x: number; y: number; size: number } {
   const cover = patternCoverGeometry(panel);
   const rawSize = optionalNum(value.size);
-  const size = rawSize !== undefined && rawSize > 0 ? rawSize : cover.size;
+  const size =
+    rawSize !== undefined && rawSize > 0 ? Math.min(rawSize, MAX_PATTERN_SIZE_MM) : cover.size;
   return {
     x: optionalNum(value.x) ?? (panel.widthMm - size) / 2,
     y: optionalNum(value.y) ?? (panel.heightMm - size) / 2,

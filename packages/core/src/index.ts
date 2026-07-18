@@ -30,7 +30,7 @@ export { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig, tryParseP
 export { createDefaultDoc, DEFAULT_PANEL_HP } from './default-doc';
 
 export type { PatternCoverGeometry } from './pattern-geometry';
-export { patternCoverGeometry } from './pattern-geometry';
+export { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
 
 // --- geometry/ops/history ---
 

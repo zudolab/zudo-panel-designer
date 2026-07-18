@@ -12,6 +12,15 @@ export interface PatternCoverGeometry {
   size: number;
 }
 
+// Upper bound for a pattern square's side. Not a UX limit — a DoS guard:
+// generators run JS loops across the whole draw span (the canvas clip bounds
+// pixels, not loop work), so a hand-edited config with size 1e7 would freeze
+// the tab on open. 1000mm is ~8× the largest panel dimension (128.5) — far
+// beyond any legitimate placement while keeping worst-case loop counts sane.
+// Enforced at the parse boundary (serialize.ts) and re-checked by the
+// renderer's draw guard for docs built in memory.
+export const MAX_PATTERN_SIZE_MM = 1000;
+
 export function patternCoverGeometry(panel: {
   widthMm: number;
   heightMm: number;

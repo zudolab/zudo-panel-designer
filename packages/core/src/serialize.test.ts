@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultDoc } from './default-doc';
 import { PALETTE } from './palette';
 import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
-import { patternCoverGeometry } from './pattern-geometry';
+import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
 import { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig, tryParsePanelConfig } from './serialize';
 import type { DocState, PatternLayer } from './types';
 
@@ -266,6 +266,15 @@ describe('serialize v3 — pattern square geometry migration (#96)', () => {
       );
     },
   );
+
+  it('clamps a finite but absurd size to MAX_PATTERN_SIZE_MM (freeze-on-open DoS guard)', () => {
+    const doc = parsePanelConfig({
+      layers: [
+        { type: 'pattern', patternType: 'dot-grid', color: 1, params: {}, x: 0, y: 0, size: 1e7 },
+      ],
+    });
+    expect(firstPattern(doc).size).toBe(MAX_PATTERN_SIZE_MM);
+  });
 
   it('all-malformed geometry degrades to exactly the cover default', () => {
     const doc = parsePanelConfig({
