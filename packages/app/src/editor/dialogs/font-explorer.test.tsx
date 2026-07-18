@@ -62,13 +62,18 @@ function fireIntersection(target: Element) {
   const rec = [...ioInstances].reverse().find((r) => !r.disconnected && r.elements.has(target));
   if (!rec) throw new Error('no live observer is watching that element');
   act(() => {
-    rec.cb([{ isIntersecting: true, target } as IntersectionObserverEntry], rec as unknown as IntersectionObserver);
+    rec.cb(
+      [{ isIntersecting: true, target } as IntersectionObserverEntry],
+      rec as unknown as IntersectionObserver,
+    );
   });
 }
 
 function resetFavorites() {
   localStorage.clear();
-  window.dispatchEvent(new StorageEvent('storage', { key: FONT_FAVORITES_STORAGE_KEY, newValue: null }));
+  window.dispatchEvent(
+    new StorageEvent('storage', { key: FONT_FAVORITES_STORAGE_KEY, newValue: null }),
+  );
 }
 
 beforeEach(() => {
@@ -146,7 +151,12 @@ describe('filterFonts', () => {
   const fixtures: GoogleFontEntry[] = [
     { family: 'Roboto', category: 'sans-serif', variants: ['regular'], subsets: ['latin'] },
     { family: 'Roboto Slab', category: 'serif', variants: ['regular'], subsets: ['latin'] },
-    { family: 'Noto Sans JP', category: 'sans-serif', variants: ['regular'], subsets: ['japanese', 'latin'] },
+    {
+      family: 'Noto Sans JP',
+      category: 'sans-serif',
+      variants: ['regular'],
+      subsets: ['japanese', 'latin'],
+    },
     { family: 'Lobster', category: 'display', variants: ['regular'], subsets: ['latin'] },
     { family: 'Fira Code', category: 'monospace', variants: ['regular'], subsets: ['latin'] },
   ];
@@ -168,9 +178,19 @@ describe('filterFonts', () => {
   });
 
   it('sorts favorites first while preserving the rest', () => {
-    const result = filterFonts(fixtures, { search: '', category: null, favorites: new Set(['Lobster']) });
+    const result = filterFonts(fixtures, {
+      search: '',
+      category: null,
+      favorites: new Set(['Lobster']),
+    });
     expect(result[0].family).toBe('Lobster');
-    expect(result.map((f) => f.family)).toEqual(['Lobster', 'Roboto', 'Roboto Slab', 'Noto Sans JP', 'Fira Code']);
+    expect(result.map((f) => f.family)).toEqual([
+      'Lobster',
+      'Roboto',
+      'Roboto Slab',
+      'Noto Sans JP',
+      'Fira Code',
+    ]);
   });
 
   it('applies category + search + favorites together', () => {
@@ -189,6 +209,11 @@ describe('font-explorer dialog', () => {
   it('renders only the first page of cards', () => {
     renderDialog();
     expect(cardButtons()).toHaveLength(PAGE_SIZE);
+  });
+
+  it('focuses the search input on mount, not the Close button that precedes it in DOM order', () => {
+    renderDialog();
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Search Google Fonts…'));
   });
 
   it('loads another page when the sentinel scrolls into view', () => {
@@ -226,7 +251,10 @@ describe('font-explorer dialog', () => {
   it('applies the picked family: one commit, ensureFont with the layer content, then close', () => {
     const { ctx, close } = renderDialog();
     const first = cardButtons()[0];
-    const family = first.getAttribute('aria-label')!.replace(/^Use /, '').replace(/ \(current\)$/, '');
+    const family = first
+      .getAttribute('aria-label')!
+      .replace(/^Use /, '')
+      .replace(/ \(current\)$/, '');
 
     fireEvent.click(first);
 
@@ -255,7 +283,7 @@ describe('font-explorer dialog', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
-  it('marks the layer\'s current family as the active card', () => {
+  it("marks the layer's current family as the active card", () => {
     // ABeeZee is the first catalog entry; make it the layer's font so its card
     // is on the first page and flagged active.
     const doc: DocState = {
@@ -271,7 +299,10 @@ describe('font-explorer dialog', () => {
   it('stars a font from a card and persists it to localStorage', () => {
     renderDialog();
     const first = cardButtons()[0];
-    const family = first.getAttribute('aria-label')!.replace(/^Use /, '').replace(/ \(current\)$/, '');
+    const family = first
+      .getAttribute('aria-label')!
+      .replace(/^Use /, '')
+      .replace(/ \(current\)$/, '');
     const star = screen.getByRole('button', { name: `Add ${family} to favorites` });
 
     fireEvent.click(star);

@@ -10,7 +10,7 @@
 // favorites (now localStorage, see use-font-favorites.ts) and the Composer
 // hover-preview/commit session (its own source marks it optional — click to
 // commit is the supported path).
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { TextLayer } from '@zpd/core';
 import { registerDialog } from '../registry/dialogs';
 import { ensureFont, isFontLoaded } from '../fonts';
@@ -83,7 +83,16 @@ function FontExplorerDialog({ props, close, ctx }: DialogProps<FontExplorerProps
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const { isFavorite, toggleFavorite, favorites } = useFontFavorites();
+
+  // The Close button precedes the search input in DOM order, so the host's
+  // generic first-focusable fallback would land on Close. A child layout
+  // effect runs before the host's (same reasoning as confirm-dialog.tsx and
+  // shortcut-panel.tsx), so the search field wins.
+  useLayoutEffect(() => {
+    searchRef.current?.focus();
+  }, []);
 
   // Derived, not effect-synced: the sample auto-switches to Japanese with the
   // category until the user types their own text. Deriving in render keeps it
@@ -201,6 +210,7 @@ function FontExplorerDialog({ props, close, ctx }: DialogProps<FontExplorerProps
         </label>
         <input
           id="font-explorer-search"
+          ref={searchRef}
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
