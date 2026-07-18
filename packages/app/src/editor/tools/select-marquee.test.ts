@@ -49,6 +49,9 @@ const dotGrid: PatternLayer = {
   patternType: 'dot-grid',
   params: {},
   color: 1,
+  x: 0,
+  y: 0,
+  size: 128.5,
 };
 
 function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
@@ -190,27 +193,27 @@ describe('marquee hit math', () => {
   it('uses INTERSECTION semantics: partial overlap selects, no containment needed', () => {
     const layers = [rect('r1', 10, 10, 20, 10)];
     // marquee overlaps only the layer's right edge region
-    expect(marqueeHitIds(layers, { x: 25, y: 5, width: 20, height: 10 }, PANEL)).toEqual(['r1']);
+    expect(marqueeHitIds(layers, { x: 25, y: 5, width: 20, height: 10 })).toEqual(['r1']);
     // fully disjoint marquee selects nothing
-    expect(marqueeHitIds(layers, { x: 40, y: 40, width: 10, height: 10 }, PANEL)).toEqual([]);
+    expect(marqueeHitIds(layers, { x: 40, y: 40, width: 10, height: 10 })).toEqual([]);
   });
 
   it('an edge-touching marquee still selects (inclusive bounds)', () => {
     const layers = [rect('r1', 10, 10, 20, 10)];
     // marquee's left edge exactly at the layer's right edge (x = 30)
-    expect(marqueeHitIds(layers, { x: 30, y: 12, width: 5, height: 5 }, PANEL)).toEqual(['r1']);
+    expect(marqueeHitIds(layers, { x: 30, y: 12, width: 5, height: 5 })).toEqual(['r1']);
   });
 
   it('excludes hidden layers', () => {
     const layers: Layer[] = [rect('r1', 10, 10), { ...rect('r2', 12, 12), hidden: true }];
-    expect(marqueeHitIds(layers, { x: 0, y: 0, width: 50, height: 50 }, PANEL)).toEqual(['r1']);
+    expect(marqueeHitIds(layers, { x: 0, y: 0, width: 50, height: 50 })).toEqual(['r1']);
   });
 
-  it('excludes panel-wide pattern layers even when fully covered', () => {
+  it('excludes pattern layers even when their square is fully covered', () => {
     const layers: Layer[] = [dotGrid, rect('r1', 10, 10)];
-    expect(marqueeHitIds(layers, { x: 0, y: 0, width: 100, height: 128.5 }, PANEL)).toEqual(['r1']);
+    expect(marqueeHitIds(layers, { x: 0, y: 0, width: 100, height: 128.5 })).toEqual(['r1']);
     // marquee over ONLY the pattern selects nothing
-    expect(marqueeHitIds(layers, { x: 60, y: 60, width: 20, height: 20 }, PANEL)).toEqual([]);
+    expect(marqueeHitIds(layers, { x: 60, y: 60, width: 20, height: 20 })).toEqual([]);
   });
 
   it('tests against the ROTATED AABB, not the unrotated bbox', () => {
@@ -219,8 +222,8 @@ describe('marquee hit math', () => {
     // probe rect below is inside the rotated AABB but OUTSIDE the unrotated
     // bbox (y 6..7 < 10).
     const probe = { x: 16, y: 6, width: 1, height: 1 };
-    expect(marqueeHitIds([rotated], probe, PANEL)).toEqual(['r1']);
-    expect(marqueeHitIds([rect('r1', 10, 10, 20, 10)], probe, PANEL)).toEqual([]);
+    expect(marqueeHitIds([rotated], probe)).toEqual(['r1']);
+    expect(marqueeHitIds([rect('r1', 10, 10, 20, 10)], probe)).toEqual([]);
   });
 
   it('marqueeRect normalizes a drag in any direction to a positive-size rect', () => {

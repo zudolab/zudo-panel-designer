@@ -396,6 +396,9 @@ const gridPattern = (id: string): PatternLayer => ({
   patternType: 'dot-grid',
   params: { pitch: 2.54 },
   color: 1,
+  x: 0,
+  y: 0,
+  size: 128.5,
 });
 
 describe('select tool — multi-selection move (#49)', () => {
@@ -893,12 +896,12 @@ describe('select tool — multi-resize via the combined bbox (#52)', () => {
     });
     ctx.selectIds(['g1', 's1', 's2']);
 
-    // the pattern's bbox is panel-wide (harness PANEL: 100×128.5), so the
-    // combined bbox IS the panel; its se corner is (100,128.5) and dragging
-    // by 0.5·v0 projects to factor 1.5 again.
-    select.onPointerDown?.(ptr({ x: 100, y: 128.5 }), ctx);
-    select.onPointerMove?.(ptr({ x: 150, y: 192.75 }), ctx);
-    select.onPointerUp?.(ptr({ x: 150, y: 192.75 }), ctx);
+    // the pattern's bbox is its own 128.5mm square at the origin (#96), so
+    // the combined bbox is that square; its se corner is (128.5,128.5) and
+    // dragging by 0.5·v0 projects to factor 1.5 again (anchor stays (0,0)).
+    select.onPointerDown?.(ptr({ x: 128.5, y: 128.5 }), ctx);
+    select.onPointerMove?.(ptr({ x: 192.75, y: 192.75 }), ctx);
+    select.onPointerUp?.(ptr({ x: 192.75, y: 192.75 }), ctx);
 
     expect(layerById('g1')).toEqual(gridPattern('g1')); // untouched
     expect(layerById('s1')).toMatchObject({ x: 15, y: 15, width: 30, height: 15 });

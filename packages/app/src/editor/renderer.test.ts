@@ -8,16 +8,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   mergeBboxes,
+  PALETTE,
   type ImageLayer,
   type Layer,
+  type PatternLayer,
   type Rect,
   type ShapeLayer,
   type TextLayer,
 } from '@zpd/core';
+import { patternByName } from '@zpd/patterns';
 import {
   canRotate,
   CORNER_HANDLE_IDS,
   cornerHandleRects,
+  layerBbox,
   multiResizeBbox,
   reconcileImageCache,
   renderScene,
@@ -34,6 +38,12 @@ vi.mock('./fonts', () => ({
   ensureFont: vi.fn(() => Promise.resolve()),
   isFontLoaded: vi.fn(() => false),
   isFontLoading: vi.fn(() => false),
+}));
+
+// renderer.ts pulls exactly patternByName from @zpd/patterns; mocking it lets
+// the #96 block below inject a spy generator and observe the draw options.
+vi.mock('@zpd/patterns', () => ({
+  patternByName: vi.fn(() => undefined),
 }));
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
@@ -56,7 +66,7 @@ function shape(id: string, x: number, y: number, extra: Partial<ShapeLayer> = {}
 describe('selectionBboxes', () => {
   it('returns one axis-aligned bbox per selected layer, in selection order', () => {
     const layers: Layer[] = [shape('a', 0, 0), shape('b', 20, 20), shape('c', 40, 40)];
-    const boxes = selectionBboxes(layers, ['a', 'c'], PANEL);
+    const boxes = selectionBboxes(layers, ['a', 'c']);
     expect(boxes).toEqual([
       { x: 0, y: 0, width: 10, height: 10 },
       { x: 40, y: 40, width: 10, height: 10 },
@@ -65,35 +75,35 @@ describe('selectionBboxes', () => {
 
   it('skips hidden layers so their chrome vanishes with the layer paint', () => {
     const layers: Layer[] = [shape('a', 0, 0), shape('b', 20, 20, { hidden: true })];
-    expect(selectionBboxes(layers, ['a', 'b'], PANEL)).toEqual([
+    expect(selectionBboxes(layers, ['a', 'b'])).toEqual([
       { x: 0, y: 0, width: 10, height: 10 },
     ]);
   });
 
   it('drops ids absent from the doc (stale after delete/undo)', () => {
     const layers: Layer[] = [shape('a', 0, 0)];
-    expect(selectionBboxes(layers, ['a', 'ghost'], PANEL)).toHaveLength(1);
+    expect(selectionBboxes(layers, ['a', 'ghost'])).toHaveLength(1);
   });
 
   it('expands a rotated shape to its rotated AABB, not its raw rect', () => {
     // 90° rotation of a 10×10 square about its own center is bounds-identical,
     // so use a non-square to prove the AABB widened.
     const layers: Layer[] = [shape('r', 0, 0, { width: 20, height: 10, rotation: 90 })];
-    const [box] = selectionBboxes(layers, ['r'], PANEL);
+    const [box] = selectionBboxes(layers, ['r']);
     expect(box.width).toBeCloseTo(10);
     expect(box.height).toBeCloseTo(20);
   });
 
   it('the combined bbox (mergeBboxes) encloses every selected layer', () => {
     const layers: Layer[] = [shape('a', 0, 0), shape('b', 40, 30)];
-    const combined = mergeBboxes(selectionBboxes(layers, ['a', 'b'], PANEL));
+    const combined = mergeBboxes(selectionBboxes(layers, ['a', 'b']));
     expect(combined).toEqual({ x: 0, y: 0, width: 50, height: 40 });
   });
 
   it('normalizes a mirrored member (negative width) to its visual rect', () => {
     // x 20, width -30 spans -10..20 visually → normalized bbox x -10, width 30.
     const layers: Layer[] = [shape('m', 20, 0, { width: -30 })];
-    expect(selectionBboxes(layers, ['m'], PANEL)).toEqual([
+    expect(selectionBboxes(layers, ['m'])).toEqual([
       { x: -10, y: 0, width: 30, height: 10 },
     ]);
   });
@@ -101,7 +111,7 @@ describe('selectionBboxes', () => {
   it('the combined bbox stays correct when a member is mirrored', () => {
     // Without normalization the mirrored member would collapse/invert the union.
     const layers: Layer[] = [shape('m', 20, 0, { width: -30 }), shape('b', 40, 0)];
-    const combined = mergeBboxes(selectionBboxes(layers, ['m', 'b'], PANEL));
+    const combined = mergeBboxes(selectionBboxes(layers, ['m', 'b']));
     expect(combined).toEqual({ x: -10, y: 0, width: 60, height: 10 });
   });
 });
@@ -212,6 +222,9 @@ describe('canRotate (#51 eligibility)', () => {
         patternType: 'dot-grid',
         params: {},
         color: 1,
+        x: 0,
+        y: 0,
+        size: 128.5,
       }),
     ).toBe(false);
   });
@@ -226,12 +239,15 @@ const pattern = (id: string): Layer => ({
   patternType: 'dot-grid',
   params: {},
   color: 1,
+  x: 0,
+  y: 0,
+  size: 50,
 });
 
 describe('multiResizeBbox (#52 eligibility gate)', () => {
   it('returns the combined bbox for a multi-selection of scalable layers', () => {
     const layers: Layer[] = [shape('a', 0, 0), shape('b', 40, 30)];
-    expect(multiResizeBbox(layers, ['a', 'b'], PANEL)).toEqual({
+    expect(multiResizeBbox(layers, ['a', 'b'])).toEqual({
       x: 0,
       y: 0,
       width: 50,
@@ -241,17 +257,17 @@ describe('multiResizeBbox (#52 eligibility gate)', () => {
 
   it('is null for a single selection — that is the 8-handle path, not this one', () => {
     const layers: Layer[] = [shape('a', 0, 0), shape('b', 40, 30)];
-    expect(multiResizeBbox(layers, ['a'], PANEL)).toBeNull();
+    expect(multiResizeBbox(layers, ['a'])).toBeNull();
   });
 
   it('is null when hidden members leave fewer than two visible bboxes', () => {
     const layers: Layer[] = [shape('a', 0, 0), shape('b', 40, 30, { hidden: true })];
-    expect(multiResizeBbox(layers, ['a', 'b'], PANEL)).toBeNull();
+    expect(multiResizeBbox(layers, ['a', 'b'])).toBeNull();
   });
 
   it('is null for a pattern-only multi-selection — nothing in it can scale', () => {
     const layers: Layer[] = [pattern('g1'), pattern('g2')];
-    expect(multiResizeBbox(layers, ['g1', 'g2'], PANEL)).toBeNull();
+    expect(multiResizeBbox(layers, ['g1', 'g2'])).toBeNull();
   });
 
   it('is null for a pattern plus an EMPTY path — scaleLayer cannot change either', () => {
@@ -268,17 +284,18 @@ describe('multiResizeBbox (#52 eligibility gate)', () => {
       stroke: 1,
       strokeWidth: 1,
     };
-    expect(multiResizeBbox([pattern('g1'), emptyPath], ['g1', 'p0'], PANEL)).toBeNull();
+    expect(multiResizeBbox([pattern('g1'), emptyPath], ['g1', 'p0'])).toBeNull();
   });
 
   it('a pattern plus a shape still qualifies (the shape is scalable)', () => {
     const layers: Layer[] = [pattern('g1'), shape('a', 10, 10)];
-    // the pattern's bbox is panel-wide, so the union is the panel rect
-    expect(multiResizeBbox(layers, ['g1', 'a'], PANEL)).toEqual({
+    // the pattern's bbox is its own x/y/size square (#96) — the 50mm square
+    // at the origin already encloses the 10..20 shape, so it IS the union
+    expect(multiResizeBbox(layers, ['g1', 'a'])).toEqual({
       x: 0,
       y: 0,
-      width: PANEL.widthMm,
-      height: PANEL.heightMm,
+      width: 50,
+      height: 50,
     });
   });
 });
@@ -458,5 +475,156 @@ describe('renderScene — text loading-dim + repaint-on-load (#67)', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(requestRepaint).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- pattern square: bbox + translate/clip/draw sequence (#96) ---------------
+//
+// jsdom cannot rasterize, so "draws only inside square ∩ panel" is proven at
+// the command level: the pattern branch must clip to its own square rect
+// (a SEPARATE clip op that intersects the caller's panel clip) before the
+// generator draws, and the generator must receive the square side as its
+// span. The pixel-level proof that a canvas clip actually masks pixels lives
+// in e2e (editor-view.spec.ts's probe technique).
+describe('pattern square (#96)', () => {
+  const patternLayer: PatternLayer = {
+    id: 'g1',
+    name: 'Grid',
+    type: 'pattern',
+    patternType: 'dot-grid',
+    params: { pitch: 5 },
+    color: 1,
+    x: 12,
+    y: 34,
+    size: 40,
+  };
+
+  it('layerBbox returns the layer square, not the panel rect', () => {
+    expect(layerBbox(patternLayer)).toEqual({ x: 12, y: 34, width: 40, height: 40 });
+  });
+
+  describe('renderScene draw branch', () => {
+    interface CtxCall {
+      method: string;
+      args: unknown[];
+    }
+    let calls: CtxCall[];
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    const CAM: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
+
+    beforeEach(() => {
+      calls = [];
+      HTMLCanvasElement.prototype.getContext = ((): CanvasRenderingContext2D => {
+        const store: Record<string, unknown> = {};
+        return new Proxy(store, {
+          get: (t, p: string) => {
+            if (p in t) return t[p];
+            if (p === 'globalAlpha') return 1;
+            if (p === 'measureText') return () => ({ width: 0 });
+            return (...args: unknown[]) => {
+              calls.push({ method: p, args });
+              return undefined;
+            };
+          },
+          set: (t, p: string, v) => {
+            t[p] = v;
+            return true;
+          },
+        }) as unknown as CanvasRenderingContext2D;
+      }) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+    });
+
+    afterEach(() => {
+      HTMLCanvasElement.prototype.getContext = originalGetContext;
+      vi.clearAllMocks();
+    });
+
+    function renderPattern(layer: PatternLayer): {
+      gen: { draw: ReturnType<typeof vi.fn> };
+    } {
+      const gen = { draw: vi.fn(() => calls.push({ method: 'gen.draw', args: [] })) };
+      vi.mocked(patternByName).mockReturnValue(
+        gen as unknown as ReturnType<typeof patternByName>,
+      );
+      const canvas = document.createElement('canvas');
+      canvas.width = 200;
+      canvas.height = 200;
+      renderScene(canvas, { layers: [layer] }, PANEL, CAM, {
+        selectedIds: [],
+        images: new Map(),
+        showNodes: false,
+        showOutsidePanel: false,
+        requestRepaint: vi.fn(),
+      });
+      return { gen };
+    }
+
+    it('translates to the square origin, clips to the square, then draws with the square span', () => {
+      const { gen } = renderPattern(patternLayer);
+
+      expect(gen.draw).toHaveBeenCalledTimes(1);
+      const opts = gen.draw.mock.calls[0][1] as {
+        widthMm: number;
+        heightMm: number;
+        color: string;
+        params: Record<string, number>;
+      };
+      expect(opts).toEqual({
+        widthMm: 40,
+        heightMm: 40,
+        color: PALETTE[1].hex,
+        params: { pitch: 5 },
+      });
+
+      const indexOf = (method: string, args?: unknown[]) =>
+        calls.findIndex(
+          (c) => c.method === method && (args === undefined || JSON.stringify(c.args) === JSON.stringify(args)),
+        );
+      const translateIdx = indexOf('translate', [12, 34]);
+      const squareRectIdx = indexOf('rect', [0, 0, 40, 40]);
+      const drawIdx = indexOf('gen.draw');
+      expect(translateIdx).toBeGreaterThan(-1);
+      expect(squareRectIdx).toBeGreaterThan(translateIdx);
+      const clipIdx = calls.findIndex((c, i) => c.method === 'clip' && i > squareRectIdx);
+      expect(clipIdx).toBeGreaterThan(squareRectIdx);
+      expect(drawIdx).toBeGreaterThan(clipIdx);
+      // its own save/restore pair wraps the translate+clip so they never leak
+      const restoreAfterDraw = calls.findIndex((c, i) => c.method === 'restore' && i > drawIdx);
+      expect(restoreAfterDraw).toBeGreaterThan(drawIdx);
+    });
+
+    it('the square clip is separate from the panel clip (both plain clips, no even-odd)', () => {
+      renderPattern(patternLayer);
+      // main pass: panel rect clip, then (inside drawLayer) the square clip —
+      // two separate plain clip() calls, so canvas intersects them naturally.
+      const clips = calls.filter((c) => c.method === 'clip');
+      expect(clips.length).toBeGreaterThanOrEqual(2);
+      expect(clips.every((c) => c.args.length === 0)).toBe(true);
+    });
+
+    it.each([0, -1, NaN, Infinity])(
+      'skips the draw entirely for a non-finite/non-positive size (%s)',
+      (size) => {
+        const { gen } = renderPattern({ ...patternLayer, size });
+        expect(gen.draw).not.toHaveBeenCalled();
+        // no square translate either — the guard sits before any ctx work
+        expect(calls.some((c) => c.method === 'translate' && c.args[0] === 12)).toBe(false);
+      },
+    );
+
+    it('skips the draw for an unknown patternType without touching the ctx clip state', () => {
+      vi.mocked(patternByName).mockReturnValue(undefined);
+      const canvas = document.createElement('canvas');
+      canvas.width = 200;
+      canvas.height = 200;
+      renderScene(canvas, { layers: [patternLayer] }, PANEL, CAM, {
+        selectedIds: [],
+        images: new Map(),
+        showNodes: false,
+        showOutsidePanel: false,
+        requestRepaint: vi.fn(),
+      });
+      expect(calls.some((c) => c.method === 'rect' && c.args[2] === 40)).toBe(false);
+    });
   });
 });
