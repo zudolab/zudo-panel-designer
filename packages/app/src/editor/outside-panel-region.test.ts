@@ -77,6 +77,9 @@ const mirroredOffPanelShapeLayer: Layer = {
   height: 16,
   color: 2,
 };
+// Cover geometry for the 50mm-wide test panel — the square crosses the panel
+// boundary on both x sides, so the pattern-skip rule (not the perf cull) is
+// what keeps it out of ghostLayers.
 const patternLayer: Layer = {
   id: 'pattern-1',
   name: 'Dot grid',
@@ -84,6 +87,9 @@ const patternLayer: Layer = {
   patternType: 'dot-grid',
   params: {},
   color: 1,
+  x: (50 - 128.5) / 2,
+  y: 0,
+  size: 128.5,
 };
 
 describe('outsidePanelRegion', () => {

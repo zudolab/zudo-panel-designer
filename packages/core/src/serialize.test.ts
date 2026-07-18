@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { createDefaultDoc } from './default-doc';
 import { PALETTE } from './palette';
 import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
+import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
 import { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig, tryParsePanelConfig } from './serialize';
-import type { DocState } from './types';
+import type { DocState, PatternLayer } from './types';
 
 function fullFixtureDoc(): DocState {
   return {
@@ -40,6 +41,11 @@ function fullFixtureDoc(): DocState {
         patternType: 'dot-grid',
         params: { pitch: 5, radius: 1 },
         color: 1,
+        // deliberately NOT cover geometry — proves hand-set square placement
+        // (including a negative y) survives the round trip verbatim
+        x: 5,
+        y: -10,
+        size: 40,
       },
       {
         id: 'path-1',
@@ -109,7 +115,7 @@ describe('serializePanelConfig / parsePanelConfig round trip', () => {
   it('emits derived panel size + palette names as advisory output', () => {
     const doc = fullFixtureDoc();
     const config = serializePanelConfig(doc);
-    expect(config.version).toBe(2);
+    expect(config.version).toBe(3);
     expect(config.app).toBe('zpd');
     expect(config.panel).toEqual({
       hp: 12,
@@ -120,15 +126,14 @@ describe('serializePanelConfig / parsePanelConfig round trip', () => {
   });
 });
 
-describe('serialize v2 — guides migration', () => {
-  it('emits version 2 with the guides array', () => {
+describe('serialize — guides (added in v2)', () => {
+  it('emits the guides array', () => {
     const doc = fullFixtureDoc();
     const config = serializePanelConfig(doc);
-    expect(config.version).toBe(2);
     expect(config.guides).toEqual(doc.guides);
   });
 
-  it('v2 round-trip preserves guides (including a hidden one)', () => {
+  it('round-trip preserves guides (including a hidden one)', () => {
     const doc = fullFixtureDoc();
     const roundTripped = parsePanelConfig(JSON.parse(JSON.stringify(serializePanelConfig(doc))));
     expect(roundTripped.guides).toEqual(doc.guides);
@@ -178,6 +183,130 @@ describe('serialize v2 — guides migration', () => {
     });
     expect(doc.guides[0].hidden).toBe(true);
     expect(doc.guides[0].id.length).toBeGreaterThan(0);
+  });
+});
+
+// v3 (#96): pattern layers carry an x/y/size square. Migration contract: a
+// v1/v2 pattern layer (no geometry at all) gets COVER geometry — this
+// preserves panel coverage and the pattern's center, NOT exact pixel phase
+// (the draw span changes from the panel rect to the square, so lattice-parity
+// dependent generators may shift by a sub-pitch amount).
+describe('serialize v3 — pattern square geometry migration (#96)', () => {
+  function firstPattern(doc: DocState): PatternLayer {
+    const [layer] = doc.layers;
+    if (layer.type !== 'pattern') throw new Error('expected a pattern layer');
+    return layer;
+  }
+
+  const coverFor = (hp: number) =>
+    patternCoverGeometry({ widthMm: panelWidthMm(hp), heightMm: PANEL_HEIGHT_MM });
+
+  it('emits version 3', () => {
+    expect(PANEL_CONFIG_VERSION).toBe(3);
+    expect(serializePanelConfig(fullFixtureDoc()).version).toBe(3);
+  });
+
+  it('a v1 config (no geometry fields) migrates every pattern layer to cover geometry', () => {
+    const v1 = {
+      version: 1,
+      app: 'zpd',
+      panel: { hp: 12, widthMm: 60.96, heightMm: 128.5 },
+      palette: ['black', 'gold', 'white'],
+      layers: [{ id: 'p1', type: 'pattern', patternType: 'dot-grid', color: 1, params: { pitch: 5 } }],
+    };
+    expect(firstPattern(parsePanelConfig(v1))).toMatchObject(coverFor(12));
+  });
+
+  it('a v2 config (guides, still no geometry) migrates the same way', () => {
+    const v2 = {
+      version: 2,
+      app: 'zpd',
+      panel: { hp: 8, widthMm: panelWidthMm(8), heightMm: PANEL_HEIGHT_MM },
+      palette: ['black', 'gold', 'white'],
+      layers: [{ id: 'p1', type: 'pattern', patternType: 'checker', color: 2, params: {} }],
+      guides: [{ id: 'g1', orientation: 'horizontal', position: 10 }],
+    };
+    const doc = parsePanelConfig(v2);
+    expect(firstPattern(doc)).toMatchObject(coverFor(8));
+    expect(doc.guides).toHaveLength(1);
+  });
+
+  it('derives cover geometry from the SANITIZED hp, never from serialized panel.widthMm/heightMm', () => {
+    const doc = parsePanelConfig({
+      version: 2,
+      app: 'zpd',
+      panel: { hp: 4, widthMm: 999, heightMm: 999 },
+      layers: [{ id: 'p1', type: 'pattern', patternType: 'dot-grid', color: 1, params: {} }],
+    });
+    expect(firstPattern(doc)).toMatchObject(coverFor(4));
+  });
+
+  it.each([0, -3, NaN, Infinity, 'big', null, undefined])(
+    'non-finite/non-positive size (%s) falls back to the cover size, keeping finite x/y',
+    (size) => {
+      const doc = parsePanelConfig({
+        layers: [{ type: 'pattern', patternType: 'dot-grid', color: 1, params: {}, x: 5, y: 6, size }],
+      });
+      expect(firstPattern(doc)).toMatchObject({ x: 5, y: 6, size: coverFor(12).size });
+    },
+  );
+
+  it.each([NaN, Infinity, 'left', null, undefined])(
+    'missing/non-finite x/y (%s) centers the RESULTING size on the panel',
+    (coord) => {
+      const doc = parsePanelConfig({
+        layers: [{ type: 'pattern', patternType: 'dot-grid', color: 1, params: {}, x: coord, y: coord, size: 40 }],
+      });
+      expect(firstPattern(doc)).toEqual(
+        expect.objectContaining({
+          x: (panelWidthMm(12) - 40) / 2,
+          y: (PANEL_HEIGHT_MM - 40) / 2,
+          size: 40,
+        }),
+      );
+    },
+  );
+
+  it('clamps a finite but absurd size to MAX_PATTERN_SIZE_MM (freeze-on-open DoS guard)', () => {
+    const doc = parsePanelConfig({
+      layers: [
+        { type: 'pattern', patternType: 'dot-grid', color: 1, params: {}, x: 0, y: 0, size: 1e7 },
+      ],
+    });
+    expect(firstPattern(doc).size).toBe(MAX_PATTERN_SIZE_MM);
+  });
+
+  it('all-malformed geometry degrades to exactly the cover default', () => {
+    const doc = parsePanelConfig({
+      layers: [{ type: 'pattern', patternType: 'dot-grid', color: 1, params: {}, x: 'a', y: null, size: -1 }],
+    });
+    expect(firstPattern(doc)).toMatchObject(coverFor(12));
+  });
+
+  it('cover geometry always fully covers the panel (size = larger dim, centered)', () => {
+    for (const hp of [1, 4, 12, 20]) {
+      const widthMm = panelWidthMm(hp);
+      const { x, y, size } = coverFor(hp);
+      expect(size).toBe(Math.max(widthMm, PANEL_HEIGHT_MM));
+      expect(x).toBeLessThanOrEqual(0);
+      expect(y).toBeLessThanOrEqual(0);
+      expect(x + size).toBeGreaterThanOrEqual(widthMm);
+      expect(y + size).toBeGreaterThanOrEqual(PANEL_HEIGHT_MM);
+      // centered: equal overhang on both sides
+      expect(x + size - widthMm).toBeCloseTo(-x);
+      expect(y + size - PANEL_HEIGHT_MM).toBeCloseTo(-y);
+    }
+  });
+
+  it('tryParsePanelConfig accepts a v2 envelope and migrates its pattern geometry', () => {
+    const result = tryParsePanelConfig({
+      version: 2,
+      app: 'zpd',
+      layers: [{ id: 'p1', type: 'pattern', patternType: 'dot-grid', color: 1, params: {} }],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(firstPattern(result.doc)).toMatchObject(coverFor(12));
   });
 });
 

@@ -38,7 +38,7 @@ import {
   rotateHandleScreenPos,
 } from '../renderer';
 import { registerTool } from '../registry/tools';
-import type { DraftRenderContext, PanelDims, ToolContext, ToolPointerEvent } from '../types';
+import type { DraftRenderContext, ToolContext, ToolPointerEvent } from '../types';
 
 const SNAP_MM = 0.1;
 const MIN_RESIZE_MM = 0.5;
@@ -69,10 +69,10 @@ function snapOptions(ctx: ToolContext): SnapOptions {
 // geometry — the candidate set snapAxis checks against guides. null when no
 // target has measurable bounds (never happens in practice; targets exclude
 // patterns, and every other layer type has a bbox).
-function targetsBbox(targets: readonly MoveTarget[], panel: PanelDims): Rect | null {
+function targetsBbox(targets: readonly MoveTarget[]): Rect | null {
   const rects: Rect[] = [];
   for (const { orig } of targets) {
-    const bbox = layerBbox(orig, panel);
+    const bbox = layerBbox(orig);
     if (bbox) rects.push(rotatedRectAABB(bbox, layerRotation(orig)));
   }
   return rects.length ? mergeBboxes(rects) : null;
@@ -248,17 +248,14 @@ export function marqueeRect(startMm: Pt, currentMm: Pt): Rect {
 // is selected. Bounds come from renderer.ts's layerBbox (the canonical bounds
 // source, #45) so chrome and marquee agree to the pixel for text. Hidden
 // layers are skipped, and pattern layers are skipped per hit-test.ts's
-// invariant (patterns are panel-wide and only selectable via the layer list —
-// a panel-wide dot grid would otherwise join essentially every marquee).
-export function marqueeHitIds(
-  layers: readonly Layer[],
-  rectMm: Rect,
-  panel: PanelDims,
-): string[] {
+// invariant (patterns are only selectable via the layer list until the
+// interaction sub; even bbox-bound (#96), a cover-default square would
+// otherwise join essentially every marquee).
+export function marqueeHitIds(layers: readonly Layer[], rectMm: Rect): string[] {
   const ids: string[] = [];
   for (const layer of layers) {
     if (layer.hidden || layer.type === 'pattern') continue;
-    const bbox = layerBbox(layer, panel);
+    const bbox = layerBbox(layer);
     if (!bbox) continue;
     if (rectsIntersect(rectMm, rotatedRectAABB(bbox, layerRotation(layer)))) ids.push(layer.id);
   }
@@ -328,7 +325,7 @@ function tryGrabNode(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): bo
 
 function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): boolean {
   if (selected.type !== 'shape' && selected.type !== 'image') return false;
-  const bbox = layerBbox(selected, ctx.panel);
+  const bbox = layerBbox(selected);
   if (!bbox) return false;
   // Rotated shapes resize too (#51): handles sit at the ROTATED corners and
   // the drag resolves in the layer's local frame via resizeRotatedRect (#48).
@@ -354,7 +351,7 @@ function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolCont
 
 function tryGrabRotateHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): boolean {
   if (!canRotate(selected)) return false; // shape/text only — never invent rotation
-  const bbox = layerBbox(selected, ctx.panel);
+  const bbox = layerBbox(selected);
   if (!bbox) return false;
   const rotation = layerRotation(selected);
   const knob = rotateHandleScreenPos(bbox, rotation, ctx.camera);
@@ -422,7 +419,7 @@ function groupFactorFloor(targets: readonly MoveTarget[], bbox: Rect): number {
 // so exactly the handles the chrome draws are grabbable here.
 function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
   const ids = ctx.selectedIds;
-  const bbox = multiResizeBbox(ctx.doc.layers, ids, ctx.panel);
+  const bbox = multiResizeBbox(ctx.doc.layers, ids);
   if (!bbox) return false;
   for (const h of cornerHandleRects(bbox, ctx.camera)) {
     if (e.screen.x >= h.x && e.screen.x <= h.x + h.size && e.screen.y >= h.y && e.screen.y <= h.y + h.size) {
@@ -538,11 +535,7 @@ registerTool({
       if (!marquee.active && !pastThreshold(e.screen, marquee.startScreen)) return;
       marquee.active = true;
       marquee.currentMm = e.mm;
-      const hits = marqueeHitIds(
-        ctx.doc.layers,
-        marqueeRect(marquee.startMm, marquee.currentMm),
-        ctx.panel,
-      );
+      const hits = marqueeHitIds(ctx.doc.layers, marqueeRect(marquee.startMm, marquee.currentMm));
       const base = marquee.baseIds;
       ctx.selectIds(marquee.additive ? [...base, ...hits.filter((id) => !base.includes(id))] : hits);
       ctx.requestRepaint(); // the rubber-band moved even if the selection didn't
@@ -633,7 +626,7 @@ registerTool({
         // the moving selection's combined bbox — edges + centre — actually
         // lands within catch range of a same-axis guide; a shift-locked axis
         // is skipped so a guide can never sneak in movement Shift disallowed.
-        const bbox = targetsBbox(drag.targets, ctx.panel);
+        const bbox = targetsBbox(drag.targets);
         if (bbox) {
           const opts = snapOptions(ctx);
           if (!xLocked) {
@@ -813,7 +806,7 @@ registerTool({
     // chrome (hoveredId is cleared on pointerdown, so nothing draws mid-drag)
     if (hoveredId && !ctx.selectedIds.includes(hoveredId)) {
       const layer = ctx.doc.layers.find((l) => l.id === hoveredId);
-      const bbox = layer && !layer.hidden ? layerBbox(layer, ctx.panel) : null;
+      const bbox = layer && !layer.hidden ? layerBbox(layer) : null;
       if (layer && bbox) {
         drawHoverOutline(d.ctx, rotatedRectAABB(bbox, layerRotation(layer)), d.camera);
       }

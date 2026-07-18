@@ -46,6 +46,9 @@ const layer: PatternLayer = {
   patternType: 'dot-grid',
   color: 1,
   params: {},
+  x: 0,
+  y: 0,
+  size: 128.5,
 };
 
 const Inspector = getInspector('pattern')!;

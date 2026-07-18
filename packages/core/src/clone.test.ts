@@ -59,6 +59,9 @@ const patternLayer: PatternLayer = {
   patternType: 'dot-grid',
   params: { pitch: 2.54 },
   color: 2,
+  x: 4,
+  y: 6,
+  size: 40,
 };
 
 function idMaker(prefix = 'clone') {

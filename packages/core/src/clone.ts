@@ -4,10 +4,11 @@
 // top. offsetMm is mm (this is doc space; the reference app's paste offset is
 // +20px in its px doc-space — see pgen's use-composer-clipboard.ts).
 //
-// Pattern layers are position-pinned backgrounds (there is exactly one per
-// doc, tiling the panel) and must be EXCLUDED BY THE CALLER before calling
-// this — passing one through is a no-op here (id is still refreshed, but a
-// pattern layer has no x/y to offset).
+// Pattern layers must be EXCLUDED BY THE CALLER before calling this — passing
+// one through refreshes the id but deliberately leaves its x/y/size square
+// untouched (patterns carry geometry since #96, but they stay outside the
+// copy/duplicate flows until the interaction follow-up sub makes them
+// canvas-interactive).
 import { cloneLayer } from './layer-ops';
 import { translatePathLayer } from './path-geometry';
 import type { Layer } from './types';

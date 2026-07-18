@@ -25,21 +25,21 @@ export interface OutsidePanelRegion {
   // why that disjointness is load-bearing)
   innerRect: PxRect;
   // layers eligible for the ghost pass. Hidden layers are never drawn.
-  // Pattern layers are excluded — this is a correctness rule, not an
-  // optimization: patterns deliberately overscan the panel edges (see
-  // packages/patterns/src/param-utils.ts, centeredStart()) so they read as
-  // intentional at any panel size, and today's ctx.clip() in the main pass
-  // is what hides that overscan. Ghosting patterns would flood the entire
-  // gutter with dot-grid. Patterns are semantically panel-bound (see
-  // hit-test.ts: "pattern layers are panel-wide") — not bbox-bound, so
-  // layerBbox() returning the panel rect for a pattern must not be read as
-  // "patterns can't paint outside it". Beyond that, a layer whose
-  // (rotation-aware) bbox stays fully inside the panel is also excluded —
-  // it's a pure performance cull (see crossesPanelBoundary): the exterior
-  // clip rejects every pixel such a layer paints anyway, so drawing it here
-  // would just re-render (and, for path layers, rebuild the Path2D) the
-  // whole layer a second time per repaint for zero visual effect — costly on
-  // a large trace with hundreds of path layers.
+  // Pattern layers are excluded — TEMPORARILY, since #96: patterns are now
+  // bbox-bound (layerBbox returns the layer's x/y/size square, and the draw
+  // branch clips to that square — see renderer.ts), so ghosting one is
+  // well-defined (square ∖ panel at low alpha; the generators' deliberate
+  // edge overscan, param-utils.ts centeredStart(), stays hidden by the square
+  // clip). The eligibility flip is the interaction follow-up sub's job —
+  // until a pattern can actually be moved off-panel, ghosting it would only
+  // dim the cover square's off-panel margin for no user benefit. Beyond
+  // that, a layer whose (rotation-aware) bbox stays fully inside the panel
+  // is also excluded — it's a pure performance cull (see
+  // crossesPanelBoundary): the exterior clip rejects every pixel such a
+  // layer paints anyway, so drawing it here would just re-render (and, for
+  // path layers, rebuild the Path2D) the whole layer a second time per
+  // repaint for zero visual effect — costly on a large trace with hundreds
+  // of path layers.
   ghostLayers: Layer[];
 }
 
@@ -51,7 +51,7 @@ export interface OutsidePanelRegion {
 // the panel but whose stroke half-width crosses an edge WOULD paint a ghost
 // sliver — culling it on the centerline bbox would wrongly drop that sliver.
 function crossesPanelBoundary(layer: Layer, panel: PanelDims): boolean {
-  const rawBbox = layerBbox(layer, panel);
+  const rawBbox = layerBbox(layer);
   if (!rawBbox) return false;
   // normalizeRect: a mirrored shape/image (negative width/height) is inside-out
   // through the raw boundary test (x + negativeWidth < x), so an off-panel
