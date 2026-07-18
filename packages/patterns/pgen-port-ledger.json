@@ -118,6 +118,79 @@
       "notes": "trial port: per-tile rand() orientation -> hash01 on center-origin indices; granularity -> mm tile pitch; px line width -> mm param; dropped bg fill"
     }
   ],
-  "ringsCircuits": [],
+  "ringsCircuits": [
+    {
+      "zpdName": "vesica-lens-circle-mesh",
+      "pgenId": "vesica-lens-circle-mesh",
+      "family": "Circles & Rings",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + per-circle random color offset; radius=pitch flower-of-life relation kept; pitch + line width now mm params"
+    },
+    {
+      "zpdName": "rings-interlock",
+      "pgenId": "rings-interlock",
+      "family": "Circles & Rings",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + fg-pool color cycling; step=1.42×radius interlock constant kept; radius + band width now mm params; odd-row half-step offset via center-origin row index"
+    },
+    {
+      "zpdName": "circle-quarters",
+      "pgenId": "circle-quarters",
+      "family": "Circles & Rings",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + checkerboard color cycling; deterministic (col+row)%4 orientation cycle kept (center-origin indices); one flat fill; radiusRatio knob added over source radius=cell"
+    },
+    {
+      "zpdName": "quatrefoil",
+      "pgenId": "quatrefoil",
+      "family": "Crosses, Stars & Icons",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + fg-pool color cycling; four lobes filled as one non-zero-winding path (union); lobe offset 0.95×lobe kept as source const; cell + lobe radius now mm params"
+    },
+    {
+      "zpdName": "hex-circuit",
+      "pgenId": "hex-circuit",
+      "family": "Circuits & Networks",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + color cycling + lighten() on nodes; seeded per-edge rand -> hash01(ix,iy,edge) on center-origin indices; hex radius + trace width + coverage now params, node ratio 0.16 kept"
+    },
+    {
+      "zpdName": "via-grid-array",
+      "pgenId": "via-grid-array",
+      "family": "Circuits & Networks",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + darken(bg) hole paint + color cycling; annulus is real even-odd fill (outer disc minus inner disc) so holes show layers below; cell + ring radius + hole ratio now params"
+    },
+    {
+      "zpdName": "circuit-board-tiles",
+      "pgenId": "circuit-board-tiles",
+      "family": "Circuits & Networks",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + fg-pool color cycling; per-cell rand edge mask (<0.6) + pad roll -> hash01(ix,iy,channel) on center-origin indices; cell + trace width + pad chance now params"
+    },
+    {
+      "zpdName": "snowflakes-geometric",
+      "pgenId": "snowflakes-geometric",
+      "family": "Crosses, Stars & Icons",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + color cycling + seed-randomized defaults; fixed 6-fold frond geometry kept as source consts; cell + line width + flake size now params; brick-offset rows via center-origin row index"
+    },
+    {
+      "zpdName": "eight-point-compass-star-grid",
+      "pgenId": "eight-point-compass-star-grid",
+      "family": "Crosses, Stars & Icons",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + color cycling; 8-point star as filled 16-vertex polygon; long/short ray ratio kept as param; outer radius 0.46×cell kept as source const; cell now mm param"
+    }
+  ],
   "tilings": []
 }
