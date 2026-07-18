@@ -23,6 +23,8 @@ interface TraceDialogProps {
   layerId: string;
 }
 
+const TRACE_DIALOG_TITLE_ID = 'trace-dialog-title';
+
 function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
   const layer = ctx.doc.layers.find(
     (l): l is ImageLayer => l.id === props.layerId && l.type === 'image',
@@ -103,6 +105,9 @@ function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
   if (!layer) {
     return (
       <div className="w-[min(20rem,90vw)]">
+        <h2 id={TRACE_DIALOG_TITLE_ID} className="mb-3 text-sm font-semibold text-neutral-100">
+          Convert image to vectors
+        </h2>
         <p className="text-xs text-neutral-400">This image layer no longer exists.</p>
         <div className="mt-4 flex justify-end">
           <button
@@ -119,7 +124,9 @@ function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
 
   return (
     <div className="w-[min(36rem,90vw)]">
-      <h2 className="mb-3 text-sm font-semibold text-neutral-100">Convert image to vectors</h2>
+      <h2 id={TRACE_DIALOG_TITLE_ID} className="mb-3 text-sm font-semibold text-neutral-100">
+        Convert image to vectors
+      </h2>
       <div className="flex gap-4">
         <div className="flex h-56 w-56 shrink-0 items-center justify-center overflow-hidden rounded border border-neutral-700 bg-neutral-950">
           {previewSrc ? (
@@ -147,7 +154,9 @@ function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
                   max={8}
                   step={1}
                   value={options.numberOfColors}
-                  onChange={(e) => setOptions({ ...options, numberOfColors: Number(e.target.value) })}
+                  onChange={(e) =>
+                    setOptions({ ...options, numberOfColors: Number(e.target.value) })
+                  }
                   className="w-full"
                 />
               </Field>
@@ -159,7 +168,9 @@ function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
                 max={60}
                 step={2}
                 value={options.minShapeOutline}
-                onChange={(e) => setOptions({ ...options, minShapeOutline: Number(e.target.value) })}
+                onChange={(e) =>
+                  setOptions({ ...options, minShapeOutline: Number(e.target.value) })
+                }
                 className="w-full"
               />
             </Field>
@@ -202,4 +213,4 @@ function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
   );
 }
 
-registerDialog({ id: 'trace', component: TraceDialog });
+registerDialog({ id: 'trace', component: TraceDialog, labelledBy: TRACE_DIALOG_TITLE_ID });

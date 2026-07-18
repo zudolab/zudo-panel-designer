@@ -5,13 +5,18 @@
 // through the registry without ever reaching the canvas/tracer boundary —
 // the actual tracing math is covered DOM-free in svg-to-path-layers.test.ts.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { ImageLayer, Pt } from '@zpd/core';
 import './trace';
-import { getDialog } from '../registry/dialogs';
+import { DialogHost } from '../components/dialog-host';
+import { closeDialog, getDialog, openDialog } from '../registry/dialogs';
+import type { CommandContext } from '../commands';
 import type { ToolContext } from '../types';
 
-afterEach(cleanup);
+afterEach(() => {
+  closeDialog();
+  cleanup();
+});
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -74,5 +79,17 @@ describe('trace dialog', () => {
     expect(screen.getByText(/no longer exists/)).toBeTruthy();
     fireEvent.click(screen.getByText('Close'));
     expect(close).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an existing image', [IMAGE_LAYER], 'img-1'],
+    ['a missing image', [], 'missing'],
+  ])('is named through DialogHost for %s', (_label, layers, layerId) => {
+    const ctx = stubCtx({ doc: { panelHp: 12, guides: [], layers } });
+    render(<DialogHost ctx={ctx as CommandContext} />);
+
+    act(() => openDialog('trace', { layerId }));
+
+    expect(screen.getByRole('dialog', { name: 'Convert image to vectors' })).toBeTruthy();
   });
 });
