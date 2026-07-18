@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
+import { useLayoutEffect, useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { closeDialog, openDialog, registerDialog, unregisterDialog } from '../registry/dialogs';
 import type { CommandContext } from '../commands';
+import type { DialogProps } from '../types';
 import { DialogHost } from './dialog-host';
 
 afterEach(() => {
@@ -14,6 +16,34 @@ afterEach(() => {
 // these host-behavior tests never read it, so an empty cast suffices.
 function stubCtx(): CommandContext {
   return {} as CommandContext;
+}
+
+function useSelfFocus() {
+  const ref = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    ref.current?.focus();
+  }, []);
+  return ref;
+}
+
+function SelfFocusingDialogA({ close }: DialogProps) {
+  const focusRef = useSelfFocus();
+  return (
+    <div>
+      <button ref={focusRef}>dialog-a-focus</button>
+      <button onClick={close}>close-a</button>
+    </div>
+  );
+}
+
+function SelfFocusingDialogB({ close }: DialogProps) {
+  const focusRef = useSelfFocus();
+  return (
+    <div>
+      <button ref={focusRef}>dialog-b-focus</button>
+      <button onClick={close}>close-b</button>
+    </div>
+  );
 }
 
 describe('DialogHost', () => {
@@ -57,13 +87,13 @@ describe('DialogHost', () => {
     }
   });
 
-  it('restores focus to the opener element on close', () => {
+  it('restores the pre-child opener when a self-focusing dialog is closed by the host', () => {
     registerDialog({
       id: 'demo-restore',
-      component: ({ close }) => <button onClick={close}>close-me</button>,
+      component: SelfFocusingDialogA,
     });
+    const opener = document.createElement('button');
     try {
-      const opener = document.createElement('button');
       opener.textContent = 'opener';
       document.body.appendChild(opener);
       opener.focus();
@@ -71,15 +101,82 @@ describe('DialogHost', () => {
 
       render(<DialogHost ctx={stubCtx()} />);
       act(() => openDialog('demo-restore'));
-      expect(document.activeElement).not.toBe(opener);
+      expect(document.activeElement?.textContent).toBe('dialog-a-focus');
 
       act(() => {
         fireEvent.keyDown(document, { key: 'Escape' });
       });
       expect(document.activeElement).toBe(opener);
-      opener.remove();
     } finally {
+      opener.remove();
       unregisterDialog('demo-restore');
+    }
+  });
+
+  it('restores the pre-child opener when dialog content closes itself', () => {
+    registerDialog({ id: 'demo-content-close', component: SelfFocusingDialogA });
+    const opener = document.createElement('button');
+    try {
+      document.body.appendChild(opener);
+      opener.focus();
+
+      const { getByText } = render(<DialogHost ctx={stubCtx()} />);
+      act(() => openDialog('demo-content-close'));
+      expect(document.activeElement?.textContent).toBe('dialog-a-focus');
+
+      fireEvent.click(getByText('close-a'));
+      expect(document.activeElement).toBe(opener);
+    } finally {
+      opener.remove();
+      unregisterDialog('demo-content-close');
+    }
+  });
+
+  it('retains the outside opener without restoring it during dialog replacement', () => {
+    registerDialog({ id: 'demo-replace-a', component: SelfFocusingDialogA });
+    registerDialog({ id: 'demo-replace-b', component: SelfFocusingDialogB });
+    const opener = document.createElement('button');
+    try {
+      document.body.appendChild(opener);
+      opener.focus();
+      const focusOpener = vi.spyOn(opener, 'focus');
+
+      render(<DialogHost ctx={stubCtx()} />);
+      act(() => openDialog('demo-replace-a'));
+      expect(document.activeElement?.textContent).toBe('dialog-a-focus');
+
+      act(() => openDialog('demo-replace-b'));
+      expect(focusOpener).not.toHaveBeenCalled();
+      expect(document.activeElement?.textContent).toBe('dialog-b-focus');
+
+      act(() => closeDialog());
+      expect(focusOpener).toHaveBeenCalledTimes(1);
+      expect(document.activeElement).toBe(opener);
+    } finally {
+      opener.remove();
+      unregisterDialog('demo-replace-a');
+      unregisterDialog('demo-replace-b');
+    }
+  });
+
+  it('ignores a disconnected opener when the dialog closes', () => {
+    registerDialog({ id: 'demo-disconnected-opener', component: SelfFocusingDialogA });
+    const opener = document.createElement('button');
+    try {
+      document.body.appendChild(opener);
+      opener.focus();
+      const focusOpener = vi.spyOn(opener, 'focus');
+
+      render(<DialogHost ctx={stubCtx()} />);
+      act(() => openDialog('demo-disconnected-opener'));
+      opener.remove();
+
+      expect(() => act(() => closeDialog())).not.toThrow();
+      expect(focusOpener).not.toHaveBeenCalled();
+      expect(document.activeElement).not.toBe(opener);
+    } finally {
+      opener.remove();
+      unregisterDialog('demo-disconnected-opener');
     }
   });
 
