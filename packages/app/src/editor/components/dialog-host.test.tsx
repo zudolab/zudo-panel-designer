@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { closeDialog, openDialog, registerDialog, unregisterDialog } from '../registry/dialogs';
-import type { ToolContext } from '../types';
+import type { CommandContext } from '../commands';
 import { DialogHost } from './dialog-host';
 
 afterEach(() => {
@@ -10,8 +10,10 @@ afterEach(() => {
   closeDialog();
 });
 
-function stubCtx(): ToolContext {
-  return {} as ToolContext;
+// DialogHost's ctx prop is CommandContext (the full context Editor wires in);
+// these host-behavior tests never read it, so an empty cast suffices.
+function stubCtx(): CommandContext {
+  return {} as CommandContext;
 }
 
 describe('DialogHost', () => {

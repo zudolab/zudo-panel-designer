@@ -4,11 +4,11 @@
 // appends (no real network, per the task's hard rule), so every test drives
 // the link's load/error handlers by hand and stubs document.fonts the same
 // way fonts.test.ts does. Each test uses its own unique family name — the
-// module's memoization (fontLoadPromises/loadedFonts/loadingFonts) is
+// module's memoization (fontLoadPromises/loadedFonts/requestedSamples) is
 // permanent by design (see the dedupe test), so reusing a family across
 // tests would leak state between them.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isFontLoaded, isFontLoading, loadGoogleFont } from './google-font-loader';
+import { isGoogleFontLoaded, loadGoogleFont } from './google-font-loader';
 
 function stubFontFaceSet(loadImpl?: (spec: string, text?: string) => Promise<unknown>) {
   const fonts = { load: vi.fn(loadImpl ?? (() => Promise.resolve([]))) };
@@ -112,23 +112,24 @@ describe('loadGoogleFont', () => {
   });
 });
 
-describe('isFontLoaded / isFontLoading — sync truth', () => {
-  it('are both false before a load starts', () => {
-    expect(isFontLoaded('Untouched Font')).toBe(false);
-    expect(isFontLoading('Untouched Font')).toBe(false);
+// isGoogleFontLoaded is the loader's family-level readiness — the internal
+// memoization fonts.ts delegates to for a family-only query (see fonts.ts).
+// It is the loader's SOLE public readiness export; the old family-level
+// isFontLoading was dead and was removed in the consolidation (finding #5).
+describe('isGoogleFontLoaded — family-level sync truth', () => {
+  it('is false before a load starts', () => {
+    expect(isGoogleFontLoaded('Untouched Font')).toBe(false);
   });
 
-  it('isFontLoading flips true while in flight and false once settled; isFontLoaded flips true on completion', async () => {
+  it('flips true once the family finishes loading', async () => {
     stubFontFaceSet();
     const promise = loadGoogleFont('Truth Font');
-    expect(isFontLoading('Truth Font')).toBe(true);
-    expect(isFontLoaded('Truth Font')).toBe(false);
+    expect(isGoogleFontLoaded('Truth Font')).toBe(false);
 
     lastLink().onload?.(new Event('load'));
     await promise;
 
-    expect(isFontLoading('Truth Font')).toBe(false);
-    expect(isFontLoaded('Truth Font')).toBe(true);
+    expect(isGoogleFontLoaded('Truth Font')).toBe(true);
   });
 
   it('marks a timed-out load as loaded (attempted) even though it never really resolved', async () => {
@@ -139,8 +140,7 @@ describe('isFontLoaded / isFontLoading — sync truth', () => {
     await vi.advanceTimersByTimeAsync(FONT_LOAD_TIMEOUT_MS_FOR_TEST);
     await promise;
 
-    expect(isFontLoading('Timeout Truth Font')).toBe(false);
-    expect(isFontLoaded('Timeout Truth Font')).toBe(true);
+    expect(isGoogleFontLoaded('Timeout Truth Font')).toBe(true);
   });
 });
 

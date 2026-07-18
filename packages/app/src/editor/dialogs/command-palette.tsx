@@ -25,39 +25,24 @@ import {
 } from '../commands';
 import { isMac } from '../is-mac';
 import { getOpenDialog, registerDialog } from '../registry/dialogs';
+import { readStringList, writeStringList } from '../safe-storage';
 import type { DialogProps } from '../types';
 
 export const PALETTE_RECENTS_STORAGE_KEY = 'zpd.palette-recents.v1';
 const MAX_RECENTS = 8;
 
 export function readPaletteRecents(): string[] {
-  if (typeof localStorage === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(PALETTE_RECENTS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((x): x is string => typeof x === 'string');
-  } catch {
-    // Malformed JSON / storage access denied → behave as if empty; recents
-    // are a convenience, never load-bearing.
-    return [];
-  }
+  return readStringList(PALETTE_RECENTS_STORAGE_KEY);
 }
 
 // Most-recent-first, deduped, capped. Called on every successful command
 // execution (see executeCommand below) — never on a disabled/no-op attempt.
 export function recordPaletteRecent(id: string): void {
-  if (typeof localStorage === 'undefined') return;
   const next = [id, ...readPaletteRecents().filter((existing) => existing !== id)].slice(
     0,
     MAX_RECENTS,
   );
-  try {
-    localStorage.setItem(PALETTE_RECENTS_STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // Quota exceeded / private-mode denial — keep going in-memory only.
-  }
+  writeStringList(PALETTE_RECENTS_STORAGE_KEY, next);
 }
 
 // Subsequence fuzzy match, case-insensitive: every character of `query` must
@@ -135,12 +120,11 @@ function rowClassName(isHighlighted: boolean, enabled: boolean): string {
   return `${base} ${tone} ${affordance}`;
 }
 
-function CommandPaletteDialog({ close, ctx }: DialogProps) {
-  // DialogHost is wired (Editor.tsx's `commandCtx`) to hand every dialog the
-  // FULL command-execution context, even though DialogProps types `ctx` as
-  // the narrower ToolContext that every other, read-only dialog needs —
-  // cast here rather than widen that shared contract for this one consumer.
-  const cmdCtx = ctx as unknown as CommandContext;
+function CommandPaletteDialog({ close, ctx }: DialogProps<unknown, CommandContext>) {
+  // ctx is the FULL command-execution context: this dialog declares
+  // DialogProps<_, CommandContext> and the host's ctx prop is typed the same,
+  // so no cast is needed and an Editor wiring regression fails typecheck.
+  const cmdCtx = ctx;
   const mac = useMemo(() => isMac(), []);
   const [query, setQuery] = useState('');
   const [highlightIndex, setHighlightIndex] = useState(0);
@@ -210,6 +194,12 @@ function CommandPaletteDialog({ close, ctx }: DialogProps) {
 
   return (
     <div className="flex max-h-[70vh] w-[min(32rem,92vw)] flex-col" onKeyDown={onKeyDown}>
+      {/* Names the dialog for assistive tech via the host's aria-labelledby.
+          The palette has no visible heading (the search field leads), so this
+          sr-only title carries the accessible name. */}
+      <h2 id="command-palette-title" className="sr-only">
+        Command palette
+      </h2>
       <label className="sr-only" htmlFor="command-palette-search">
         Search commands
       </label>
@@ -274,4 +264,8 @@ function CommandPaletteDialog({ close, ctx }: DialogProps) {
   );
 }
 
-registerDialog({ id: 'command-palette', component: CommandPaletteDialog });
+registerDialog<unknown, CommandContext>({
+  id: 'command-palette',
+  component: CommandPaletteDialog,
+  labelledBy: 'command-palette-title',
+});

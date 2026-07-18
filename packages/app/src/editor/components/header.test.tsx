@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { DocState, Pt } from '@zpd/core';
 import { closeDialog } from '../registry/dialogs';
-import type { ToolContext } from '../types';
+import type { CommandContext } from '../commands';
 import { DialogHost } from './dialog-host';
 import { Header } from './header';
 
@@ -12,7 +12,9 @@ afterEach(() => {
   closeDialog();
 });
 
-function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
+// Returns a CommandContext: Header only reads the ToolContext subset, but
+// DialogHost's ctx prop is CommandContext, so the shared stub must satisfy it.
+function stubCtx(overrides: Partial<CommandContext> = {}): CommandContext {
   const doc: DocState = { panelHp: 12, guides: [], layers: [] };
   return {
     doc,
@@ -37,11 +39,20 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     evictImageCache: vi.fn(),
     openDialog: vi.fn(),
     closeDialog: vi.fn(),
+    clipboard: {
+      handleCopy: vi.fn(),
+      handleCut: vi.fn(),
+      handleDuplicate: vi.fn(),
+      handleSelectAll: vi.fn(),
+    },
+    zoomIn: vi.fn(),
+    zoomOut: vi.fn(),
+    zoomFit: vi.fn(),
     ...overrides,
-  } as unknown as ToolContext;
+  } as unknown as CommandContext;
 }
 
-function renderHeader(ctx: ToolContext) {
+function renderHeader(ctx: CommandContext) {
   return render(
     <>
       <Header

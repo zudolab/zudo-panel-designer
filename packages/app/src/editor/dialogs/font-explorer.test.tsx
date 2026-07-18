@@ -14,15 +14,16 @@ import { FONT_FAVORITES_STORAGE_KEY, toggleFontFavorite } from '../use-font-favo
 
 vi.mock('../google-font-loader', () => ({
   loadGoogleFont: vi.fn(() => Promise.resolve()),
-  isFontLoaded: vi.fn(() => false),
-  isFontLoading: vi.fn(() => false),
 }));
 
 // vi.mock factories are hoisted above imports, so the spy must be created in a
-// hoisted block to be referenceable inside the factory.
+// hoisted block to be referenceable inside the factory. isFontLoaded is now
+// read from ../fonts (the single public readiness API — finding #5), so the
+// card's initial-loaded probe is stubbed here.
 const { ensureFontMock } = vi.hoisted(() => ({ ensureFontMock: vi.fn(() => Promise.resolve()) }));
 vi.mock('../fonts', () => ({
   ensureFont: ensureFontMock,
+  isFontLoaded: vi.fn(() => false),
   CURATED_FONTS: [],
   DEFAULT_FONT_FAMILY: 'Oswald',
 }));

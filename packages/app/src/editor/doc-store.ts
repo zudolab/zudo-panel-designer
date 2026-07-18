@@ -10,6 +10,7 @@
 //   itself never throws — a garbage `config` field yields the default doc
 //   rather than propagating an exception.
 import { parsePanelConfig, serializePanelConfig, type DocState } from '@zpd/core';
+import { getStorage } from './safe-storage';
 
 export const DOC_STORAGE_KEY = 'zpd.doc.v1';
 export const DOC_STORAGE_VERSION = 1;
@@ -25,20 +26,6 @@ interface StoredDocPayload {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-// The `window.localStorage` PROPERTY ACCESS itself (not just calling a
-// method on it) can throw — e.g. a SecurityError under locked-down privacy
-// settings or third-party-storage-blocked contexts — so every caller below
-// goes through this guarded accessor instead of touching `window.localStorage`
-// directly.
-function getStorage(): Storage | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
 }
 
 // SSR-safe read of the stored document. Returns null when there is no stored

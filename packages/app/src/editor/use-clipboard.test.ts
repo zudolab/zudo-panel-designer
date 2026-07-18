@@ -329,6 +329,40 @@ describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('while our own write is in flight, a STALE prior zpd envelope on the OS clipboard does NOT win over the just-copied internal snapshot', () => {
+    // copy A, copy B, immediate paste: the OS clipboard still holds envelope A
+    // (this session's B write hasn't landed). Parsing the envelope BEFORE the
+    // pending-write guard used to paste stale A; the internal snapshot (B) must
+    // win instead.
+    const writeText = vi.fn().mockReturnValue(new Promise<void>(() => {})); // never resolves → stays pending
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    try {
+      const doc = baseDoc([shapeLayer, textLayer]);
+      const ctx = createCtx(doc, ['shape-1']);
+      const { result } = renderHook(() => useClipboard(ctx));
+
+      act(() => result.current.handleCopy()); // internal snapshot = [shapeLayer]; write in flight
+
+      // A DIFFERENT layer's envelope (a prior copy) sitting on the OS clipboard.
+      const staleEnvelope = JSON.stringify({
+        app: 'zpd',
+        kind: 'layers',
+        version: 1,
+        layers: [textLayer],
+      });
+      act(() => dispatchPaste(window, { text: staleEnvelope }));
+
+      // Pasted the internal shape snapshot's clone, NOT the stale envelope's text layer.
+      expect(ctx.commit).toHaveBeenCalledTimes(1);
+      const pasted = ctx.doc.layers.find(
+        (l) => l.id !== 'shape-1' && l.id !== 'text-1' && l.type !== 'pattern',
+      );
+      expect(pasted?.type).toBe('shape');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('useClipboard — paste priority: image > envelope > internal', () => {

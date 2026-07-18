@@ -3,12 +3,17 @@
 // props. The store is a tiny observable so openDialog() works from anywhere —
 // including tool handlers that are not React components — and the DialogHost
 // subscribes via useSyncExternalStore.
-import type { DialogModule } from '../types';
+import type { ToolContext, DialogModule } from '../types';
 
 const dialogs = new Map<string, DialogModule>();
 
-export function registerDialog<P>(dialog: DialogModule<P>): void {
-  dialogs.set(dialog.id, dialog as DialogModule);
+export function registerDialog<P, C extends ToolContext = ToolContext>(
+  dialog: DialogModule<P, C>,
+): void {
+  // The store is heterogeneous (each dialog has its own P and ctx type); the
+  // host re-widens per call. The registration-site generics still typecheck
+  // the component's own props/ctx expectations.
+  dialogs.set(dialog.id, dialog as unknown as DialogModule);
 }
 
 export function unregisterDialog(id: string): void {

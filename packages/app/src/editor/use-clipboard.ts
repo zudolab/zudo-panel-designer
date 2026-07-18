@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { cloneLayersWithFreshIds, mintId, parsePanelConfig, type Layer } from '@zpd/core';
 import { importImageFile } from './import-image';
+import { isEditableTarget } from './is-editable-target';
 import type { ToolContext } from './types';
 
 const ENVELOPE_APP = 'zpd';
@@ -44,16 +45,6 @@ export interface UseClipboardReturn {
   handleDuplicate(): void;
   /** Selects every non-pattern layer. */
   handleSelectAll(): void;
-}
-
-function isEditableTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.tagName === 'INPUT' ||
-      target.tagName === 'TEXTAREA' ||
-      target.tagName === 'SELECT' ||
-      target.isContentEditable)
-  );
 }
 
 // Pattern layers are the single panel-wide background (#3's eligibility
@@ -203,20 +194,23 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
       // content always wins over a stale in-app copy.
       //
       // EXCEPT while this session's own write is still in flight
-      // (pendingWriteRef): the text just read from clipboardData may PRE-DATE
+      // (pendingWriteRef): the text just read from clipboardData PRE-DATES
       // that write (writeText is async, so a fast copy-then-paste can read
-      // the clipboard before it lands), in which case it's stale, not a
-      // deliberate foreign paste — fall through to the internal snapshot
-      // instead of silently doing nothing.
+      // the clipboard before it lands). That stale text may itself be a PRIOR
+      // copy's zpd envelope — e.g. copy A, copy B, immediate paste, where the
+      // OS clipboard still holds envelope A. Parsing the envelope BEFORE this
+      // guard let stale envelope A win over the just-copied internal snapshot
+      // B; so while a write is pending we skip the envelope path entirely and
+      // fall through to the internal snapshot, which always holds B.
       const text = e.clipboardData?.getData('text/plain');
-      if (text) {
+      if (text && !pendingWriteRef.current) {
         const envelopeLayers = parseEnvelope(text);
         if (envelopeLayers) {
           e.preventDefault();
           insertClones(ctx, envelopeLayers);
           return;
         }
-        if (!pendingWriteRef.current) return;
+        return;
       }
 
       // Priority 3: internal same-session clipboard — the last resort when

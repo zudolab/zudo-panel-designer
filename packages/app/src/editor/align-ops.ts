@@ -15,6 +15,8 @@
 import {
   alignLayers,
   distributeLayers,
+  MIN_ALIGN_SELECTION,
+  MIN_DISTRIBUTE_SELECTION,
   normalizeRect,
   rotatedRectAABB,
   translatePathLayer,
@@ -38,7 +40,7 @@ export type Reference = 'selection' | 'panel';
 // target).
 export function minCount(kind: 'align' | 'distribute', reference: Reference): number {
   if (reference === 'panel') return 1;
-  return kind === 'align' ? 2 : 3;
+  return kind === 'align' ? MIN_ALIGN_SELECTION : MIN_DISTRIBUTE_SELECTION;
 }
 
 // Same float hygiene as select.tsx's multi-move addMm: adds a delta without

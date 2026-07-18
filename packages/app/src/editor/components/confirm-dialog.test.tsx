@@ -3,7 +3,7 @@ import { StrictMode } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { closeDialog, openDialog, registerDialog, unregisterDialog } from '../registry/dialogs';
-import type { ToolContext } from '../types';
+import type { CommandContext } from '../commands';
 import { DialogHost } from './dialog-host';
 import { confirmDialog } from './confirm-dialog';
 
@@ -12,8 +12,8 @@ afterEach(() => {
   closeDialog();
 });
 
-function stubCtx(): ToolContext {
-  return {} as ToolContext;
+function stubCtx(): CommandContext {
+  return {} as CommandContext;
 }
 
 describe('confirmDialog', () => {

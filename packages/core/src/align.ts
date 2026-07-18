@@ -27,8 +27,13 @@ export interface AlignResult {
 // 'panel' aligns/distributes against the panel rect (canvas-relative).
 export type AlignReference = { mode: 'selection' } | { mode: 'panel'; panel: Rect };
 
-const MIN_ALIGN_SELECTION = 2;
-const MIN_DISTRIBUTE_SELECTION = 3;
+// Minimum eligible-selection sizes for a 'selection'-reference op: aligning
+// needs 2+ rects (a single rect has nothing to align against), distributing
+// needs 3+ (2 rects have no interior gap to redistribute). Exported so the
+// app's align-ops.ts minCount() reads the SAME thresholds rather than
+// re-hardcoding 2/3 across the package boundary.
+export const MIN_ALIGN_SELECTION = 2;
+export const MIN_DISTRIBUTE_SELECTION = 3;
 
 interface Bounds {
   minX: number;

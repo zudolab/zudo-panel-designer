@@ -13,8 +13,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TextLayer } from '@zpd/core';
 import { registerDialog } from '../registry/dialogs';
-import { ensureFont } from '../fonts';
-import { isFontLoaded, loadGoogleFont } from '../google-font-loader';
+import { ensureFont, isFontLoaded } from '../fonts';
+import { loadGoogleFont } from '../google-font-loader';
 import { useFontFavorites } from '../use-font-favorites';
 import { Tooltip } from '../components/tooltip';
 import catalogData from '../data/google-fonts-catalog.json';
@@ -181,7 +181,9 @@ function FontExplorerDialog({ props, close, ctx }: DialogProps<FontExplorerProps
     <div className="flex h-[80vh] max-h-[720px] w-[min(900px,94vw)] flex-col">
       <div className="mb-3 flex items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold text-neutral-100">Google Fonts</h2>
+          <h2 id="font-explorer-title" className="text-sm font-semibold text-neutral-100">
+            Google Fonts
+          </h2>
           <p className="text-[11px] text-neutral-500">{countLabel}</p>
         </div>
         <button
@@ -403,4 +405,8 @@ function FontCard({
   );
 }
 
-registerDialog<FontExplorerProps>({ id: 'font-explorer', component: FontExplorerDialog });
+registerDialog<FontExplorerProps>({
+  id: 'font-explorer',
+  component: FontExplorerDialog,
+  labelledBy: 'font-explorer-title',
+});

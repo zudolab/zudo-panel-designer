@@ -155,13 +155,24 @@ export interface AddAction {
 
 // --- dialogs --------------------------------------------------------------
 
-export interface DialogProps<P = unknown> {
+// `C` is the context type the host hands this dialog. It defaults to
+// ToolContext (what every read-only dialog needs), but a dialog that must run
+// registry commands — the command palette — declares
+// DialogProps<P, CommandContext> so it reads the richer context WITHOUT an
+// `as unknown as` cast. The DialogHost's own ctx prop is typed CommandContext
+// (see dialog-host.tsx), so Editor mis-wiring it fails typecheck rather than
+// leaving a dialog with an undefined field at runtime.
+export interface DialogProps<P = unknown, C extends ToolContext = ToolContext> {
   props: P;
   close(): void;
-  ctx: ToolContext;
+  ctx: C;
 }
 
-export interface DialogModule<P = unknown> {
+export interface DialogModule<P = unknown, C extends ToolContext = ToolContext> {
   id: string;
-  component: ComponentType<DialogProps<P>>;
+  component: ComponentType<DialogProps<P, C>>;
+  // id of an element the dialog's own content renders (usually its heading)
+  // that names the dialog. The host wires it to aria-labelledby on the
+  // role="dialog" wrapper it owns — content can't set that attribute itself.
+  labelledBy?: string;
 }

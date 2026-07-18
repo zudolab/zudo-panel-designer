@@ -9,6 +9,7 @@
 // does NOT port to zpd, which has no accounts. A plain string[] under one
 // localStorage key is the whole persistence contract here (issue #71).
 import { useCallback, useSyncExternalStore } from 'react';
+import { readStringList, writeStringList } from './safe-storage';
 
 export const FONT_FAVORITES_STORAGE_KEY = 'zpd.font-favorites.v1';
 
@@ -17,18 +18,7 @@ export const FONT_FAVORITES_STORAGE_KEY = 'zpd.font-favorites.v1';
 const EMPTY: ReadonlySet<string> = new Set<string>();
 
 function readFromStorage(): Set<string> {
-  if (typeof localStorage === 'undefined') return new Set();
-  try {
-    const raw = localStorage.getItem(FONT_FAVORITES_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(parsed.filter((x): x is string => typeof x === 'string'));
-  } catch {
-    // Malformed JSON / storage access denied → behave as if empty; favorites
-    // are a convenience, never load-bearing.
-    return new Set();
-  }
+  return new Set(readStringList(FONT_FAVORITES_STORAGE_KEY));
 }
 
 // A NEW Set identity is assigned on every mutation so useSyncExternalStore's
@@ -41,13 +31,7 @@ function emit(): void {
 }
 
 function persist(): void {
-  if (typeof localStorage === 'undefined') return;
-  try {
-    localStorage.setItem(FONT_FAVORITES_STORAGE_KEY, JSON.stringify([...current]));
-  } catch {
-    // Quota exceeded / private-mode denial — keep the in-memory set so the
-    // current session still works; it just won't survive a reload.
-  }
+  writeStringList(FONT_FAVORITES_STORAGE_KEY, [...current]);
 }
 
 export function toggleFontFavorite(family: string): void {
