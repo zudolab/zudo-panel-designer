@@ -5,15 +5,25 @@
 // list and commits a font change, and a non-curated fontFamily (e.g. the
 // demo doc's 'sans-serif') stays selectable instead of being silently
 // replaced.
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Pt, TextLayer } from '@zpd/core';
 import type { ToolContext } from '../types';
 import './text';
 import { getInspector } from '../registry/inspectors';
 import { CURATED_FONTS } from '../fonts';
+import { FONT_FAVORITES_STORAGE_KEY, toggleFontFavorite } from '../use-font-favorites';
 
-afterEach(cleanup);
+function resetFavorites() {
+  localStorage.clear();
+  window.dispatchEvent(new StorageEvent('storage', { key: FONT_FAVORITES_STORAGE_KEY, newValue: null }));
+}
+
+beforeEach(resetFavorites);
+afterEach(() => {
+  cleanup();
+  resetFavorites();
+});
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -92,5 +102,24 @@ describe('text inspector', () => {
 
     fireEvent.click(screen.getByTitle(/white/i));
     expect(onChange).toHaveBeenCalledWith({ color: 2 });
+  });
+
+  it('sorts starred favorites to the top of the dropdown and marks them with a star', () => {
+    toggleFontFavorite('Bebas Neue');
+    render(<Inspector layer={baseLayer} onChange={vi.fn()} ctx={stubCtx()} />);
+
+    const select = screen.getByDisplayValue('Oswald') as HTMLSelectElement;
+    // No non-curated guard option for this layer, so the first option is the
+    // top of the favorites-first curated order.
+    expect(select.options[0].value).toBe('Bebas Neue');
+    expect(select.options[0].text).toBe('★ Bebas Neue');
+  });
+
+  it('opens the Font Explorer dialog with the layer id from the Browse button', () => {
+    const ctx = stubCtx();
+    render(<Inspector layer={baseLayer} onChange={vi.fn()} ctx={ctx} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /browse google fonts/i }));
+    expect(ctx.openDialog).toHaveBeenCalledWith('font-explorer', { layerId: 't1' });
   });
 });

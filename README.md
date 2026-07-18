@@ -5,12 +5,32 @@ the browser and download a versioned order JSON. Panels come in three fixed
 finishes: **black**, **gold**, and **white**.
 
 The editor gives you a tool palette with hover tooltips, a collapsible
-card-panel sidebar (view options, panel size, palette, layers, properties, and
-a per-tool help footer), and mm rulers framing the canvas. The Select tool is a
-full multi-selection vector editor — marquee-select, move, rotate, resize, and
-edit path anchors — with ruler guides you drag out of the rulers and snap to,
-and a "show content outside the panel" view option (on by default) that ghosts
-anything spilling past the panel edge so it stays visible instead of clipped.
+card-panel sidebar (view options, panel size, palette, layers, align &
+distribute, properties, and a per-tool help footer), and mm rulers framing the
+canvas. The Select tool is a full multi-selection vector editor —
+marquee-select, move, rotate, resize, and edit path anchors — with ruler
+guides you drag out of the rulers and snap to, and a "show content outside the
+panel" view option (on by default) that ghosts anything spilling past the
+panel edge so it stays visible instead of clipped. A browser-zoom guard keeps
+the canvas from desyncing under pinch/`⌘`+wheel/`⌘`+`+`/`-` page zoom.
+
+Text layers pick from a small curated, self-hosted font set or the full
+1,942-family Google Fonts catalog via a searchable Explorer modal (with a
+Japanese-subset filter and starrable favorites). The document autosaves to
+`localStorage` continuously — a save-status chip in the header reports
+saved/unsaved/failed, and a **New panel** action resets to a fresh document.
+Panel config JSON round-trips both ways: download to export, and import via a
+header button, drag-and-drop anywhere on the page, or the command palette —
+the same drop target also accepts an image file as a new layer. Multi-selections
+support copy/cut/duplicate/select-all with a versioned clipboard envelope that
+round-trips through the real OS clipboard across tabs, plus align/distribute
+against either the selection or the whole panel. Most shortcuts (and every
+palette-only, chordless action like New Panel and Align) are driven by one
+contextual command registry, browsable through a searchable `?` shortcuts
+overlay and a fuzzy `⌘/Ctrl+Shift+K` command palette — a few gestures with
+their own native event source, like paste and arrow-key nudging, are listed
+there too but dispatched by their own dedicated code.
+
 Full behavior is covered in the
 [doc site](https://doc-zudo-panel-designer.takazudomodular.com/).
 

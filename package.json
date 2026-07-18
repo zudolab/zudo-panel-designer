@@ -12,6 +12,7 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test:e2e": "pnpm --filter @zpd/app test:e2e",
+    "fonts:catalog": "node scripts/fetch-google-fonts-catalog.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",

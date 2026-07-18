@@ -1,15 +1,28 @@
+import { useMemo } from 'react';
 import type { TextLayer } from '@zpd/core';
 import { registerInspector } from '../registry/inspectors';
-import { ColorPicker, Field, NumberField } from '../components/inspector-ui';
+import { ActionButton, ColorPicker, Field, NumberField } from '../components/inspector-ui';
 import { CURATED_FONTS, ensureFont } from '../fonts';
+import { useFontFavorites } from '../use-font-favorites';
 import type { InspectorProps } from '../types';
 
 function TextInspector({ layer, onChange, ctx }: InspectorProps<TextLayer>) {
+  const { favorites } = useFontFavorites();
+
+  // Curated options with any starred (in the Font Explorer) sorted first, so
+  // the fonts a user keeps reaching for surface at the top of the dropdown. A
+  // ★ prefix marks them, since a native <select> can't render its own control.
+  const sortedFonts = useMemo(() => {
+    const starred = CURATED_FONTS.filter((f) => favorites.has(f.family));
+    const rest = CURATED_FONTS.filter((f) => !favorites.has(f.family));
+    return [...starred, ...rest];
+  }, [favorites]);
+
   function handleFontChange(fontFamily: string) {
     onChange({ fontFamily }, { commit: true });
     // repaint once the actual face is loaded, not just the fallback face the
     // canvas draws immediately with
-    ensureFont(fontFamily).then(() => ctx.requestRepaint());
+    ensureFont(fontFamily, layer.content).then(() => ctx.requestRepaint());
   }
 
   return (
@@ -36,13 +49,19 @@ function TextInspector({ layer, onChange, ctx }: InspectorProps<TextLayer>) {
           {!CURATED_FONTS.some((f) => f.family === layer.fontFamily) && (
             <option value={layer.fontFamily}>{layer.fontFamily}</option>
           )}
-          {CURATED_FONTS.map((f) => (
+          {sortedFonts.map((f) => (
             <option key={f.family} value={f.family}>
-              {f.family}
+              {favorites.has(f.family) ? `★ ${f.family}` : f.family}
             </option>
           ))}
         </select>
       </Field>
+      <ActionButton
+        title="Browse the full Google Fonts catalog"
+        onClick={() => ctx.openDialog('font-explorer', { layerId: layer.id })}
+      >
+        Browse Google Fonts…
+      </ActionButton>
       <Field label="Color">
         <ColorPicker value={layer.color} onPick={(c) => c !== null && onChange({ color: c })} />
       </Field>

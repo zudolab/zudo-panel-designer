@@ -49,7 +49,7 @@ Rect/ellipse layers get position, size, and rotation fields plus a `ColorPicker`
 
 ### Text
 
-Adds a `<textarea>` for the multi-line content and a font `<select>` populated from `CURATED_FONTS` (see [Fonts](./fonts.mdx)). If the layer's current `fontFamily` isn't one of the curated options — e.g. a hand-edited JSON import, or the demo document's generic `sans-serif` — it's kept as a selectable, synthesized option rather than silently swapped out. Picking a font calls `ensureFont()` and requests a repaint once the real face has actually loaded, so the canvas doesn't stay stuck on the fallback face.
+Adds a `<textarea>` for the multi-line content and a font `<select>` populated from `CURATED_FONTS` (see [Fonts](./fonts.mdx)), with any starred favorite sorted first and marked with a `★`. Below it, a **Browse Google Fonts…** button opens the [Font Explorer](./fonts.mdx#the-google-fonts-explorer) for the full catalog. If the layer's current `fontFamily` isn't one of the curated options — a hand-edited JSON import, the demo document's generic `sans-serif`, or a family picked in the Explorer — it's kept as a selectable, synthesized option rather than silently swapped out. Picking a font (from either surface) calls `ensureFont()` and requests a repaint once the real face has actually loaded, so the canvas doesn't stay stuck on the fallback face.
 
 ### Path
 

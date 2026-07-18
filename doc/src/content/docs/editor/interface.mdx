@@ -10,10 +10,21 @@ The editor (`Editor.tsx`) is a single full-screen shell with four regions: a hea
 `components/header.tsx` is the top bar. From left to right it shows:
 
 - The app name.
+- The [save-status chip](./autosave.mdx#the-save-status-chip) — a small pill reporting whether the document is saved locally, still unsaved, or failed to save.
 - A zoom cluster: zoom-out / zoom-in buttons (25% steps), the current zoom percentage (relative to the "fit" scale, not to physical mm), and a **Fit** button that re-centers and re-scales the camera to frame the whole panel.
 - Undo / redo buttons, disabled when there is nothing to undo/redo.
-- A **?** button that opens the [keyboard shortcuts dialog](./add-actions-and-dialogs.mdx#dialogs-built-in-dialogs-shortcuts-dialog).
+- A **?** button that opens the [searchable keyboard shortcuts overlay](./shortcuts-and-commands.mdx#the-keyboard-shortcuts-overlay).
+- An **⬆ JSON** button that imports a panel config JSON file (see [Round-Trip → Importing](../export/round-trip.mdx#importing)).
 - A **⬇ JSON** button that downloads the current document as an order-ready panel config JSON (see [Download trigger](#download-trigger) below).
+- A **New panel** button that resets to the default starter document, after confirming (see [Autosave & New Panel → New panel](./autosave.mdx#new-panel)).
+
+The whole app is also driven by the [command registry](./shortcuts-and-commands.mdx): every one of the shortcuts above, plus the ones with no header button at all (clipboard, align/distribute, the command palette itself), routes through the same `commands.ts` list.
+
+## Browser zoom guard
+
+`browser-zoom-guard.ts` is installed for the lifetime of the Editor (`useEffect(() => installBrowserZoomGuard(), [])`) and suppresses the browser's own native zoom gestures — `preventDefault()` on `⌘/Ctrl` + wheel (how pinch-to-zoom is delivered as a `wheel` event), `⌘/Ctrl` + `+`/`=`/`-`/`0`, and Safari's `gesturestart`/`gesturechange`/`gestureend` trackpad events. A plain, unmodified wheel or keypress is left alone — this only blocks the browser's own page-zoom, never the editor's in-canvas zoom (the header buttons and the canvas's own wheel handler).
+
+This exists because a browser-zoomed viewport desyncs the cursor position the app is told about from the actual screen position, which misaligns every drag handle, resize handle, and click target in this drag-heavy editor. Unlike the reference app this was ported from, zpd has no separate display-scale setting to step in its place — the guard is pure prevention, with nothing to dispatch instead.
 
 ## Left toolbar
 
@@ -35,6 +46,7 @@ Each panel is a `CollapsibleSection` (`components/collapsible-section.tsx`) — 
 - **Panel** — a `<select>` of the real Eurorack HP sizes (`PANEL_SIZES` from `@zpd/core`), each labeled `{hp}HP — {widthMm}×{heightMm}mm`. Changing it commits a new `panelHp` on the document, which re-fits the camera.
 - **Palette (fixed)** — a read-only legend of the three panel colors (black/soldermask, gold/exposed copper, white/silkscreen). This list is fixed because it mirrors a physical PCB finish, not a user preference.
 - **Layers** — `components/layer-list.tsx`, the visual layer stack (top of the list = top of the stack = last array index). Each row supports select (click), rename (double-click the name), reorder (▲/▼), show/hide (👁), and delete (✕), all routed through `@zpd/core`'s layer-ops so ordering and immutability rules live in one place.
+- **Align & Distribute** — `components/align-panel.tsx`. Six align buttons, two distribute buttons, and a **selection**/**panel** reference toggle, disabled until the current selection meets the operation's minimum layer count. See [Align & Distribute](./align-and-distribute.mdx).
 - **Properties** — `components/inspector-host.tsx`, which renders the registered [inspector](./inspectors.mdx) for the selected layer's type, or a placeholder when nothing is selected. The card title also names the selected layer's type (e.g. **Properties — shape**).
 - **Help** (footer) — `components/help-panel.tsx`, pinned at the very bottom of the sidebar and starting collapsed. It describes the currently **active** tool: its name, a keyboard-shortcut badge, and the tool's `description` text (see [Tools](./tools.mdx) and [Extension architecture → Tool descriptions](./extension-architecture.mdx#tool-descriptions)). It follows `activeToolId`, so the transient Space-held pan override never changes what it shows.
 

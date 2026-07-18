@@ -5,7 +5,7 @@
 //  - add-actions/add-pattern.ts "Add pattern…" opens with no props: clicking
 //    a card adds a brand-new pattern layer on top and selects it.
 // Either path is a single commit() — one undo entry — then closes.
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import { mintId, type PatternLayer } from '@zpd/core';
 import {
   defaultParams,
@@ -57,23 +57,6 @@ function PatternCard({ gen, onPick }: { gen: PanelPatternGenerator; onPick: () =
 }
 
 function PatternPickerDialog({ props, close, ctx }: DialogProps<PatternPickerProps>) {
-  // Esc closes (the dialog host only wires backdrop-click); focus returns to
-  // whatever invoked the dialog (the "Browse…" or "Add pattern…" button).
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        close();
-      }
-    }
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      previouslyFocused?.focus?.();
-    };
-  }, [close]);
-
   function handlePick(gen: PanelPatternGenerator): void {
     if (props.layerId) {
       const layerId = props.layerId;

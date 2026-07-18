@@ -24,12 +24,15 @@ import {
 import { DialogHost } from '../components/dialog-host';
 import { InspectorHost } from '../components/inspector-host';
 import type { Pt, ShapeLayer } from '@zpd/core';
-import type { DraftRenderContext, ToolContext } from '../types';
+import type { DraftRenderContext } from '../types';
+import type { CommandContext } from '../commands';
 
 afterEach(cleanup);
 
-// Minimal ToolContext stand-in for exercising handlers/hosts in isolation.
-function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
+// Minimal context stand-in for exercising handlers/hosts in isolation.
+// Typed CommandContext because DialogHost's ctx prop needs it; tool handlers
+// and InspectorHost read only the ToolContext subset.
+function stubCtx(overrides: Partial<CommandContext> = {}): CommandContext {
   const base = {
     doc: { panelHp: 12, layers: [] },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
@@ -51,7 +54,7 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     requestRepaint: vi.fn(),
     openDialog: vi.fn(),
     closeDialog: vi.fn(),
-  } as unknown as ToolContext;
+  } as unknown as CommandContext;
   return Object.assign(base, overrides);
 }
 

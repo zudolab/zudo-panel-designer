@@ -34,9 +34,15 @@ export interface ToolContext {
 
   // document mutation, routed through the undo/redo history:
   //  - beginGesture() opens ONE undo entry, then stream replace() per move,
-  //  - commit() is a standalone atomic change (its own undo entry).
+  //  - commit() is a standalone atomic change (its own undo entry),
+  //  - reset() swaps the WHOLE document and clears past/future — for
+  //    whole-document replacement (New-panel, import-replace), where the
+  //    previous doc's undo history isn't meaningful for the next one. See
+  //    replace-doc.ts, the shared entry point that also clears selection and
+  //    evicts the stale image cache.
   commit(next: DocState): void;
   replace(next: DocState): void;
+  reset(next: DocState): void;
   beginGesture(): void;
   undo(): void;
   redo(): void;
@@ -50,6 +56,13 @@ export interface ToolContext {
 
   // ask the renderer to repaint (e.g. after a tool's own draft state changed)
   requestRepaint(): void;
+
+  // Evicts renderer image-cache entries not backed by a same-id, same-src
+  // image layer in `layers` — the cache stays Editor-local (Editor.tsx's
+  // imagesRef), this is the only way another module can invalidate it. Used
+  // by replace-doc.ts after a whole-document swap, where a fresh doc can
+  // legitimately reuse an id with a different src.
+  evictImageCache(layers: readonly Layer[]): void;
 
   openDialog(id: string, props?: unknown): void;
   closeDialog(): void;
@@ -142,13 +155,24 @@ export interface AddAction {
 
 // --- dialogs --------------------------------------------------------------
 
-export interface DialogProps<P = unknown> {
+// `C` is the context type the host hands this dialog. It defaults to
+// ToolContext (what every read-only dialog needs), but a dialog that must run
+// registry commands — the command palette — declares
+// DialogProps<P, CommandContext> so it reads the richer context WITHOUT an
+// `as unknown as` cast. The DialogHost's own ctx prop is typed CommandContext
+// (see dialog-host.tsx), so Editor mis-wiring it fails typecheck rather than
+// leaving a dialog with an undefined field at runtime.
+export interface DialogProps<P = unknown, C extends ToolContext = ToolContext> {
   props: P;
   close(): void;
-  ctx: ToolContext;
+  ctx: C;
 }
 
-export interface DialogModule<P = unknown> {
+export interface DialogModule<P = unknown, C extends ToolContext = ToolContext> {
   id: string;
-  component: ComponentType<DialogProps<P>>;
+  component: ComponentType<DialogProps<P, C>>;
+  // id of an element the dialog's own content renders (usually its heading)
+  // that names the dialog. The host wires it to aria-labelledby on the
+  // role="dialog" wrapper it owns — content can't set that attribute itself.
+  labelledBy?: string;
 }

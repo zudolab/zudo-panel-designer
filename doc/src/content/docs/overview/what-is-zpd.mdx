@@ -8,7 +8,7 @@ sidebar_position: 1
 
 zpd (zudo-panel-designer) is a web app for designing **Takazudo Modular** blank PCB panels. You lay out a panel in the browser — shapes, patterns, vector paths, text, traced images — and download the result as a versioned order JSON called `PanelConfig`. That file is the deliverable: it is what gets sent off to fabricate the physical panel.
 
-There is no server-side project storage in stage 1 — the browser tab holds the working document, and `PanelConfig` is the portable, re-loadable snapshot of it.
+There is no server-side project storage in stage 1 — the browser tab holds the working document, autosaving it to that browser's `localStorage` so a reload doesn't lose work (see [Autosave & New Panel](../editor/autosave.mdx)), and `PanelConfig` is the portable, re-loadable snapshot of it.
 
 <Note title="Design-time vs. manufacturable data">
   A panel is a stack of layers (see [Document State &amp; Layers](../document-model/document-state-and-layers.mdx)). Most layer types are directly manufacturable, but image layers are the exception — a raster image cannot be fabricated. It exists only as design-time reference; the panel is manufactured from the vector layers traced from it.
