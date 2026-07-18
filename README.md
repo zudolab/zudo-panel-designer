@@ -24,9 +24,12 @@ header button, drag-and-drop anywhere on the page, or the command palette —
 the same drop target also accepts an image file as a new layer. Multi-selections
 support copy/cut/duplicate/select-all with a versioned clipboard envelope that
 round-trips through the real OS clipboard across tabs, plus align/distribute
-against either the selection or the whole panel. Every shortcut is driven by
-one contextual command registry, browsable through a searchable `?` shortcuts
-overlay and a fuzzy `⌘/Ctrl+Shift+K` command palette.
+against either the selection or the whole panel. Most shortcuts (and every
+palette-only, chordless action like New Panel and Align) are driven by one
+contextual command registry, browsable through a searchable `?` shortcuts
+overlay and a fuzzy `⌘/Ctrl+Shift+K` command palette — a few gestures with
+their own native event source, like paste and arrow-key nudging, are listed
+there too but dispatched by their own dedicated code.
 
 Full behavior is covered in the
 [doc site](https://doc-zudo-panel-designer.takazudomodular.com/).

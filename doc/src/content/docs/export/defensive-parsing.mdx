@@ -16,7 +16,7 @@ entire import.
 :::
 
 :::tip
-`parsePanelConfig()` never fails, which is exactly wrong for the in-app import UI — it needs to reject a file that isn't a zpd panel config at all, not silently substitute a default document for it. `tryParsePanelConfig()` is the strict sibling used there: it checks the envelope markers first (`app`, a supported `version`, a `layers` array) and only then delegates to `parsePanelConfig()` for the field-by-field defense below. See [Round-Trip → Importing](./round-trip.mdx#importing).
+`parsePanelConfig()` never fails, which is exactly wrong for the in-app import UI — it needs to reject a file that isn't a zpd panel config at all, not silently coerce it into *some* valid-looking `DocState` (per the fallback rules below — the full default starter document for non-object garbage, or a mostly-empty one for an object missing the right fields). `tryParsePanelConfig()` is the strict sibling used there: it checks the envelope markers first (`app`, a supported `version`, a `layers` array) and only then delegates to `parsePanelConfig()` for the field-by-field defense below. See [Round-Trip → Importing](./round-trip.mdx#importing).
 :::
 
 ## Top-level input

@@ -8,7 +8,7 @@ zpd has no server-side project storage — the working document lives in the bro
 
 ## Boot restore
 
-On mount, `Editor()` reads the stored document once via a lazy `useState` initializer: `readDoc() ?? createDemoDoc()`. If `doc-store.ts` finds a valid entry under the `zpd.doc.v1` key, that document loads silently — there is no "restore this session?" prompt. Only when no stored entry exists (first visit, or storage was cleared) does the editor fall back to the demo document (`demo-doc.ts`'s `createDemoDoc()`, one layer of every type, so the shell exercises every inspector on first load).
+On mount, `Editor()` reads the stored document once via a lazy `useState` initializer: `readDoc() ?? createDemoDoc()`. If `doc-store.ts` finds a valid entry under the `zpd.doc.v1` key, that document loads silently — there is no "restore this session?" prompt. The editor falls back to the demo document (`demo-doc.ts`'s `createDemoDoc()`, one layer of every type, so the shell exercises every inspector on first load) whenever `readDoc()` can't produce a document to restore — not just on a true first visit, but also an unparseable/corrupt payload, an unrecognized stored shape, or `localStorage` being unavailable or throwing on read. `readDoc()` never throws either way; every one of those cases returns `null` rather than propagating an error.
 
 The stored payload is a small versioned envelope:
 

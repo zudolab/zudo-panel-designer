@@ -15,7 +15,7 @@ sidebar_position: 12
 | `⌘/Ctrl+D` | Duplicate | Clones the selection with fresh ids and a small offset, selects the clones — one undo entry. |
 | `⌘/Ctrl+A` | Select All | Selects every non-pattern layer. |
 
-All four exclude **pattern layers** from the operated-on set — patterns are the single panel-wide background (see [Tools → Layer eligibility matrix](./tools.mdx#layer-eligibility-matrix)), so they are never copyable, cuttable, duplicable, or included by Select All. Copy/cut/duplicate/select-all are no-ops when nothing eligible is selected.
+All four exclude **pattern layers** from the operated-on set — patterns are the single panel-wide background (see [Tools → Layer eligibility matrix](./tools.mdx#layer-eligibility-matrix)), so they are never copyable, cuttable, duplicable, or included by Select All. Copy, cut, and duplicate act on the **current selection**, so they're no-ops when nothing eligible is currently selected. Select All doesn't read the current selection at all — it always selects every non-pattern layer in the document, so it's a no-op only when the document has no non-pattern layers.
 
 Every one of these chords is registered with `shift: false` — `⌘⇧C` never copies, matching the pre-refactor behavior exactly.
 
