@@ -25,6 +25,7 @@ export async function openEditor(page: Page): Promise<void> {
 export function bridge(page: Page) {
   return {
     getDoc: () => page.evaluate(() => window.__zpdTest!.getDoc()),
+    getHistory: () => page.evaluate(() => window.__zpdTest!.getHistory()),
     getLayers: () => page.evaluate(() => window.__zpdTest!.getLayers()),
     getLayerCount: () => page.evaluate(() => window.__zpdTest!.getLayerCount()),
     getPanelHp: () => page.evaluate(() => window.__zpdTest!.getPanelHp()),

@@ -167,6 +167,8 @@ test('@smoke rotated text keeps its render pivot while a bundled font is delayed
   await page.mouse.click(provisionalCenter.x, provisionalCenter.y);
   expect(await bridge(page).getSelectedIds()).toEqual([layer.id]);
   const beforeReleaseDoc = await bridge(page).getDoc();
+  const beforeReleaseHistory = await bridge(page).getHistory();
+  const beforeReleaseHistoryBytes = JSON.stringify(beforeReleaseHistory);
   const beforeReleaseSerialized = await bridge(page).serialize();
   const beforeReleaseSelection = await bridge(page).getSelectedIds();
 
@@ -181,6 +183,9 @@ test('@smoke rotated text keeps its render pivot while a bundled font is delayed
   expect(loaded.metricRevision).toBeGreaterThan(provisional.metricRevision);
   expect(await bridge(page).getSelectedIds()).toEqual(beforeReleaseSelection);
   expect(await bridge(page).getDoc()).toEqual(beforeReleaseDoc);
+  const afterReleaseHistory = await bridge(page).getHistory();
+  expect(afterReleaseHistory).toEqual(beforeReleaseHistory);
+  expect(JSON.stringify(afterReleaseHistory)).toBe(beforeReleaseHistoryBytes);
   expect(await bridge(page).serialize()).toEqual(beforeReleaseSerialized);
   const docLayer = (await bridge(page).getDoc()).layers[0] as TextLayer;
   expect(docLayer).toMatchObject({
