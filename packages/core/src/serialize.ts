@@ -10,6 +10,7 @@
 import { createDefaultDoc, DEFAULT_PANEL_HP } from './default-doc';
 import { PALETTE } from './palette';
 import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
+import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
 import { mintId } from './types';
 import type {
   ColorIndex,
@@ -24,15 +25,19 @@ import type {
   TextLayer,
 } from './types';
 
-// v2 adds the top-level `guides` array. v1 configs (and any config missing
-// `guides`) still parse cleanly — parsePanelConfig defaults them to []. The
-// version is emitted for the human/order reader; parsePanelConfig does not
-// branch on it (every field defends itself), so old files load without a
-// dedicated migration path.
-export const PANEL_CONFIG_VERSION = 2;
+// v2 added the top-level `guides` array; v3 adds pattern square geometry
+// (x/y/size on pattern layers, #96). The v3 bump is a COMPATIBILITY GATE, not
+// just documentation: an older app's strict version check (tryParsePanelConfig)
+// must reject a v3 file, because its parser would silently drop x/y/size and
+// reinterpret a MOVED pattern as a panel-wide fill. parsePanelConfig still
+// does not branch on the version (every field defends itself): a v1/v2 config
+// simply has no pattern geometry, and the same missing-field defense that
+// covers a malformed v3 file gives it cover-default geometry — see
+// parsePatternGeometry.
+export const PANEL_CONFIG_VERSION = 3;
 
 export interface PanelConfig {
-  version: 2;
+  version: 3;
   app: 'zpd';
   panel: { hp: number; widthMm: number; heightMm: number };
   palette: string[];
@@ -117,6 +122,40 @@ interface ParsedBase {
   hidden?: boolean;
 }
 
+interface PanelDimsMm {
+  widthMm: number;
+  heightMm: number;
+}
+
+// Pattern square geometry (#96). v1/v2 configs carry no x/y/size at all, and a
+// hand-edited v3 file may carry broken values — both degrade the same way:
+// a missing/non-finite/non-positive `size` falls back to the cover size, then
+// a missing/non-finite `x`/`y` centers the RESULTING size on the panel. A full
+// v1/v2 migration is therefore exactly "cover geometry via the helper". A
+// finite but absurd size is clamped to MAX_PATTERN_SIZE_MM — generators loop
+// over the whole span, so an unbounded size is a freeze-on-open DoS vector.
+//
+// NOTE the migration contract: cover geometry preserves the panel COVERAGE and
+// the pattern's CENTER (centeredStart pins one lattice tick to the draw span's
+// center, which cover placement keeps at the panel center) — it does NOT
+// preserve exact pixel phase. A lattice-parity/centerY-dependent generator may
+// shift by a sub-pitch amount because the draw span changes from the panel
+// rect to the square.
+function parsePatternGeometry(
+  value: Record<string, unknown>,
+  panel: PanelDimsMm,
+): { x: number; y: number; size: number } {
+  const cover = patternCoverGeometry(panel);
+  const rawSize = optionalNum(value.size);
+  const size =
+    rawSize !== undefined && rawSize > 0 ? Math.min(rawSize, MAX_PATTERN_SIZE_MM) : cover.size;
+  return {
+    x: optionalNum(value.x) ?? (panel.widthMm - size) / 2,
+    y: optionalNum(value.y) ?? (panel.heightMm - size) / 2,
+    size,
+  };
+}
+
 function parseBase(value: Record<string, unknown>): ParsedBase {
   const id = typeof value.id === 'string' && value.id.length > 0 ? value.id : mintId('layer');
   const name = str(value.name, '');
@@ -132,7 +171,7 @@ function parseHp(value: unknown): number {
     : DEFAULT_PANEL_HP;
 }
 
-function parseLayer(value: unknown): Layer | null {
+function parseLayer(value: unknown, panel: PanelDimsMm): Layer | null {
   if (!isPlainObject(value)) return null;
   const base = parseBase(value);
 
@@ -160,6 +199,7 @@ function parseLayer(value: unknown): Layer | null {
         patternType: str(value.patternType, 'unknown'),
         params: parseParams(value.params),
         color: colorIndex(value.color),
+        ...parsePatternGeometry(value, panel),
       };
       return layer;
     }
@@ -246,10 +286,16 @@ export function parsePanelConfig(input: unknown): DocState {
   if (!isPlainObject(input)) return createDefaultDoc();
 
   const panel = isPlainObject(input.panel) ? input.panel : undefined;
+  // hp is sanitized FIRST and the panel dims the pattern-geometry defense
+  // needs are DERIVED from it — the serialized panel.widthMm/heightMm are
+  // advisory output (see header) and are never re-trusted on the way in.
   const hp = parseHp(input.hp ?? panel?.hp);
+  const panelDims: PanelDimsMm = { widthMm: panelWidthMm(hp), heightMm: PANEL_HEIGHT_MM };
 
   const layers = Array.isArray(input.layers)
-    ? input.layers.map(parseLayer).filter((layer): layer is Layer => layer !== null)
+    ? input.layers
+        .map((entry) => parseLayer(entry, panelDims))
+        .filter((layer): layer is Layer => layer !== null)
     : [];
 
   return { panelHp: hp, layers, guides: parseGuides(input.guides) };

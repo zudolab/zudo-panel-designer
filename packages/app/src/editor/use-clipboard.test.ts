@@ -133,20 +133,36 @@ afterEach(() => {
 });
 
 describe('useClipboard — copy/cut', () => {
-  it('handleCopy excludes pattern layers and leaves the doc untouched', () => {
+  // #97 (movable pattern square): patterns join copy/cut/paste/duplicate —
+  // the pre-#97 versions of these tests proved the opposite exclusions.
+  it('handleCopy includes a directly-selected pattern and leaves the doc untouched', () => {
     const doc = baseDoc([shapeLayer, textLayer]);
     const ctx = createCtx(doc, ['shape-1', 'layer-default-dot-grid']);
     const { result } = renderHook(() => useClipboard(ctx));
 
     act(() => result.current.handleCopy());
-
     expect(ctx.commit).not.toHaveBeenCalled();
     expect(ctx.doc.layers).toHaveLength(doc.layers.length);
+
+    // paste the capture back: shape + pattern clones, cascade-offset squares
+    act(() => dispatchPaste(window));
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    expect(ctx.doc.layers).toHaveLength(doc.layers.length + 2);
+    const patternClone = ctx.doc.layers.find(
+      (l) => l.type === 'pattern' && l.id !== 'layer-default-dot-grid',
+    );
+    const original = ctx.doc.layers.find((l) => l.id === 'layer-default-dot-grid');
+    if (patternClone?.type !== 'pattern' || original?.type !== 'pattern') {
+      throw new Error('expected a pattern clone and its untouched original');
+    }
+    expect(patternClone.x).toBeCloseTo(original.x + 2, 5);
+    expect(patternClone.y).toBeCloseTo(original.y + 2, 5);
+    expect(patternClone.size).toBe(original.size);
   });
 
-  it('handleCopy on an empty (or pattern-only) selection is a no-op', () => {
+  it('handleCopy on an empty selection is a no-op', () => {
     const doc = baseDoc([shapeLayer]);
-    const ctx = createCtx(doc, ['layer-default-dot-grid']);
+    const ctx = createCtx(doc, []);
     const { result } = renderHook(() => useClipboard(ctx));
 
     act(() => result.current.handleCopy());
@@ -155,7 +171,7 @@ describe('useClipboard — copy/cut', () => {
     expect(ctx.commit).not.toHaveBeenCalled();
   });
 
-  it('handleCut removes the selection (pattern excluded) as ONE undo entry and updates selection', () => {
+  it('handleCut removes the selection (pattern INCLUDED, #97) as ONE undo entry and updates selection', () => {
     const doc = baseDoc([shapeLayer, textLayer]);
     const ctx = createCtx(doc, ['shape-1', 'text-1', 'layer-default-dot-grid']);
     const { result } = renderHook(() => useClipboard(ctx));
@@ -163,13 +179,13 @@ describe('useClipboard — copy/cut', () => {
     act(() => result.current.handleCut());
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
-    expect(ctx.doc.layers.map((l) => l.id)).toEqual(['layer-default-dot-grid']);
-    expect(ctx.selectedIds).toEqual(['layer-default-dot-grid']);
+    expect(ctx.doc.layers).toEqual([]);
+    expect(ctx.selectedIds).toEqual([]);
   });
 
-  it('handleCut with nothing cuttable does not commit', () => {
+  it('handleCut with nothing selected does not commit', () => {
     const doc = baseDoc([]);
-    const ctx = createCtx(doc, ['layer-default-dot-grid']);
+    const ctx = createCtx(doc, []);
     const { result } = renderHook(() => useClipboard(ctx));
 
     act(() => result.current.handleCut());
@@ -212,7 +228,8 @@ describe('useClipboard — copy -> paste round trip (internal clipboard)', () =>
 });
 
 describe('useClipboard — Cmd/Ctrl+D duplicate', () => {
-  it('clones the selection (pattern excluded) with the same clone+offset technique, ONE undo entry', () => {
+  // #97: the selected pattern duplicates too — 3 clones, not 2.
+  it('clones the selection (pattern included) with the same clone+offset technique, ONE undo entry', () => {
     const doc = baseDoc([shapeLayer, textLayer]);
     const ctx = createCtx(doc, ['shape-1', 'text-1', 'layer-default-dot-grid']);
     const { result } = renderHook(() => useClipboard(ctx));
@@ -220,17 +237,36 @@ describe('useClipboard — Cmd/Ctrl+D duplicate', () => {
     act(() => result.current.handleDuplicate());
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
-    expect(ctx.doc.layers).toHaveLength(5); // pattern + 2 originals + 2 clones
+    expect(ctx.doc.layers).toHaveLength(6); // 3 originals + 3 clones
     const newIds = ctx.doc.layers
       .map((l) => l.id)
       .filter((id) => id !== 'shape-1' && id !== 'text-1' && id !== 'layer-default-dot-grid');
-    expect(newIds).toHaveLength(2);
+    expect(newIds).toHaveLength(3);
     expect(ctx.selectedIds).toEqual(newIds);
   });
 
-  it('duplicating a pattern-only (or empty) selection does not commit', () => {
+  // #97: a pattern-only selection now duplicates (multiple squares are
+  // legitimately useful); only an EMPTY selection stays a no-op.
+  it('duplicating a pattern-only selection clones the square with the cascade offset', () => {
     const doc = baseDoc([]);
     const ctx = createCtx(doc, ['layer-default-dot-grid']);
+    const { result } = renderHook(() => useClipboard(ctx));
+
+    act(() => result.current.handleDuplicate());
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    expect(ctx.doc.layers).toHaveLength(2);
+    const [original, clone] = ctx.doc.layers;
+    if (original?.type !== 'pattern' || clone?.type !== 'pattern') {
+      throw new Error('expected two pattern layers');
+    }
+    expect(clone.x).toBeCloseTo(original.x + 2, 5);
+    expect(clone.size).toBe(original.size);
+    expect(ctx.selectedIds).toEqual([clone.id]);
+  });
+
+  it('duplicating an empty selection does not commit', () => {
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
     const { result } = renderHook(() => useClipboard(ctx));
 
     act(() => result.current.handleDuplicate());
@@ -239,6 +275,8 @@ describe('useClipboard — Cmd/Ctrl+D duplicate', () => {
 });
 
 describe('useClipboard — Cmd/Ctrl+A select-all', () => {
+  // Still pattern-free after #97 — the ONE deliberate clipboard exception:
+  // a background-ish cover square must not join every "select all and move".
   it('selects every non-pattern layer', () => {
     const doc = baseDoc([shapeLayer, textLayer]);
     const ctx = createCtx(doc, []);
@@ -504,6 +542,36 @@ describe('useClipboard — non-envelope text is left untouched', () => {
       }),
     );
     expect(ctx.commit).not.toHaveBeenCalled();
+  });
+});
+
+describe('useClipboard — pattern layers in envelopes (#97)', () => {
+  // Pre-#97 the parser filtered patterns out of envelopes; they now paste
+  // like any layer (cross-tab pattern copy is a legitimate flow).
+  it('an envelope carrying a pattern layer pastes it with the cascade offset', () => {
+    const patternLayer = baseDoc([]).layers[0];
+    const envelopeText = JSON.stringify({
+      app: 'zpd',
+      kind: 'layers',
+      version: 1,
+      layers: [patternLayer],
+    });
+
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+
+    act(() => dispatchPaste(window, { text: envelopeText }));
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    expect(ctx.doc.layers).toHaveLength(2);
+    const pasted = ctx.doc.layers[1];
+    if (pasted.type !== 'pattern' || patternLayer.type !== 'pattern') {
+      throw new Error('expected pattern layers');
+    }
+    expect(pasted.id).not.toBe(patternLayer.id);
+    expect(pasted.x).toBeCloseTo(patternLayer.x + 2, 5);
+    expect(pasted.size).toBe(patternLayer.size);
   });
 });
 

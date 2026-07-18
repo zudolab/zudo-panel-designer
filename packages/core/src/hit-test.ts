@@ -1,5 +1,10 @@
-// Canvas hit-testing in mm space. Topmost-first; pattern layers are
-// panel-wide and only selectable via the layer list (never canvas-hit-testable).
+// Canvas hit-testing in mm space. TWO-TIER topmost-first scan (#97): pattern
+// layers hit on their x/y/size square (like an image bbox), but new patterns
+// are appended on TOP of the layer stack (picker add-new-layer), so a naive
+// single top-down scan would let a covering pattern swallow every click on
+// the objects beneath it. hitTestDoc therefore scans NON-pattern layers
+// top-down first and only falls back to pattern layers (top-down among
+// themselves) when nothing else hits.
 //
 // The spec references Path2D's isPointInPath(...,'evenodd')/isPointInStroke,
 // but Path2D is a browser API unavailable in plain Node/Vitest. This module
@@ -44,6 +49,9 @@ export interface HitTestPathLayerLike extends PathLayerLike {
 
 export interface PatternLayerLike {
   type: 'pattern';
+  x: number;
+  y: number;
+  size: number; // square side, mm
 }
 
 export type LayerLike =
@@ -159,15 +167,26 @@ export function hitTestLayer(layer: LayerLike, mmX: number, mmY: number): boolea
     case 'path':
       return hitTestPath(layer, mmX, mmY);
     case 'pattern':
-      return false;
+      // Square bbox hit like an image (#97); patterns carry no rotation.
+      return pointInRotatedRect(
+        mmX,
+        mmY,
+        { x: layer.x, y: layer.y, width: layer.size, height: layer.size },
+        undefined,
+        false,
+      );
   }
 }
 
+// Two-tier scan (#97, see the header comment): non-pattern layers first,
+// topmost wins; pattern layers only when no non-pattern layer hits.
 export function hitTestDoc(doc: HitTestDocLike, mmX: number, mmY: number): LayerLike | null {
-  for (let i = doc.layers.length - 1; i >= 0; i -= 1) {
-    const layer = doc.layers[i];
-    if (layer.hidden) continue;
-    if (hitTestLayer(layer, mmX, mmY)) return layer;
+  for (const patternTier of [false, true]) {
+    for (let i = doc.layers.length - 1; i >= 0; i -= 1) {
+      const layer = doc.layers[i];
+      if (layer.hidden || (layer.type === 'pattern') !== patternTier) continue;
+      if (hitTestLayer(layer, mmX, mmY)) return layer;
+    }
   }
   return null;
 }

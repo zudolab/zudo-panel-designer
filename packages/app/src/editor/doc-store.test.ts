@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDefaultDoc, type DocState } from '@zpd/core';
+import {
+  createDefaultDoc,
+  PANEL_HEIGHT_MM,
+  panelWidthMm,
+  patternCoverGeometry,
+  type DocState,
+} from '@zpd/core';
 import { clearDoc, DOC_STORAGE_KEY, readDoc, writeDoc } from './doc-store';
 
 beforeEach(() => {
@@ -124,6 +130,36 @@ describe('readDoc', () => {
     writeDoc(doc);
     const restored = readDoc();
     expect(restored).toEqual(doc);
+  });
+
+  it('migrates a v2 autosave payload: pattern layers gain cover geometry (#96)', () => {
+    // An autosave persisted by the pre-#96 app: config version 2, pattern
+    // layer without x/y/size. readDoc flows through the same parsePanelConfig
+    // as file import, so the stored doc migrates identically on boot.
+    window.localStorage.setItem(
+      DOC_STORAGE_KEY,
+      JSON.stringify({
+        version: 1, // DOC_STORAGE_VERSION (payload envelope), unrelated to config version
+        savedAt: Date.now(),
+        config: {
+          version: 2,
+          app: 'zpd',
+          panel: { hp: 12, widthMm: 60.6, heightMm: 128.5 },
+          palette: ['black', 'gold', 'white'],
+          layers: [
+            { id: 'p1', name: 'Dots', type: 'pattern', patternType: 'dot-grid', color: 1, params: { pitch: 5 } },
+          ],
+          guides: [],
+        },
+      }),
+    );
+    const restored = readDoc();
+    expect(restored).not.toBeNull();
+    const [layer] = restored!.layers;
+    if (layer.type !== 'pattern') throw new Error('expected a pattern layer');
+    expect({ x: layer.x, y: layer.y, size: layer.size }).toEqual(
+      patternCoverGeometry({ widthMm: panelWidthMm(12), heightMm: PANEL_HEIGHT_MM }),
+    );
   });
 
   it('returns null and warns (never throws) on invalid JSON', () => {

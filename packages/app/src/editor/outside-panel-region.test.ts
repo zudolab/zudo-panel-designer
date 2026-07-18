@@ -77,6 +77,9 @@ const mirroredOffPanelShapeLayer: Layer = {
   height: 16,
   color: 2,
 };
+// Cover geometry for the 50mm-wide test panel — the square crosses the panel
+// boundary on both x sides, so it is ghost-ELIGIBLE since #97 (movable
+// pattern square; only the perf cull can exclude a pattern now).
 const patternLayer: Layer = {
   id: 'pattern-1',
   name: 'Dot grid',
@@ -84,6 +87,18 @@ const patternLayer: Layer = {
   patternType: 'dot-grid',
   params: {},
   color: 1,
+  x: (50 - 128.5) / 2,
+  y: 0,
+  size: 128.5,
+};
+// A pattern square fully inside the panel — the perf cull (not any pattern
+// rule) keeps it out of ghostLayers, exactly like the in-panel shape above.
+const inPanelPatternLayer: Layer = {
+  ...patternLayer,
+  id: 'pattern-inside',
+  x: 5,
+  y: 5,
+  size: 20,
 };
 
 describe('outsidePanelRegion', () => {
@@ -105,10 +120,16 @@ describe('outsidePanelRegion', () => {
     ).toBeNull();
   });
 
-  it('pattern-skip rule: excludes pattern layers from ghostLayers', () => {
+  // #97 flipped the old pattern-skip rule: patterns are ghost-eligible now
+  // that they can be moved off-panel (the square clip bounds the draw).
+  it('pattern layers whose square crosses the panel boundary ARE ghost-eligible', () => {
     const region = outsidePanelRegion(true, [offPanelShapeLayer, patternLayer], VIEWPORT, CAM, PANEL);
-    expect(region!.ghostLayers).toEqual([offPanelShapeLayer]);
-    expect(region!.ghostLayers.some((l) => l.type === 'pattern')).toBe(false);
+    expect(region!.ghostLayers).toEqual([offPanelShapeLayer, patternLayer]);
+  });
+
+  it('perf cull still applies to patterns: a square fully inside the panel never ghosts', () => {
+    const region = outsidePanelRegion(true, [inPanelPatternLayer], VIEWPORT, CAM, PANEL);
+    expect(region!.ghostLayers).toEqual([]);
   });
 
   it('excludes hidden layers from ghostLayers, matching the main layer pass', () => {
@@ -133,9 +154,12 @@ describe('outsidePanelRegion', () => {
     expect(region!.ghostLayers).toEqual([offPanelShapeLayer]);
   });
 
-  it('regression: the default doc always ghosts as empty when only a pattern layer exists', () => {
+  // #97: the default doc's cover square hangs off-panel on both x sides, so
+  // the pattern-only default doc now ghosts its square margins (this was the
+  // pre-#97 "always empty" regression case, inverted on purpose).
+  it('the default-doc cover square ghosts its off-panel margins', () => {
     const region = outsidePanelRegion(true, [patternLayer], VIEWPORT, CAM, PANEL);
-    expect(region!.ghostLayers).toEqual([]);
+    expect(region!.ghostLayers).toEqual([patternLayer]);
   });
 
   it('painted-extent cull: keeps a stroked path whose stroke crosses an edge though its centerline is inside', () => {

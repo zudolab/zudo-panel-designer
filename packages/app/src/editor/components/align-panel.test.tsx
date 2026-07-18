@@ -108,6 +108,9 @@ describe('AlignPanel — enable/disable per selection count and reference mode',
       patternType: 'dots',
       params: {},
       color: 0,
+      x: 0,
+      y: 0,
+      size: 128.5,
     };
     const { ctx } = makeHarness({
       panelHp: 12,

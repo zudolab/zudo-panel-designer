@@ -2,9 +2,9 @@
 // (issue #43). No Canvas here — this is the *decision* (which layers ghost,
 // what the two clip rects are), node-testable without a canvas context.
 // renderer.ts turns the result into the actual ctx.rect()/ctx.clip() calls;
-// see outside-panel-region.test.ts for the ON/OFF/pattern-skip coverage and
-// editor-view.spec.ts for the pixel-level proof that the canvas clip itself
-// behaves (this module can't prove that on its own).
+// see outside-panel-region.test.ts for the ON/OFF/pattern-eligibility
+// coverage and editor-view.spec.ts for the pixel-level proof that the canvas
+// clip itself behaves (this module can't prove that on its own).
 import { normalizeRect, rotatedRectAABB, type Layer } from '@zpd/core';
 import type { Camera } from './camera';
 import { layerBbox, layerRotation } from './renderer';
@@ -25,21 +25,23 @@ export interface OutsidePanelRegion {
   // why that disjointness is load-bearing)
   innerRect: PxRect;
   // layers eligible for the ghost pass. Hidden layers are never drawn.
-  // Pattern layers are excluded — this is a correctness rule, not an
-  // optimization: patterns deliberately overscan the panel edges (see
-  // packages/patterns/src/patterns.ts, centeredStart()) so they read as
-  // intentional at any panel size, and today's ctx.clip() in the main pass
-  // is what hides that overscan. Ghosting patterns would flood the entire
-  // gutter with dot-grid. Patterns are semantically panel-bound (see
-  // hit-test.ts: "pattern layers are panel-wide") — not bbox-bound, so
-  // layerBbox() returning the panel rect for a pattern must not be read as
-  // "patterns can't paint outside it". Beyond that, a layer whose
-  // (rotation-aware) bbox stays fully inside the panel is also excluded —
-  // it's a pure performance cull (see crossesPanelBoundary): the exterior
-  // clip rejects every pixel such a layer paints anyway, so drawing it here
-  // would just re-render (and, for path layers, rebuild the Path2D) the
-  // whole layer a second time per repaint for zero visual effect — costly on
-  // a large trace with hundreds of path layers.
+  // Pattern layers are ELIGIBLE since #97 (they're user-movable, so the
+  // off-panel part of the square must read as "will not be manufactured"
+  // like any other layer's): their draw branch clips to the layer's own
+  // x/y/size square via a SEPARATE beginPath/rect/clip that INTERSECTS
+  // whatever clip the caller holds (see renderer.ts drawLayer — never fold
+  // that rect into this pass's even-odd outer clip), so a ghosted pattern
+  // paints exactly square ∖ panel at low alpha, and the generators'
+  // deliberate edge overscan (param-utils.ts centeredStart()) can never
+  // flood the gutter beyond the square. That overscan was the original
+  // reason patterns were excluded here; the square clip (#96) solved it.
+  // The one cull left is pure PERFORMANCE (see crossesPanelBoundary): a
+  // layer whose (rotation-aware) painted bbox stays fully inside the panel
+  // can never contribute a visible ghost pixel — the exterior clip rejects
+  // every pixel it paints — so drawing it here would just re-render (and,
+  // for path layers, rebuild the Path2D) the whole layer a second time per
+  // repaint for zero visual effect, costly on a large trace with hundreds
+  // of path layers.
   ghostLayers: Layer[];
 }
 
@@ -51,7 +53,7 @@ export interface OutsidePanelRegion {
 // the panel but whose stroke half-width crosses an edge WOULD paint a ghost
 // sliver — culling it on the centerline bbox would wrongly drop that sliver.
 function crossesPanelBoundary(layer: Layer, panel: PanelDims): boolean {
-  const rawBbox = layerBbox(layer, panel);
+  const rawBbox = layerBbox(layer);
   if (!rawBbox) return false;
   // normalizeRect: a mirrored shape/image (negative width/height) is inside-out
   // through the raw boundary test (x + negativeWidth < x), so an off-panel
@@ -93,8 +95,6 @@ export function outsidePanelRegion(
       width: panel.widthMm * cam.pxPerMm,
       height: panel.heightMm * cam.pxPerMm,
     },
-    ghostLayers: layers.filter(
-      (layer) => !layer.hidden && layer.type !== 'pattern' && crossesPanelBoundary(layer, panel),
-    ),
+    ghostLayers: layers.filter((layer) => !layer.hidden && crossesPanelBoundary(layer, panel)),
   };
 }

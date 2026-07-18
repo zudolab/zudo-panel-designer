@@ -50,7 +50,9 @@ function clampFactor(factor: number, dimensions: number[], minSize: number): num
 // positive — group-level interaction code derives it from a corner-handle drag.
 // Eligibility matrix (issue #50): shape/image scale x/y/width/height; text
 // scales x/y and sizeMm; path scales every anchor point, its hin/hout bezier
-// handles, and extraSubpaths; pattern is panel-wide and returned unchanged.
+// handles, and extraSubpaths; pattern is returned unchanged — #97 kept
+// patterns excluded from group scaling on purpose (single-pattern sizing is
+// the inspector's job; the renderer's multi-resize gate matches).
 export function scaleLayer(
   layer: Layer,
   factor: number,

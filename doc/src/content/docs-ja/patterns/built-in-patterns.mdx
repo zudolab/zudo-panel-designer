@@ -3,30 +3,92 @@ title: 組み込みカタログ
 sidebar_position: 3
 ---
 
-`packages/patterns/src/patterns.ts` は 12 個の組み込みパターンを提供し、以下とまったく同じ順序で `PATTERN_GENERATORS` に登録します。すべてのパターンは [ジェネレータ契約](./generator-contract.mdx)に従います。決定論的で、mm 空間で、ここに挙げた範囲に対して `resolveParam` を通してクランプされます。`pitch` / `cell` / `size` / `width` / `lineWidth` / `radius` / `amplitude` / `wavelength` のパラメータはすべてミリメートル、`count` は無単位の光線数、`centerY` はパネル高さに対する 0〜1 の無単位の割合です。
+`packages/patterns/src/patterns/` は **62 個の組み込みパターン**（手書きのオリジナル 12 個 + [pgen](https://github.com/zudolab/zudo-pattern-gen) の静的パターンカタログから移植した 50 個）を提供し、`PATTERN_GENERATORS` に登録します——この配列が `patterns/index.ts` とそのグループシャードからどう組み立てられるかは、[ジェネレータ契約 → レジストリ](./generator-contract.mdx#レジストリ)を参照してください。すべてのパターンは[ジェネレータ契約](./generator-contract.mdx)に従います。決定論的で、mm 空間で、ここに挙げた範囲に対して `resolveParam` を通してクランプされます。各パラメータの単位——ミリメートルか、無単位の比率/カウントか——は、その `label` に記され、下の表に示されます（`(mm)` で終わる `label` はミリメートル値、`centerY` の `(0-1)` や単なる `Ray count` のような、それ以外のものは無単位です）。
+
+## pgen 移植の由来
+
+62 個のうち 50 個のパターンは、zpd 向けに手書きされたのではなく、pgen の静的ジェネレータから移植されました。`packages/patterns/pgen-port-ledger.json` は、その作業の追記専用の記録です。試みたパターンごとに 1 行（`ported`、`original`、`rejected` のいずれか）があり、その pgen ソース id、分類されたファミリー、そして移植の際に何を削ったか／どう翻訳したかの一行メモを記録します（pgen のジェネレータはグラデーション、複数色の塗り、ピクセル単位のランダム性に頼りがちですが、このパッケージの[ジェネレータ契約](./generator-contract.mdx)——単一のフラットな `color`、ランダム性なし——はそれらを意図的に除外しています）。今後の移植ラウンドが従う、繰り返し可能な移植ワークフローについては `.claude/skills/port-pgen-patterns/SKILL.md` を参照してください。
 
 ## パラメータリファレンス
 
-| パターン（`name`） | 描画スタイル | パラメータ（`key` — range, step, default） |
+この表は、`.claude/skills/port-pgen-patterns/scripts/gen-doc-table.mjs` によってライブレジストリから生成されます。移植ラウンドのあとは、これを再実行して出力をここ（および英語版）に貼り付けてください。手で行を編集するのではなく、こうすることで、カタログが実際に登録されているものから黙って乖離することがなくなります。
+
+```sh
+node .claude/skills/port-pgen-patterns/scripts/gen-doc-table.mjs
+```
+
+| パターン（`name`） | グループ | パラメータ（`key` — label, min–max, step, default） |
 |---|---|---|
-| Dot Grid (`dot-grid`) | fill | `pitch` 2–15mm, step 0.5, default 5; `radius` 0.2–4mm, step 0.1, default 1 |
-| Diagonal Stripes (`diag-stripes`) | stroke | `pitch` 2–20mm, step 0.5, default 6; `lineWidth` 0.3–10mm, step 0.1, default 2 |
-| Grid Lines (`grid-lines`) | stroke | `pitch` 2–15mm, step 0.5, default 5; `lineWidth` 0.1–3mm, step 0.05, default 0.4 |
-| Concentric Circles (`concentric-circles`) | stroke | `pitch` 1–15mm, step 0.5, default 4; `lineWidth` 0.1–4mm, step 0.05, default 0.6; `centerY` 0–1, step 0.05, default 0.5 |
-| Hex Lattice (`hex-lattice`) | stroke | `cell` 2–20mm, step 0.5, default 6; `lineWidth` 0.1–3mm, step 0.05, default 0.5 |
-| Checker (`checker`) | fill | `cell` 1–20mm, step 0.5, default 5 |
-| Wave Lines (`wave-lines`) | stroke | `pitch` 2–15mm, step 0.5, default 5; `amplitude` 0.5–8mm, step 0.25, default 1.5; `wavelength` 3–30mm, step 1, default 12; `lineWidth` 0.1–3mm, step 0.05, default 0.6 |
-| Crosshatch (`crosshatch`) | stroke | `pitch` 2–20mm, step 0.5, default 7; `lineWidth` 0.1–4mm, step 0.05, default 0.5 |
-| Radial Burst (`radial-burst`) | stroke | `count` (rays) 8–96, step 2, default 36; `lineWidth` 0.1–3mm, step 0.05, default 0.5; `centerY` 0–1, step 0.05, default 0.5; `innerRadius` 0–30mm, step 0.5, default 4 |
-| Brick (`brick`) | stroke | `brickW` 3–30mm, step 0.5, default 12; `brickH` 2–15mm, step 0.5, default 5; `lineWidth` 0.1–3mm, step 0.05, default 0.4 |
-| Diamond Lattice (`diamond-lattice`) | stroke | `size` 3–30mm, step 0.5, default 8; `lineWidth` 0.1–3mm, step 0.05, default 0.5 |
-| Scallops (`scallops`) | stroke | `width` 3–30mm, step 0.5, default 10; `lineWidth` 0.1–3mm, step 0.05, default 0.5 |
+| Dot Grid (`dot-grid`) | original | `pitch` — Pitch (mm), 2–15, step 0.5, default 5; `radius` — Dot radius (mm), 0.2–4, step 0.1, default 1 |
+| Diagonal Stripes (`diag-stripes`) | original | `pitch` — Pitch (mm), 2–20, step 0.5, default 6; `lineWidth` — Stripe width (mm), 0.3–10, step 0.1, default 2 |
+| Grid Lines (`grid-lines`) | original | `pitch` — Pitch (mm), 2–15, step 0.5, default 5; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.4 |
+| Concentric Circles (`concentric-circles`) | original | `pitch` — Ring pitch (mm), 1–15, step 0.5, default 4; `lineWidth` — Line width (mm), 0.1–4, step 0.05, default 0.6; `centerY` — Center Y (0-1), 0–1, step 0.05, default 0.5 |
+| Hex Lattice (`hex-lattice`) | original | `cell` — Cell size (mm), 2–20, step 0.5, default 6; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5 |
+| Checker (`checker`) | original | `cell` — Cell size (mm), 1–20, step 0.5, default 5 |
+| Wave Lines (`wave-lines`) | original | `pitch` — Row pitch (mm), 2–15, step 0.5, default 5; `amplitude` — Amplitude (mm), 0.5–8, step 0.25, default 1.5; `wavelength` — Wavelength (mm), 3–30, step 1, default 12; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.6 |
+| Crosshatch (`crosshatch`) | original | `pitch` — Pitch (mm), 2–20, step 0.5, default 7; `lineWidth` — Line width (mm), 0.1–4, step 0.05, default 0.5 |
+| Radial Burst (`radial-burst`) | original | `count` — Ray count, 8–96, step 2, default 36; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5; `centerY` — Center Y (0-1), 0–1, step 0.05, default 0.5; `innerRadius` — Inner radius (mm), 0–30, step 0.5, default 4 |
+| Brick (`brick`) | original | `brickW` — Brick width (mm), 3–30, step 0.5, default 12; `brickH` — Brick height (mm), 2–15, step 0.5, default 5; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.4 |
+| Diamond Lattice (`diamond-lattice`) | original | `size` — Diamond size (mm), 3–30, step 0.5, default 8; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5 |
+| Scallops (`scallops`) | original | `width` — Scallop width (mm), 3–30, step 0.5, default 10; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5 |
+| Igeta (`igeta`) | japanese | `cell` — Cell size (mm), 3–20, step 0.5, default 7; `barWidth` — Bar width (mm), 0.1–3, step 0.05, default 1.8 |
+| Asanoha (`asanoha`) | japanese | `radius` — Star radius (mm), 4–14, step 0.5, default 5; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.4 |
+| Kagome (`kagome`) | japanese | `side` — Triangle side (mm), 4–20, step 0.5, default 6; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5 |
+| Seigaiha (`seigaiha`) | japanese | `radius` — Fan radius (mm), 4–18, step 0.5, default 7; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5; `rings` — Arc rings, 2–7, step 1, default 4 |
+| Shippo (`shippo`) | japanese | `radius` — Circle radius (mm), 4–16, step 0.5, default 6; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5; `innerRatio` — Inner circle, 0–1, step 0.05, default 0.5 |
+| Uroko Scales (`uroko-scales`) | japanese | `width` — Scale width (mm), 4–20, step 0.5, default 7; `aspect` — Scale aspect, 0.6–1.6, step 0.05, default 1 |
+| Yagasuri (`yagasuri`) | japanese | `columnWidth` — Column width (mm), 4–20, step 0.5, default 6; `barbHeight` — Barb height (mm), 4–24, step 0.5, default 6 |
+| Sayagata (`sayagata`) | japanese | `cell` — Cell size (mm), 4–20, step 0.5, default 7; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.6 |
+| Raimon (`raimon`) | japanese | `cell` — Cell size (mm), 5–24, step 0.5, default 9; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.7; `turns` — Spiral turns, 2–5, step 1, default 3 |
+| Wachigai (`wachigai`) | japanese | `radius` — Ring radius (mm), 4–16, step 0.5, default 6; `overlap` — Overlap, 0.2–0.7, step 0.02, default 0.45; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.6 |
+| Yoshiwara Tsunagi (`yoshiwara-tsunagi`) | japanese | `cell` — Cell size (mm), 4–20, step 0.5, default 7; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.7 |
+| Rub el Hizb (`rub-el-hizb`) | ornament | `cell` — Cell size (mm), 7–24, step 0.5, default 8; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.4 |
+| Star and Cross Field (`star-and-cross-field`) | ornament | `cell` — Cell size (mm), 8–20, step 0.5, default 8; `starRatio` — Star size, 0.45–0.85, step 0.02, default 0.62 |
+| Interlaced Bands (`interlaced-bands`) | ornament | `cell` — Cell size (mm), 5–20, step 0.5, default 6; `bandWidth` — Band width (mm), 0.5–5, step 0.1, default 2 |
+| Mughal Jali (`mughal-jali`) | ornament | `cell` — Cell size (mm), 8–24, step 0.5, default 10; `web` — Web width (mm), 0.5–4, step 0.1, default 1.6 |
+| Ten-Point Rosette (`ten-point-rosette`) | ornament | `cell` — Cell size (mm), 8–24, step 0.5, default 9; `pointDepth` — Point depth, 0.3–0.75, step 0.01, default 0.5; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5 |
+| Kolam Sikku (`kolam-sikku`) | ornament | `cell` — Cell size (mm), 5–20, step 0.5, default 8; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 1.2; `dotRadius` — Dot radius (mm), 0–3, step 0.1, default 0.7 |
+| Aztec Step Fret (`aztec-step-fret`) | ornament | `stepUnit` — Step unit (mm), 1.3–4, step 0.1, default 1.5; `steps` — Spiral steps, 2–5, step 1, default 3; `armThickness` — Arm thickness (mm), 0.3–2.5, step 0.05, default 1 |
+| Meander (`meander`) | ornament | `cell` — Key size (mm), 7–24, step 0.5, default 10; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.8 |
+| Endless Knot (`endless-knot`) | ornament | `tile` — Knot size (mm), 15–40, step 0.5, default 16; `strandWidth` — Strand width (mm), 0.3–5, step 0.1, default 2; `gridN` — Weave grid, 2–4, step 1, default 4 |
+| Bishamon Koushi (`bishamon-koushi`) | ornament | `radius` — Hex radius (mm), 4–15, step 0.5, default 5; `innerScale` — Inner scale, 0.3–0.85, step 0.05, default 0.62 |
+| Smith Truchet (`smith-truchet`) | curves | `tile` — Tile size (mm), 2–15, step 0.5, default 5; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5 |
+| Hilbert Curve (`hilbert-curve`) | curves | `cell` — Cell size (mm), 18–40, step 0.5, default 26; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5; `order` — Order, 2–4, step 1, default 3 |
+| Dragon Curve (`dragon-curve`) | curves | `cell` — Cell size (mm), 22–45, step 0.5, default 30; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.4; `iterations` — Iterations, 6–8, step 1, default 7 |
+| Vicsek Fractal (`vicsek-fractal`) | curves | `cell` — Cell size (mm), 18–40, step 0.5, default 24; `depth` — Depth, 2–3, step 1, default 3 |
+| Astroid Star Grid (`astroid-grid`) | curves | `cell` — Cell size (mm), 10–25, step 0.5, default 13; `lineWidth` — Line width (mm), 0.1–2, step 0.05, default 0.3; `lineCount` — Chord count, 8–28, step 1, default 18 |
+| Maurer Rose (`maurer-rose`) | curves | `cell` — Cell size (mm), 32–64, step 0.5, default 44; `lineWidth` — Line width (mm), 0.1–2, step 0.05, default 0.3; `petals` — Petal param (n), 2–9, step 1, default 6; `degreeStep` — Degree step (d), 11–99, step 2, default 29 |
+| Guilloche (`guilloche`) | curves | `cell` — Cell size (mm), 24–50, step 0.5, default 32; `lineWidth` — Line width (mm), 0.1–2, step 0.05, default 0.3; `lobes` — Lobes, 2–9, step 1, default 5; `penDistance` — Pen distance, 0.2–1.2, step 0.05, default 0.8 |
+| Truchet Quarter Arc (`truchet-quarter-arc`) | curves | `tile` — Tile size (mm), 5–20, step 0.5, default 8; `gap` — Tile gap (mm), 0–4, step 0.1, default 0 |
+| Classical Labyrinth (`labyrinth-classical`) | curves | `unit` — Unit size (mm), 10–45, step 0.5, default 18; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.6; `circuits` — Circuits, 3–12, step 1, default 7 |
+| Steiner Chain Ring (`steiner-chain`) | curves | `cell` — Cell size (mm), 10–45, step 0.5, default 16; `lineWidth` — Line width (mm), 0.1–2, step 0.05, default 0.4; `chainCount` — Chain count, 3–12, step 1, default 6 |
+| Vesica Lens Circle Mesh (`vesica-lens-circle-mesh`) | ringsCircuits | `pitch` — Pitch (mm), 3–20, step 0.5, default 7; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.45 |
+| Rings Interlock (`rings-interlock`) | ringsCircuits | `radius` — Ring radius (mm), 2–12, step 0.5, default 4; `bandWidth` — Band width (mm), 0.1–3, step 0.05, default 1.4 |
+| Circle Quarters (`circle-quarters`) | ringsCircuits | `cell` — Cell size (mm), 4–20, step 0.5, default 8; `radiusRatio` — Disc size, 0.5–1, step 0.02, default 1 |
+| Quatrefoil (`quatrefoil`) | ringsCircuits | `cell` — Cell size (mm), 5–24, step 0.5, default 8; `lobeRadius` — Lobe radius (mm), 0.5–4, step 0.05, default 1.8 |
+| Hex Circuit (`hex-circuit`) | ringsCircuits | `hexRadius` — Hex radius (mm), 3–16, step 0.5, default 5; `traceWidth` — Trace width (mm), 0.1–3, step 0.05, default 0.6; `traceCoverage` — Trace coverage, 0.3–1, step 0.05, default 0.7 |
+| Via Grid Array (`via-grid-array`) | ringsCircuits | `cell` — Cell size (mm), 3–16, step 0.5, default 5; `ringRadius` — Ring radius (mm), 0.3–4, step 0.05, default 1.8; `holeRatio` — Hole ratio, 0.1–0.7, step 0.02, default 0.45 |
+| Circuit Board Tiles (`circuit-board-tiles`) | ringsCircuits | `cell` — Cell size (mm), 4–18, step 0.5, default 6; `traceWidth` — Trace width (mm), 0.1–3, step 0.05, default 0.8; `padChance` — Pad chance, 0–1, step 0.05, default 0.4 |
+| Snowflakes Geometric (`snowflakes-geometric`) | ringsCircuits | `cell` — Cell size (mm), 8–24, step 0.5, default 9; `lineWidth` — Line width (mm), 0.1–2, step 0.05, default 0.4; `flakeSize` — Flake size, 0.2–0.6, step 0.01, default 0.4 |
+| Eight Point Compass Star Grid (`eight-point-compass-star-grid`) | ringsCircuits | `cell` — Cell size (mm), 5–20, step 0.5, default 7; `innerRatio` — Short ray ratio, 0.2–0.6, step 0.01, default 0.4 |
+| Herringbone (`herringbone`) | tilings | `brickLength` — Brick length (mm), 4–30, step 0.5, default 7; `brickWidth` — Brick width (mm), 2–12, step 0.5, default 2.5; `gap` — Gap (mm), 0–2, step 0.1, default 0.5 |
+| Houndstooth Tooth Grid (`houndstooth-tooth-grid`) | tilings | `cell` — Cell size (mm), 4–20, step 0.5, default 6; `notch` — Notch length, 0.25–0.6, step 0.05, default 0.4 |
+| Greek Cross Lattice (`greek-cross-lattice`) | tilings | `cell` — Cell size (mm), 4–20, step 0.5, default 6; `armLength` — Arm length, 0.3–0.48, step 0.01, default 0.42 |
+| Deco Chevron Gold (`deco-chevron-gold`) | tilings | `pitch` — Row pitch (mm), 2–20, step 0.5, default 7; `amplitude` — Chevron height (mm), 1–16, step 0.5, default 6; `thickness` — Band thickness, 0.3–0.9, step 0.05, default 0.6 |
+| Valknut Grid (`valknut-grid`) | tilings | `tile` — Tile size (mm), 7–20, step 0.5, default 10; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.8; `spread` — Triangle spread, 0.1–0.35, step 0.01, default 0.2 |
+| Isometric Cube Grid (`isometric-cube-grid`) | tilings | `cell` — Cell size (mm), 3–20, step 0.5, default 6; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.6 |
+| Ogee (`ogee`) | tilings | `tileWidth` — Tile width (mm), 6–20, step 0.5, default 8; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.6; `domeHeight` — Dome height, 0.8–2, step 0.05, default 1.25 |
+| Ammann Bar Grid (`ammann-bars`) | tilings | `spacing` — Bar spacing (mm), 2–12, step 0.5, default 3.5; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.4 |
+| Cairo Pentagonal (`cairo-pentagonal`) | tilings | `cell` — Cell size (mm), 7–30, step 0.5, default 10; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5 |
+| Masu Tsunagi (`masu-tsunagi`) | tilings | `cell` — Cell size (mm), 5–30, step 0.5, default 8; `nestCount` — Nested squares, 2–6, step 1, default 3; `lineWidth` — Line width (mm), 0.1–3, step 0.05, default 0.5 |
 
 :::note
 `resolveParam` は、ジェネレータが使う前にすべての値を宣言された `[min, max]` にクランプします。そのため、古い値や手編集された `params` の値（インポートした注文 JSON から来たものなど）が、描画ループを負や非有限に送り込むことはありません。[ジェネレータ契約 → パラメータのクランプ](./generator-contract.mdx)を参照してください。
 :::
 
-## パターンごとの補足
+## パターンごとの補足（オリジナル 12 個）
+
+以下の文章による補足は、手書きのオリジナル 12 個だけを対象にしています。移植した 50 個のパターンについて、その設計意図と pgen ソースから何を削ったか／どう翻訳したかは、各パターン自身のモジュール（`packages/patterns/src/patterns/<name>.ts`）の冒頭コメントと、`pgen-port-ledger.json` のその行にあります——上の[pgen 移植の由来](#pgen-移植の由来)を参照してください。
 
 ### Dot Grid
 

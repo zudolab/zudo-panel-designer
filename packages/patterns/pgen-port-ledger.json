@@ -1,0 +1,510 @@
+{
+  "original": [
+    {
+      "zpdName": "dot-grid",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "diag-stripes",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "grid-lines",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "concentric-circles",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "hex-lattice",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "checker",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "wave-lines",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "crosshatch",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "radial-burst",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "brick",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "diamond-lattice",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "scallops",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    }
+  ],
+  "japanese": [
+    {
+      "zpdName": "igeta",
+      "pgenId": "igeta",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-18",
+      "notes": "trial port: dropped bg fill + colorOffset fg cycling; cell + bar width now mm params; inset ratio 0.28 kept as source const"
+    },
+    {
+      "zpdName": "asanoha",
+      "pgenId": "asanoha",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + per-cluster colorOffset cycling; hex outline + 6 spokes + 6 kite diamonds as mm polylines; star radius + line width mm params; hexRadiusFactor 0.9 folded into radius"
+    },
+    {
+      "zpdName": "kagome",
+      "pgenId": "kagome",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + colorOffset cycling; single stroke; up/down triangle interlace as mm polylines; triangle side + line width params; triScale 1.0 hardcoded"
+    },
+    {
+      "zpdName": "seigaiha",
+      "pgenId": "seigaiha",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + per-ring colorOffset cycling; nested upper-semicircle arcs in mm; fan radius + line width params, arcRings kept as signature knob"
+    },
+    {
+      "zpdName": "shippo",
+      "pgenId": "shippo",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + colorOffset cycling; kept step=radius interlock; radius + line width params, inner accent circle kept as signature knob (0=off)"
+    },
+    {
+      "zpdName": "uroko-scales",
+      "pgenId": "uroko-scales",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "2-colour up/down triangle scheme collapsed to fill only up-triangles (down gaps = real negative space, no bg paint); dropped bg fill + colorCount/colorOffset; scale width + aspect params"
+    },
+    {
+      "zpdName": "yagasuri",
+      "pgenId": "yagasuri",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + colorOffset cycling; single fg fill per mirrored chevron barb polygon; column width + barb height mm params; slant 0.7 kept as source const"
+    },
+    {
+      "zpdName": "sayagata",
+      "pgenId": "sayagata",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + colorOffset cycling; manji key-fret continuous polylines 1:1 in mm; cell + line width params; armReach 0.7 kept as source const"
+    },
+    {
+      "zpdName": "raimon",
+      "pgenId": "raimon",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + colorOffset cycling; square-spiral fret with (ix+iy) parity mirror ported 1:1; cell + line width params, turns kept as signature knob"
+    },
+    {
+      "zpdName": "wachigai",
+      "pgenId": "wachigai",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "removed no-op rand() wobble + colorOffset cycling + bg fill; plain brick-offset ring arcs in mm; ring radius + overlap + line width params"
+    },
+    {
+      "zpdName": "yoshiwara-tsunagi",
+      "pgenId": "yoshiwara-tsunagi",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "near-direct port; dropped bg fill + per-cell colorOffset pick; notched-square corner brackets in mm; cell + line width params; notch 0.18 kept as source const"
+    }
+  ],
+  "ornament": [
+    {
+      "zpdName": "rub-el-hizb",
+      "pgenId": "rub-el-hizb",
+      "family": "Islamic & Arabesque",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg-fill occlusion (both rotated squares now stroked as plain crossings) + center dot; single color; cell + line width mm params"
+    },
+    {
+      "zpdName": "star-and-cross-field",
+      "pgenId": "star-and-cross-field",
+      "family": "Islamic & Arabesque",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "single color: stars and interstitial crosses both filled (they sit in the alleys between stars, reading distinctly); dropped alpha-darkened outline pass + random palette picks; cell/starRatio params"
+    },
+    {
+      "zpdName": "interlaced-bands",
+      "pgenId": "interlaced-bands",
+      "family": "Islamic & Arabesque",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "no bg paint: over-under via split under-strand segments leaving real gaps at crossings; single color; dropped colorCount select + alpha highlight"
+    },
+    {
+      "zpdName": "mughal-jali",
+      "pgenId": "mughal-jali",
+      "family": "Indian & Southeast Asian",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "redrawn as one even-odd path (region minus octagram + plus voids) instead of paint-over-bg; dropped redundant center-square void; cell + web-width mm params"
+    },
+    {
+      "zpdName": "ten-point-rosette",
+      "pgenId": "ten-point-rosette",
+      "family": "Islamic & Arabesque",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "single outlined 10-point star per cell; dropped concentric ring fills, decagon hub and alpha-darkened strokes; cell/pointDepth/line-width params"
+    },
+    {
+      "zpdName": "kolam-sikku",
+      "pgenId": "kolam-sikku",
+      "family": "Indian & Southeast Asian",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "constructive Hamiltonian loop kept (deterministic); loop + pulli dots share one color; dropped dual color-index params; cell/line-width/dot-radius mm params"
+    },
+    {
+      "zpdName": "aztec-step-fret",
+      "pgenId": "aztec-step-fret",
+      "family": "Classical & Heritage Ornament",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "collapsed banded bg + per-band/per-cell color cycling to one fill; ctx.scale flip folded into coord math; stepUnit/steps/armThickness params"
+    },
+    {
+      "zpdName": "meander",
+      "pgenId": "meander",
+      "family": "Classical & Heritage Ornament",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "re-authored only the classic Greek key as a repeating stroked polyline (columns mirror to interlock); dropped all style/fill-mode selects, frames, decoration; cell + line-width params"
+    },
+    {
+      "zpdName": "endless-knot",
+      "pgenId": "endless-knot",
+      "family": "Knots, Braids & Interlace",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "over-under weave as real gaps (under-strands retracted at crossings) since zpd draw() has no bg color to paint; single strand color; tile/strandWidth/gridN mm params"
+    },
+    {
+      "zpdName": "bishamon-koushi",
+      "pgenId": "bishamon-koushi",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "each cell an even-odd hex ring (outer hex minus inner hex \u2192 real void) instead of a second-color inner-hex punch; dropped tint jitter + color cycling; radius + innerScale params"
+    }
+  ],
+  "curves": [
+    {
+      "zpdName": "smith-truchet",
+      "pgenId": "smith-truchet",
+      "family": "Mazes, Truchet & Paths",
+      "status": "ported",
+      "date": "2026-07-18",
+      "notes": "trial port: per-tile rand() orientation -> hash01 on center-origin indices; granularity -> mm tile pitch; px line width -> mm param; dropped bg fill"
+    },
+    {
+      "zpdName": "hilbert-curve",
+      "pgenId": "hilbert-curve",
+      "family": "Fractals & L-Systems",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "d2xy Hilbert polyline tiled into mm square cells (reads on tall panels); order capped 5, single stroke; dropped bg fill + per-segment color cycling + granularity"
+    },
+    {
+      "zpdName": "dragon-curve",
+      "pgenId": "dragon-curve",
+      "family": "Fractals & L-Systems",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "Heighway dragon (bit-reversal turns) auto-fit per mm cell and tiled; iterations capped 11; single stroke; dropped bg fill + color banding + granularity"
+    },
+    {
+      "zpdName": "vicsek-fractal",
+      "pgenId": "vicsek-fractal",
+      "family": "Fractals & L-Systems",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "plus-of-pluses fills tiled per mm cell (edge-mid cells connect neighbours); depth bounded 2-4; one fill color; dropped bg fill + per-depth palette shuffle + saltire toggle"
+    },
+    {
+      "zpdName": "astroid-grid",
+      "pgenId": "astroid-grid",
+      "family": "Curves & Spirographs",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "sliding-ladder chord envelope of astroid stars, direct port; mm cell + line width + chord count; single stroke; dropped bg fill + per-cell fg cycling + granularity"
+    },
+    {
+      "zpdName": "maurer-rose",
+      "pgenId": "maurer-rose",
+      "family": "Curves & Spirographs",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "360 straight chords over rose r=sin(n*theta) as a medallion grid; n and d fixed as params; thin full-opacity strokes; dropped webAlpha + rose outline + layer/degree randomization + granularity"
+    },
+    {
+      "zpdName": "guilloche",
+      "pgenId": "guilloche",
+      "family": "Curves & Spirographs",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "hypotrochoid medallion per mm cell; r=R/(lobes+1) makes ratio integer so the curve closes in one revolution; R/lobes/pen distance fixed as params, steps capped 720; dropped withAlpha + multi-curve overlay + crop-beyond-bounds + granularity"
+    },
+    {
+      "zpdName": "truchet-quarter-arc",
+      "pgenId": "truchet-quarter-arc",
+      "family": "Mazes, Truchet & Paths",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "quarter-disc lens fills, orientation via hash01 on center-origin indices; dropped bg field fill AND outline/darken pass (no bg paint) so gaps are real negative space; lens in one fg color"
+    },
+    {
+      "zpdName": "labyrinth-classical",
+      "pgenId": "labyrinth-classical",
+      "family": "Mazes, Truchet & Paths",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "concentric gap-alternating arc walls + seed cross tiled per mm unit; one stroke color; dropped per-tile random color pick + colorOffset + granularity (no orientation state to hash)"
+    },
+    {
+      "zpdName": "steiner-chain",
+      "pgenId": "steiner-chain",
+      "family": "Cells, Voronoi & Packing",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "closed-form outer+inner bounding circles + n chain circles per mm cell; rand() rotation offset fixed to 0; chain circles stroked in one fg color instead of multi-color fills; inner ratio hardcoded 0.4"
+    }
+  ],
+  "ringsCircuits": [
+    {
+      "zpdName": "vesica-lens-circle-mesh",
+      "pgenId": "vesica-lens-circle-mesh",
+      "family": "Circles & Rings",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + per-circle random color offset; radius=pitch flower-of-life relation kept; pitch + line width now mm params"
+    },
+    {
+      "zpdName": "rings-interlock",
+      "pgenId": "rings-interlock",
+      "family": "Circles & Rings",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + fg-pool color cycling; step=1.42\u00d7radius interlock constant kept; radius + band width now mm params; odd-row half-step offset via center-origin row index"
+    },
+    {
+      "zpdName": "circle-quarters",
+      "pgenId": "circle-quarters",
+      "family": "Circles & Rings",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + checkerboard color cycling; deterministic (col+row)%4 orientation cycle kept (center-origin indices); one flat fill; radiusRatio knob added over source radius=cell"
+    },
+    {
+      "zpdName": "quatrefoil",
+      "pgenId": "quatrefoil",
+      "family": "Crosses, Stars & Icons",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + fg-pool color cycling; four lobes filled as one non-zero-winding path (union); lobe offset 0.95\u00d7lobe kept as source const; cell + lobe radius now mm params"
+    },
+    {
+      "zpdName": "hex-circuit",
+      "pgenId": "hex-circuit",
+      "family": "Circuits & Networks",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + color cycling + lighten() on nodes; seeded per-edge rand -> hash01(ix,iy,edge) on center-origin indices; hex radius + trace width + coverage now params, node ratio 0.16 kept"
+    },
+    {
+      "zpdName": "via-grid-array",
+      "pgenId": "via-grid-array",
+      "family": "Circuits & Networks",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + darken(bg) hole paint + color cycling; annulus is real even-odd fill (outer disc minus inner disc) so holes show layers below; cell + ring radius + hole ratio now params"
+    },
+    {
+      "zpdName": "circuit-board-tiles",
+      "pgenId": "circuit-board-tiles",
+      "family": "Circuits & Networks",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + fg-pool color cycling; per-cell rand edge mask (<0.6) + pad roll -> hash01(ix,iy,channel) on center-origin indices; cell + trace width + pad chance now params"
+    },
+    {
+      "zpdName": "snowflakes-geometric",
+      "pgenId": "snowflakes-geometric",
+      "family": "Crosses, Stars & Icons",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + color cycling + seed-randomized defaults; fixed 6-fold frond geometry kept as source consts; cell + line width + flake size now params; brick-offset rows via center-origin row index"
+    },
+    {
+      "zpdName": "eight-point-compass-star-grid",
+      "pgenId": "eight-point-compass-star-grid",
+      "family": "Crosses, Stars & Icons",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill + color cycling; 8-point star as filled 16-vertex polygon; long/short ray ratio kept as param; outer radius 0.46\u00d7cell kept as source const; cell now mm param"
+    }
+  ],
+  "tilings": [
+    {
+      "zpdName": "herringbone",
+      "pgenId": "herringbone",
+      "family": "Bricks, Tiles & Mosaic",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill, per-brick color variation and highlight/shadow edge strokes; single flat fill with the inter-brick gap left as real negative space (no painted bg); brick length/width and gap are mm params"
+    },
+    {
+      "zpdName": "houndstooth-tooth-grid",
+      "pgenId": "houndstooth-tooth-grid",
+      "family": "Checks & Plaids",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill and seeded fg pick; direct port of block + two tooth tabs on checker parity (keyed on center-origin indices); cell mm param + notch fraction knob"
+    },
+    {
+      "zpdName": "greek-cross-lattice",
+      "pgenId": "greek-cross-lattice",
+      "family": "Crosses, Stars & Icons",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill and the one rand() color pick; two fillRect bars per cross; cell mm param + armLength fraction, arm thickness kept as source 0.5x ratio"
+    },
+    {
+      "zpdName": "deco-chevron-gold",
+      "pgenId": "deco-chevron-gold",
+      "family": "Art Movements & Retro",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill, cycling fg palette and accent stroke line; 2-color alternation collapsed to filled chevron band vs unpainted gap (constant gap since all ribbons share one V profile); pitch/amplitude mm + thickness knob"
+    },
+    {
+      "zpdName": "valknut-grid",
+      "pgenId": "valknut-grid",
+      "family": "Celtic & Nordic",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "NO bg-halo pass (forbidden painted bg); strands cross plainly per porting note; three stroked triangle outlines per tile in one color; dropped bg fill, halo pass, per-cell rand color and darken accent"
+    },
+    {
+      "zpdName": "isometric-cube-grid",
+      "pgenId": "isometric-cube-grid",
+      "family": "Grids & Lattices",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill and three separate family colors (collapsed to one stroke); +30/-30/vertical line families centered on panel center; cell + line width mm params"
+    },
+    {
+      "zpdName": "ogee",
+      "pgenId": "ogee",
+      "family": "Waves & Scallops",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill, alternating fg colors and colorOffset; two-color tilework collapsed to a single stroked ogival outline lattice (no painted bg); tile width + line width mm + dome-height knob, shoulder kept as source const 0.55"
+    },
+    {
+      "zpdName": "ammann-bars",
+      "pgenId": "ammann-bars",
+      "family": "Tessellations & Tilings",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "near-direct single-color line port; four families at 0/45/90/135 with Fibonacci long/short (1/phi) gap walk; rand was consumed only for PRNG stability so dropped -> fully deterministic; spacing + line width mm, panel clip owns line extents"
+    },
+    {
+      "zpdName": "cairo-pentagonal",
+      "pgenId": "cairo-pentagonal",
+      "family": "Tessellations & Tilings",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "stroke the four pentagon outlines instead of 4-color fills (no painted bg); dropped bg fill, four fg colors and colorOffset; per-cell rand was PRNG-stability-only so removed; cell + line width mm, apex offset kept as source 0.28x ratio"
+    },
+    {
+      "zpdName": "masu-tsunagi",
+      "pgenId": "masu-tsunagi",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg fill and per-ring color cycling / colorOffset; nested strokeRect squares on a centered grid in one color; cell + line width mm + integer nest-count knob"
+    }
+  ]
+}

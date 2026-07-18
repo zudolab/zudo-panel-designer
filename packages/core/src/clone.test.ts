@@ -59,6 +59,9 @@ const patternLayer: PatternLayer = {
   patternType: 'dot-grid',
   params: { pitch: 2.54 },
   color: 2,
+  x: 4,
+  y: 6,
+  size: 40,
 };
 
 function idMaker(prefix = 'clone') {
@@ -104,9 +107,17 @@ describe('cloneLayersWithFreshIds', () => {
     expect(pathLayer.points[0]).toEqual({ x: 0, y: 0, hout: { x: 1, y: 0 } });
   });
 
-  it('leaves a pattern layer position fields untouched (excluded-by-caller contract; only the id is refreshed)', () => {
+  // #97 (movable pattern square): patterns join the copy/duplicate flows, so
+  // the cascade offset now applies to their square like any other layer.
+  it('offsets a pattern layer square by the cascade (size untouched), id refreshed', () => {
     const [clone] = cloneLayersWithFreshIds([patternLayer], { makeId: idMaker(), offsetMm: 2 }) as [PatternLayer];
-    expect(clone).toEqual({ ...patternLayer, id: clone.id });
+    expect(clone).toEqual({
+      ...patternLayer,
+      id: clone.id,
+      x: patternLayer.x + 2,
+      y: patternLayer.y + 2,
+    });
+    expect(clone.size).toBe(patternLayer.size);
     expect(clone.id).not.toBe(patternLayer.id);
   });
 

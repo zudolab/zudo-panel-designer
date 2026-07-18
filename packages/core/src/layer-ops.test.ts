@@ -181,6 +181,9 @@ describe('cloneLayer', () => {
       patternType: 'dot-grid',
       params: { pitch: 2.54 },
       color: 1,
+      x: 0,
+      y: 0,
+      size: 128.5,
     };
     const clone = cloneLayer(source, 'c1') as PatternLayer;
     expect(clone).toEqual({ ...source, id: 'c1' });

@@ -4,10 +4,9 @@
 // top. offsetMm is mm (this is doc space; the reference app's paste offset is
 // +20px in its px doc-space — see pgen's use-composer-clipboard.ts).
 //
-// Pattern layers are position-pinned backgrounds (there is exactly one per
-// doc, tiling the panel) and must be EXCLUDED BY THE CALLER before calling
-// this — passing one through is a no-op here (id is still refreshed, but a
-// pattern layer has no x/y to offset).
+// Pattern layers clone like any other positioned object since #97: the
+// cascade offset shifts the square's x/y (size untouched) so a pasted or
+// duplicated pattern never lands exactly on top of its source.
 import { cloneLayer } from './layer-ops';
 import { translatePathLayer } from './path-geometry';
 import type { Layer } from './types';
@@ -27,11 +26,10 @@ export function cloneLayersWithFreshIds(
       case 'shape':
       case 'text':
       case 'image':
+      case 'pattern':
         return { ...clone, x: clone.x + offsetMm, y: clone.y + offsetMm };
       case 'path':
         return { ...clone, ...translatePathLayer(clone, offsetMm, offsetMm) };
-      case 'pattern':
-        return clone;
     }
   });
 }

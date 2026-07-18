@@ -18,8 +18,8 @@ interface PatternParamDef {
 }
 
 interface DrawOptions {
-  widthMm: number;   // blank panel dimensions in millimetres
-  heightMm: number;
+  widthMm: number;   // draw-region dimensions in millimetres — a pattern
+  heightMm: number;  // layer's own square (see below), or a 30mm thumbnail window
   color: string;     // a single palette hex the caller chose for this pattern
   params: Record<string, number>; // keyed by PatternParamDef.key
 }
@@ -34,9 +34,9 @@ interface PanelPatternGenerator {
 
 ## スケール済み・クリップ済みの mm 空間で描く
 
-`draw(ctx, opts)` は、**呼び出し側** がすでにキャンバスの 1 単位 = 1mm となるようスケールし、さらにパネル矩形 `(0,0)`〜`(widthMm, heightMm)` にクリップした `CanvasRenderingContext2D` とともに呼ばれます。ジェネレータはパネルの mm 座標で直接描画します — `ctx.arc(x, y, radius, ...)` の `x` / `y` / `radius` はすべて mm で、`draw()` の内側での単位変換は一切ありません。
+`draw(ctx, opts)` は、**呼び出し側** がすでにキャンバスの 1 単位 = 1mm となるようスケールし、描画領域自身の原点へ平行移動し、さらにその領域の矩形 `(0,0)`〜`(widthMm, heightMm)` にクリップした `CanvasRenderingContext2D` とともに呼ばれます。ジェネレータはオブジェクトローカルな mm 座標で直接描画します — `ctx.arc(x, y, radius, ...)` の `x` / `y` / `radius` はすべて mm で、`draw()` の内側での単位変換は一切ありません。
 
-ここには、より大きなキャンバス / スライス / ビューポートといった間接化は意図的に **ありません**。パターンは、与えられたパネルの内側だけを、そのパネル自身の `widthMm` / `heightMm` を使って計算します。これは、[レンダラーの mm 空間レイヤーパス](../editor/rendering-and-camera.mdx)がすべてのレイヤーに対して用意するのと同じ変換であり、[サムネイルレンダラー](./built-in-patterns.mdx)がピッカーのプレビュー用に用意する同じ 30mm のスケール済みウィンドウでもあります。パターンの `draw()` は、2 つのコンテキストのどちらが呼び出しているかを知る必要も気にする必要もありません。
+ここには、より大きなキャンバス / スライス / ビューポートといった間接化は意図的に **ありません**。パターンは、与えられたスパンの内側だけを、そのスパン自身の `widthMm` / `heightMm` を使って計算します。パターンレイヤーの描画領域は、必ずしもパネル全体ではない、それ自身の **正方形** です——`widthMm == heightMm == layer.size`。パターンの `x`／`y`／`size` は、ユーザーがキャンバス上でドラッグやリサイズできる独立したジオメトリであり（[エディタ → ツール → パターンの正方形](../editor/tools.mdx#組み込みツール-選択ツール（v）-パターンの正方形)を参照）、`draw()` はその正方形自身の一辺を `widthMm` / `heightMm` にセットして呼ばれます——パネルを覆うデフォルトは、あくまで正方形の *初期* 配置にすぎず、`draw()` が前提にしてよいプロパティではありません。これは、[レンダラーの mm 空間レイヤーパス](../editor/rendering-and-camera.mdx)が用意するのと同じ、領域ごとの変換です（正方形自身の原点へ平行移動してからそこへクリップする——メインのパネルクリップの内側にある、独立した合成クリップです）。そして、[サムネイルレンダラー](./built-in-patterns.mdx)がピッカーのプレビュー用に用意する同じ 30mm のスケール済みウィンドウでもあります。パターンの `draw()` は、2 つのコンテキストのどちらが呼び出しているかも、正方形が現在どれだけの大きさかも、知る必要も気にする必要もありません。
 
 ## 決定論的 — どこにもランダム性はない
 
@@ -44,9 +44,17 @@ interface PanelPatternGenerator {
 
 これはスタイルの好みではなく、厳格な制約です。エクスポートされる注文 JSON は、ラスタライズされた画像ではなく、パターンレイヤーの `patternType` と `params` を保存します。もしジェネレータが `Math.random()` を呼んでいたら、同じ JSON を後で再生したとき — あるいは同じドキュメントを別のマシンで再レンダリングしたとき — 見た目の異なるパネルが生まれてしまいます。すべての組み込みは、見かけ上の有機的なばらつき（波の位相、光線の角度、格子のタイリング）を、ランダムシードではなく、パネル自身の寸法と宣言されたパラメータをもとにした純粋な三角関数で実現しています。
 
+## 共有ヘルパー: `param-utils.ts`
+
+すべての組み込みは、クランプとレイアウトの計算をパターンごとに再実装するのではなく、`packages/patterns/src/param-utils.ts` からインポートします。
+
+- `resolveParam(params, defs, key)` — 後述するクランプです。
+- `centeredStart(span, pitch)` — [中央揃えでオーバースキャンする格子](#中央揃えでオーバースキャンする格子)を参照してください。
+- `hash01(ix, iy, channel, salt)` — pgen から移植したパターンにあるセルごとの `rand()` 呼び出し（タイルの向き、セルのスキップ、ジッター——局所的で独立した選択のみで、決してシーケンス依存のシミュレーションではありません）の決定論的な代替です。描画スパン自身の中心から測ったセルのインデックスをキーにするため、パターンの正方形をリサイズしても、すべてのセルを再シャッフルすることなくタイリングが再センタリングされます。`channel` は 1 つのセル内の独立した選択を分け、`salt` はバリアントを分けます。純粋な `Math.imul` 整数ミックスに murmur3 風のファイナライザを組み合わせたもので——浮動小数点をミックスに含まず、`[0, 1)` にほぼ一様な出力を返し、（前述の[決定論的](#決定論的-—-どこにもランダム性はない)のとおり）決して `Math.random()` は使いません。
+
 ## 中央揃えでオーバースキャンする格子
 
-ほとんどの組み込みは、繰り返し単位（ドット、六角セル、レンガ）をパネル全体にタイリングします。`patterns.ts` の共有ヘルパー `centeredStart(span, pitch)` は、タイリングがパネルに対して **中央揃え** になる（1 つの目盛りが必ずちょうど `span / 2` に来る）ように反復を開始する最小の格子座標を計算し、さらに両方向で端の外まで **オーバースキャン** します（ループ境界 `span + pitch` と組み合わせて）。中央揃えとオーバースキャンによって、どんなパネル幅でも、あらゆるパターンが意図してデザインされたように見え、半端な HP サイズでも見切れたり中心からずれたりしないのです。
+ほとんどの組み込みは、繰り返し単位（ドット、六角セル、レンガ）を自身の描画スパン全体にタイリングします。`param-utils.ts` の共有ヘルパー `centeredStart(span, pitch)` は、タイリングがそのスパンに対して **中央揃え** になる（1 つの目盛りが必ずちょうど `span / 2` に来る）ように反復を開始する最小の格子座標を計算し、さらに両方向で端の外まで **オーバースキャン** します（ループ境界 `span + pitch` と組み合わせて）。中央揃えとオーバースキャンによって、どんなスパンでも、あらゆるパターンが意図してデザインされたように見え、見切れたり中心からずれたりしないのです——そのスパンが、パネルを覆うデフォルトの正方形であっても、ユーザーがリサイズしたものであっても、固定 30mm のサムネイルウィンドウであっても同じです。
 
 ## パラメータのクランプ
 
@@ -65,14 +73,30 @@ function resolveParam(params, defs, key) {
 
 `resolveParam` は、入ってくる値が欠けているか非有限のときは def の `defaultValue` にフォールバックし、その後つねに `[min, max]` にクランプします。このクランプは見た目のためではありません。正のピッチ/カウントを保証するもので、呼び出し側が古い値・ゼロ・負の値を渡しても、すべての描画ループが有限のままであることを保ちます（ゼロや負のピッチは、さもなければ `for` ループを永遠に回してしまいます）。
 
+## ファイル構成
+
+初期の単一ファイル `patterns.ts` とは異なり、このパッケージは今や 60 個超のジェネレータを、パターン 1 個につき 1 モジュールという単位でシャードに分けて配置しています。
+
+| 構成要素 | パス |
+|---|---|
+| パターン 1 個につき 1 モジュール | `packages/patterns/src/patterns/<name>.ts`（1 つの `PanelPatternGenerator` の const をエクスポート） |
+| グループシャードファイル | `packages/patterns/src/patterns/group-*.ts`（例: `group-japanese.ts`、`group-curves.ts` — それぞれ、メンバーのパターンモジュールからのインポートを集めた `PanelPatternGenerator[]` をエクスポート） |
+| レジストリ | `packages/patterns/src/patterns/index.ts` — 手作業で列挙。詳細は後述 |
+| 共有ヘルパー | `packages/patterns/src/param-utils.ts` — 前述の[共有ヘルパー](#共有ヘルパー-param-utils-ts)を参照 |
+
 ## レジストリ
 
-`patterns.ts` の `PATTERN_GENERATORS` は、生成されるものではなく **手作業で列挙した配列** です。[エディタのツール/インスペクタ](../editor/extension-architecture.mdx)にあるようなプラグイン/自動検出の仕組みはここにはありません。新しい組み込みパターンを追加するには、この配列に直接加えます。
+`patterns/index.ts` の `PATTERN_GENERATORS` は、生成されるものではなく **手作業で列挙した配列** です。[エディタのツール/インスペクタ](../editor/extension-architecture.mdx)にあるようなプラグイン/自動検出の仕組みはここにはありません。最初にオリジナルの 12 個の手書きジェネレータを直接列挙し、続いて各グループシャードがエクスポートする配列を、決まった順序で展開（スプレッド）します。
 
 ```ts
 export const PATTERN_GENERATORS: PanelPatternGenerator[] = [
   dotGrid, diagStripes, gridLines, concentricCircles, hexLattice, checker,
   waveLines, crosshatch, radialBurst, brick, diamondLattice, scallops,
+  ...groupJapanese,
+  ...groupOrnament,
+  ...groupCurves,
+  ...groupRingsCircuits,
+  ...groupTilings,
 ];
 ```
 
@@ -86,3 +110,7 @@ export const PATTERN_GENERATORS: PanelPatternGenerator[] = [
 - `defaultParams(name)` — 指定した名前のジェネレータが宣言するすべてのパラメータについて `{ [key]: defaultValue }` を返します（名前が解決しなければ空オブジェクト）。追加したばかりのパターンレイヤーや、すべてのサムネイル描画は、これをもとに `params` を初期化します。
 
 すべての登録済みパターンの完全なパラメータ表については、[組み込みカタログ](./built-in-patterns.mdx)を参照してください。
+
+## 新しい組み込みパターンを追加する
+
+新しい組み込みのほとんどは、ゼロから書き起こすのではなく、[pgen](https://github.com/zudolab/zudo-pattern-gen) から静的なジェネレータを移植する形でやってきます。`.claude/skills/port-pgen-patterns/SKILL.md` が、その繰り返し可能なワークフローです。候補の選別を失格条件のチェックリストに照らして行い（グラデーション、複数色が本質的な見た目、シーケンス依存のランダム性は、このページの契約上いずれも対象外です）、mm 空間 / `resolveParam` / `centeredStart` / `hash01` という移植の慣習、新しいパターンがどのグループシャードに加わるか（あるいは新しいシャードを作るべきタイミング）、そして `packages/patterns/pgen-port-ledger.json` への行の追加までを扱います。この台帳は、試みたすべての移植（`ported`、`original`、`rejected`）の追記専用の記録で、`scripts/check-ledger.mjs` がレジストリと突き合わせて検証します。台帳がどう見えるか、そしてドキュメントの表とどう同期させているかについては、[組み込みカタログ → pgen 移植の由来](./built-in-patterns.mdx#pgen-移植の由来)を参照してください。

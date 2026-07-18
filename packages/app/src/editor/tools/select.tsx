@@ -6,7 +6,7 @@
 // touching the registry.
 import {
   duplicateLayersAbove,
-  hitTestLayer,
+  hitTestDoc,
   mergeBboxes,
   mintId,
   movePathAnchor,
@@ -38,7 +38,7 @@ import {
   rotateHandleScreenPos,
 } from '../renderer';
 import { registerTool } from '../registry/tools';
-import type { DraftRenderContext, PanelDims, ToolContext, ToolPointerEvent } from '../types';
+import type { DraftRenderContext, ToolContext, ToolPointerEvent } from '../types';
 
 const SNAP_MM = 0.1;
 const MIN_RESIZE_MM = 0.5;
@@ -67,12 +67,12 @@ function snapOptions(ctx: ToolContext): SnapOptions {
 
 // Union (rotated-AABB) bbox of a move gesture's targets, at their pointerdown
 // geometry — the candidate set snapAxis checks against guides. null when no
-// target has measurable bounds (never happens in practice; targets exclude
-// patterns, and every other layer type has a bbox).
-function targetsBbox(targets: readonly MoveTarget[], panel: PanelDims): Rect | null {
+// target has measurable bounds (never happens in practice; every layer type,
+// patterns included since #97, has a bbox).
+function targetsBbox(targets: readonly MoveTarget[]): Rect | null {
   const rects: Rect[] = [];
   for (const { orig } of targets) {
-    const bbox = layerBbox(orig, panel);
+    const bbox = layerBbox(orig);
     if (bbox) rects.push(rotatedRectAABB(bbox, layerRotation(orig)));
   }
   return rects.length ? mergeBboxes(rects) : null;
@@ -160,8 +160,8 @@ type Drag =
   | {
       kind: 'move';
       startMm: Pt;
-      // The whole (pattern-free) selection moves as one gesture (#49); a
-      // single-layer drag is just a one-element list.
+      // The whole selection — pattern members included since #97 — moves as
+      // one gesture (#49); a single-layer drag is just a one-element list.
       targets: MoveTarget[];
       // Latched on the FIRST pointermove past DRAG_THRESHOLD_PX — the one
       // moment Alt is sampled for duplicate (#49). Pressing Alt later must
@@ -191,8 +191,9 @@ type Drag =
       // anchors resolve against this one frame, like `orig` in resize.
       bbox: Rect;
       startMm: Pt;
-      // Pattern-free, exactly like multi-move: patterns stay selected but are
-      // unaffected (the epic's eligibility matrix).
+      // Pattern-free (#97 keeps patterns OUT of multi-scale: core's scaleLayer
+      // deliberately passes them through — see scale.ts): they stay selected,
+      // just unaffected. Unlike multi-move, which includes them.
       targets: MoveTarget[];
     }
   | {
@@ -214,6 +215,10 @@ interface MarqueeState {
   active: boolean;
   additive: boolean; // shift/meta/ctrl held: union with the down-time selection
   baseIds: readonly string[];
+  // A press on an UNSELECTED pattern square arms the marquee like empty space
+  // (#97's drag rule), but when the gesture never materializes a marquee the
+  // release (toggle-)selects this pattern instead — the two-tier click rule.
+  clickSelectId: string | null;
 }
 
 let drag: Drag | null = null;
@@ -247,18 +252,15 @@ export function marqueeRect(startMm: Pt, currentMm: Pt): Rect {
 // semantics, not containment — a layer whose AABB merely overlaps the marquee
 // is selected. Bounds come from renderer.ts's layerBbox (the canonical bounds
 // source, #45) so chrome and marquee agree to the pixel for text. Hidden
-// layers are skipped, and pattern layers are skipped per hit-test.ts's
-// invariant (patterns are panel-wide and only selectable via the layer list —
-// a panel-wide dot grid would otherwise join essentially every marquee).
-export function marqueeHitIds(
-  layers: readonly Layer[],
-  rectMm: Rect,
-  panel: PanelDims,
-): string[] {
+// layers are skipped, and pattern layers stay skipped ON PURPOSE (#97's
+// eligibility sweep): they're background-ish, and a cover-default square
+// would otherwise join essentially every marquee. Patterns are selected by
+// direct click (the two-tier rule in hit-test.ts) or the layer list.
+export function marqueeHitIds(layers: readonly Layer[], rectMm: Rect): string[] {
   const ids: string[] = [];
   for (const layer of layers) {
     if (layer.hidden || layer.type === 'pattern') continue;
-    const bbox = layerBbox(layer, panel);
+    const bbox = layerBbox(layer);
     if (!bbox) continue;
     if (rectsIntersect(rectMm, rotatedRectAABB(bbox, layerRotation(layer)))) ids.push(layer.id);
   }
@@ -295,13 +297,12 @@ function normalizeDeg(v: number): number {
   return Number((((v % 360) + 540) % 360 - 180).toFixed(1));
 }
 
+// Two-tier hit (#97, core hit-test.ts): non-pattern layers topmost-first,
+// pattern squares only when nothing else hits. hitTestDoc returns the same
+// object it was handed from doc.layers, so the LayerLike -> Layer cast is a
+// safe narrowing, not a conversion.
 function topmostHit(doc: DocState, mm: Pt): Layer | null {
-  for (let i = doc.layers.length - 1; i >= 0; i -= 1) {
-    const layer = doc.layers[i];
-    if (layer.hidden) continue;
-    if (hitTestLayer(layer, mm.x, mm.y)) return layer;
-  }
-  return null;
+  return hitTestDoc(doc, mm.x, mm.y) as Layer | null;
 }
 
 function tryGrabNode(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): boolean {
@@ -328,7 +329,7 @@ function tryGrabNode(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): bo
 
 function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): boolean {
   if (selected.type !== 'shape' && selected.type !== 'image') return false;
-  const bbox = layerBbox(selected, ctx.panel);
+  const bbox = layerBbox(selected);
   if (!bbox) return false;
   // Rotated shapes resize too (#51): handles sit at the ROTATED corners and
   // the drag resolves in the layer's local frame via resizeRotatedRect (#48).
@@ -354,7 +355,7 @@ function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolCont
 
 function tryGrabRotateHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): boolean {
   if (!canRotate(selected)) return false; // shape/text only — never invent rotation
-  const bbox = layerBbox(selected, ctx.panel);
+  const bbox = layerBbox(selected);
   if (!bbox) return false;
   const rotation = layerRotation(selected);
   const knob = rotateHandleScreenPos(bbox, rotation, ctx.camera);
@@ -422,7 +423,7 @@ function groupFactorFloor(targets: readonly MoveTarget[], bbox: Rect): number {
 // so exactly the handles the chrome draws are grabbable here.
 function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
   const ids = ctx.selectedIds;
-  const bbox = multiResizeBbox(ctx.doc.layers, ids, ctx.panel);
+  const bbox = multiResizeBbox(ctx.doc.layers, ids);
   if (!bbox) return false;
   for (const h of cornerHandleRects(bbox, ctx.camera)) {
     if (e.screen.x >= h.x && e.screen.x <= h.x + h.size && e.screen.y >= h.y && e.screen.y <= h.y + h.size) {
@@ -457,8 +458,10 @@ registerTool({
     'handles to reshape a path, and drag the round handle above a shape or text layer to rotate it ' +
     'about its center (Shift snaps to 45° steps). With several layers selected, drag a corner of ' +
     'the combined box to scale them all uniformly about the opposite corner — hold Alt to scale ' +
-    'about the center instead (patterns are unaffected). Arrow keys nudge the selection (Shift = ×10); ' +
-    'Delete/Backspace removes it. Shortcut: V.',
+    'about the center instead (patterns are unaffected). A pattern square selects on click only ' +
+    'where no other layer is hit; dragging an unselected pattern draws a marquee instead, and a ' +
+    'selected pattern drags like any layer (size it from the Properties panel). Arrow keys nudge ' +
+    'the selection (Shift = ×10); Delete/Backspace removes it. Shortcut: V.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
     hoveredId = null; // pointer engaged — hover chrome resumes after release
     // Right (or middle) click PRESERVES the selection: a future context menu
@@ -481,7 +484,15 @@ registerTool({
 
     const hit = topmostHit(ctx.doc, e.mm);
     const toggleModifier = e.shiftKey || e.metaKey || e.ctrlKey;
-    if (hit) {
+    // #97's drag rule: a press on a pattern square that is NOT already
+    // selected behaves like empty space for DRAG purposes — the panel stays
+    // marquee-able even with a cover-sized square under everything — while a
+    // CLICK (never crossing the drag threshold) still (toggle-)selects the
+    // pattern on release via the marquee's clickSelectId. A SELECTED pattern
+    // takes the normal layer path below, so its next drag MOVES it.
+    const unselectedPatternHit =
+      hit && hit.type === 'pattern' && !ctx.selectedIds.includes(hit.id) ? hit : null;
+    if (hit && !unselectedPatternHit) {
       if (toggleModifier) {
         // Modifier vocabulary (#47): Shift = add to / toggle within the
         // selection; Meta/Ctrl = toggle exactly one layer. Both toggle the
@@ -495,14 +506,14 @@ registerTool({
       }
       const ids = ctx.selectedIds;
       if (ids.length > 1 && ids.includes(hit.id)) {
-        // Multi-move (#49): grabbing any member drags the whole selection.
-        // Patterns are excluded from the targets (panel-wide, no x/y — the
-        // epic's eligibility matrix); they stay selected, just don't move.
+        // Multi-move (#49): grabbing any member drags the whole selection —
+        // pattern members included since #97 (they carry an x/y/size square
+        // that translates like any other layer's origin).
         drag = {
           kind: 'move',
           startMm: e.mm,
           targets: ctx.doc.layers
-            .filter((l) => ids.includes(l.id) && l.type !== 'pattern')
+            .filter((l) => ids.includes(l.id))
             .map((l) => ({ id: l.id, orig: l })),
           crossed: false,
           collapseTo: hit.id,
@@ -520,9 +531,10 @@ registerTool({
       return;
     }
 
-    // Empty space: selection applies at pointerdown — a plain click clears it,
-    // a modifier click preserves it (additive intent). Either way the marquee
-    // is ARMED here and only materializes past the drag threshold.
+    // Empty space (or an unselected pattern, per #97's drag rule above):
+    // selection applies at pointerdown — a plain click clears it, a modifier
+    // click preserves it (additive intent). Either way the marquee is ARMED
+    // here and only materializes past the drag threshold.
     if (!toggleModifier) ctx.select(null);
     marquee = {
       startScreen: e.screen,
@@ -531,6 +543,7 @@ registerTool({
       active: false,
       additive: toggleModifier,
       baseIds: toggleModifier ? ctx.selectedIds : [],
+      clickSelectId: unselectedPatternHit?.id ?? null,
     };
   },
   onPointerMove(e: ToolPointerEvent, ctx: ToolContext) {
@@ -538,11 +551,7 @@ registerTool({
       if (!marquee.active && !pastThreshold(e.screen, marquee.startScreen)) return;
       marquee.active = true;
       marquee.currentMm = e.mm;
-      const hits = marqueeHitIds(
-        ctx.doc.layers,
-        marqueeRect(marquee.startMm, marquee.currentMm),
-        ctx.panel,
-      );
+      const hits = marqueeHitIds(ctx.doc.layers, marqueeRect(marquee.startMm, marquee.currentMm));
       const base = marquee.baseIds;
       ctx.selectIds(marquee.additive ? [...base, ...hits.filter((id) => !base.includes(id))] : hits);
       ctx.requestRepaint(); // the rubber-band moved even if the selection didn't
@@ -599,8 +608,9 @@ registerTool({
               id: dup.idMap.get(t.id) ?? t.id,
               orig: t.orig,
             }));
-            // Selection follows the clones; non-cloned members (patterns)
-            // keep their own id.
+            // Selection follows the clones — every member (patterns included
+            // since #97) is cloned; the ?? fallback is pure defense for an id
+            // missing from the map.
             ctx.selectIds(ctx.selectedIds.map((id) => dup.idMap.get(id) ?? id));
             drag.collapseTo = null;
           }
@@ -633,7 +643,7 @@ registerTool({
         // the moving selection's combined bbox — edges + centre — actually
         // lands within catch range of a same-axis guide; a shift-locked axis
         // is skipped so a guide can never sneak in movement Shift disallowed.
-        const bbox = targetsBbox(drag.targets, ctx.panel);
+        const bbox = targetsBbox(drag.targets);
         if (bbox) {
           const opts = snapOptions(ctx);
           if (!xLocked) {
@@ -653,7 +663,9 @@ registerTool({
         for (const { id, orig } of drag.targets) {
           if (orig.type === 'path') {
             patches.set(id, translatePathLayer(orig, sdx, sdy));
-          } else if (orig.type !== 'pattern') {
+          } else {
+            // shape/text/image/pattern all translate via their x/y origin
+            // (patterns joined in #97 — their square moves like an image's).
             patches.set(id, { x: addMm(orig.x, sdx), y: addMm(orig.y, sdy) });
           }
         }
@@ -779,6 +791,18 @@ registerTool({
   },
   onPointerUp(_e: ToolPointerEvent, ctx: ToolContext) {
     if (marquee?.active) ctx.requestRepaint(); // erase the rubber-band
+    // Pattern click rule (#97): a press on an unselected pattern that never
+    // materialized a marquee is a CLICK — (toggle-)select the pattern now,
+    // mirroring the modifier vocabulary of the direct-hit path above.
+    if (marquee && !marquee.active && marquee.clickSelectId !== null) {
+      const id = marquee.clickSelectId;
+      if (marquee.additive) {
+        const ids = ctx.selectedIds;
+        ctx.selectIds(ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]);
+      } else {
+        ctx.select(id);
+      }
+    }
     // A grab on a multi-selection member that never crossed the threshold is
     // a plain CLICK — collapse the selection to that layer (standard tool
     // behavior; without this a multi-selection could never be narrowed by
@@ -813,7 +837,7 @@ registerTool({
     // chrome (hoveredId is cleared on pointerdown, so nothing draws mid-drag)
     if (hoveredId && !ctx.selectedIds.includes(hoveredId)) {
       const layer = ctx.doc.layers.find((l) => l.id === hoveredId);
-      const bbox = layer && !layer.hidden ? layerBbox(layer, ctx.panel) : null;
+      const bbox = layer && !layer.hidden ? layerBbox(layer) : null;
       if (layer && bbox) {
         drawHoverOutline(d.ctx, rotatedRectAABB(bbox, layerRotation(layer)), d.camera);
       }

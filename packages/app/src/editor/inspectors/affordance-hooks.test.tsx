@@ -53,6 +53,9 @@ describe('pattern inspector — Browse… hook', () => {
     patternType: 'dot-grid',
     color: 1,
     params: {},
+    x: 0,
+    y: 0,
+    size: 128.5,
   };
 
   it('is disabled when no pattern-picker dialog is registered', () => {

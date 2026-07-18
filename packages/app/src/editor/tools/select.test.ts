@@ -396,6 +396,9 @@ const gridPattern = (id: string): PatternLayer => ({
   patternType: 'dot-grid',
   params: { pitch: 2.54 },
   color: 1,
+  x: 0,
+  y: 0,
+  size: 128.5,
 });
 
 describe('select tool — multi-selection move (#49)', () => {
@@ -451,7 +454,9 @@ describe('select tool — multi-selection move (#49)', () => {
     expect(movedPath.points[0]).toEqual({ x: 70, y: 65, hout: { x: 75, y: 65 } });
   });
 
-  it('patterns in the selection are skipped — they stay put and stay selected', () => {
+  // #97 (movable pattern square): pattern members now MOVE with the group —
+  // this test previously proved the exact opposite (patterns stayed put).
+  it('pattern members move with the group by the same delta, size untouched', () => {
     const { ctx, layerById } = makeHarness({
       panelHp: 12,
       guides: [],
@@ -459,13 +464,17 @@ describe('select tool — multi-selection move (#49)', () => {
     });
     ctx.selectIds(['g1', 's1']);
 
-    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx); // hits s1 (patterns aren't hit-testable)
+    select.onPointerDown?.(ptr({ x: 15, y: 15 }), ctx); // hits s1 (tier 1 wins over the pattern)
     select.onPointerMove?.(ptr({ x: 25, y: 20 }), ctx);
     select.onPointerUp?.(ptr({ x: 25, y: 20 }), ctx);
 
     expect(layerById('s1')).toMatchObject({ x: 20, y: 15 });
-    expect(layerById('g1')).toEqual(gridPattern('g1')); // untouched
+    expect(layerById('g1')).toMatchObject({ x: 10, y: 5, size: 128.5 }); // same (+10, +5) delta
     expect(ctx.selectedIds).toEqual(['g1', 's1']);
+
+    ctx.undo();
+    expect(layerById('g1')).toEqual(gridPattern('g1')); // ONE entry restores both
+    expect(layerById('s1')).toMatchObject({ x: 10, y: 10 });
   });
 
   it('a pure click (below threshold) on a member collapses the selection to it', () => {
@@ -481,6 +490,47 @@ describe('select tool — multi-selection move (#49)', () => {
 
     expect(ctx.selectedIds).toEqual(['s1']);
     expect(getHistory().past).toHaveLength(0);
+  });
+});
+
+// #97 (movable pattern square): a SELECTED pattern drags like any layer —
+// the unselected-pattern-drag=marquee rule lives in select-marquee.test.ts.
+describe('select tool — selected pattern square move (#97)', () => {
+  it('a drag on a SELECTED pattern moves its square as ONE undo entry; undo restores', () => {
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [],
+      layers: [gridPattern('g1')],
+    });
+    ctx.select('g1');
+
+    select.onPointerDown?.(ptr({ x: 60, y: 60 }), ctx); // inside the square, tier-2 hit
+    select.onPointerMove?.(ptr({ x: 70, y: 65 }), ctx);
+    select.onPointerMove?.(ptr({ x: 75, y: 70 }), ctx);
+    select.onPointerUp?.(ptr({ x: 75, y: 70 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(1);
+    expect(getHistory().past).toHaveLength(1);
+    expect(layerById('g1')).toMatchObject({ x: 15, y: 10, size: 128.5 });
+    expect(ctx.selectedIds).toEqual(['g1']);
+
+    ctx.undo();
+    expect(layerById('g1')).toEqual(gridPattern('g1'));
+  });
+
+  it('Shift axis-constrain applies to a pattern drag too', () => {
+    const { ctx, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [],
+      layers: [gridPattern('g1')],
+    });
+    ctx.select('g1');
+
+    select.onPointerDown?.(ptr({ x: 60, y: 60 }), ctx);
+    select.onPointerMove?.(ptr({ x: 72, y: 63 }, { shiftKey: true }), ctx); // dx dominates
+    select.onPointerUp?.(ptr({ x: 72, y: 63 }, { shiftKey: true }), ctx);
+
+    expect(layerById('g1')).toMatchObject({ x: 12, y: 0 });
   });
 });
 
@@ -893,12 +943,12 @@ describe('select tool — multi-resize via the combined bbox (#52)', () => {
     });
     ctx.selectIds(['g1', 's1', 's2']);
 
-    // the pattern's bbox is panel-wide (harness PANEL: 100×128.5), so the
-    // combined bbox IS the panel; its se corner is (100,128.5) and dragging
-    // by 0.5·v0 projects to factor 1.5 again.
-    select.onPointerDown?.(ptr({ x: 100, y: 128.5 }), ctx);
-    select.onPointerMove?.(ptr({ x: 150, y: 192.75 }), ctx);
-    select.onPointerUp?.(ptr({ x: 150, y: 192.75 }), ctx);
+    // the pattern's bbox is its own 128.5mm square at the origin (#96), so
+    // the combined bbox is that square; its se corner is (128.5,128.5) and
+    // dragging by 0.5·v0 projects to factor 1.5 again (anchor stays (0,0)).
+    select.onPointerDown?.(ptr({ x: 128.5, y: 128.5 }), ctx);
+    select.onPointerMove?.(ptr({ x: 192.75, y: 192.75 }), ctx);
+    select.onPointerUp?.(ptr({ x: 192.75, y: 192.75 }), ctx);
 
     expect(layerById('g1')).toEqual(gridPattern('g1')); // untouched
     expect(layerById('s1')).toMatchObject({ x: 15, y: 15, width: 30, height: 15 });

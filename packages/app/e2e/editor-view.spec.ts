@@ -8,8 +8,7 @@
 // data can.
 import { PANEL_HEIGHT_MM, panelWidthMm } from '@zpd/core';
 import { expect, type Page, test } from '@playwright/test';
-import type { Camera } from '../src/editor/camera';
-import { bridge, openEditor, toScreenPoint } from './helpers';
+import { bridge, countPixelsDiffering, openEditor, readCanvasRegion, toScreenPoint } from './helpers';
 
 // Matches renderer.ts's WORKSPACE_BG ('#26282c').
 const BACKGROUND_RGB: [number, number, number] = [38, 40, 44];
@@ -51,7 +50,7 @@ function expectDiffersFromBackground(rgba: [number, number, number, number]) {
   expect(differs).toBe(true);
 }
 
-test('@smoke show-outside-panel toggle ghosts off-panel shapes but never patterns', async ({
+test('@smoke show-outside-panel toggle ghosts off-panel shapes and the pattern square (bounded by the square)', async ({
   page,
 }) => {
   await openEditor(page);
@@ -59,18 +58,37 @@ test('@smoke show-outside-panel toggle ghosts off-panel shapes but never pattern
   const panelHp = await bridge(page).getPanelHp();
   const panelWmm = panelWidthMm(panelHp);
 
-  // A gutter point well to the left of the panel, offset in screen space so
-  // it clears the panel's drop-shadow blur (renderer.ts: shadowBlur 24) —
-  // only the default dot-grid pattern layer's overscan would ever reach
-  // here, and pattern layers are excluded from the ghost pass on purpose.
-  const camera = (await bridge(page).getCamera()) as Camera | null;
-  if (!camera) throw new Error('camera not ready');
-  const gutterMm = { x: -32 / camera.pxPerMm, y: PANEL_HEIGHT_MM / 2 };
-  const gutterPt = await toScreenPoint(page, gutterMm);
+  // #97 flipped the ghost pass's pattern rule: the default cover square hangs
+  // off-panel on both x sides, so its off-panel margin now GHOSTS (dimmed dot
+  // grid) — but never past the square's own edge, generator overscan or not.
+  // Region scans, not single pixels: dot-grid paint has gaps (see helpers.ts).
+  const pattern = (await bridge(page).getDoc()).layers.find((l) => l.type === 'pattern');
+  if (pattern?.type !== 'pattern') throw new Error('expected the default pattern layer');
+  const midY = PANEL_HEIGHT_MM / 2;
+  // Inside the square, left of the panel; -9mm ≈ -39px at the fitted zoom, so
+  // the region clears the panel's drop-shadow blur (renderer.ts: shadowBlur
+  // 24). 7mm wide > the 5mm dot pitch, so ghost dots are guaranteed inside.
+  const inSquareGutter = [
+    await toScreenPoint(page, { x: -16, y: midY - 5 }),
+    await toScreenPoint(page, { x: -9, y: midY + 5 }),
+  ] as const;
+  // Beyond the square's left edge — must stay pure workspace background in
+  // every state (the square clip bounds the generators' edge overscan).
+  const beyondSquare = [
+    await toScreenPoint(page, { x: pattern.x - 12, y: midY - 5 }),
+    await toScreenPoint(page, { x: pattern.x - 5, y: midY + 5 }),
+  ] as const;
+  const ghostCount = async (region: readonly [{ x: number; y: number }, { x: number; y: number }]) =>
+    countPixelsDiffering(
+      await readCanvasRegion(page, region[0], region[1]),
+      BACKGROUND_RGB,
+      COLOR_TOLERANCE,
+    );
 
-  // The gutter reads background BEFORE any interaction too (default ON) —
-  // confirms the pattern-skip rule holds from the very first paint.
-  expectMatchesBackground(await readCanvasPixel(page, gutterPt));
+  // Default ON, before any interaction: the square's off-panel margin ghosts
+  // from the very first paint; past the square stays background.
+  expect(await ghostCount(inSquareGutter)).toBeGreaterThan(0);
+  expect(await ghostCount(beyondSquare)).toBe(0);
 
   // Add a rect, then drag it fully past the panel's right edge so its whole
   // body is off-panel — a deterministic, easy-to-probe "shape spills off the
@@ -106,15 +124,30 @@ test('@smoke show-outside-panel toggle ghosts off-panel shapes but never pattern
   //    background — it's the rect's gold fill ghosted at ~35% alpha.
   expectDiffersFromBackground(await readCanvasPixel(page, shapePt));
 
+  // In-panel double-composite guard (#97): capture an on-panel region (dot
+  // grid + demo layers) while the ghost pass is ON — after toggling OFF it
+  // must be byte-identical, proving the even-odd outer clip keeps the ghost
+  // pass fully disjoint from the panel-clipped pass (no pixel painted twice).
+  const inPanel = [
+    await toScreenPoint(page, { x: 10, y: 60 }),
+    await toScreenPoint(page, { x: 20, y: 70 }),
+  ] as const;
+  const inPanelOn = await readCanvasRegion(page, inPanel[0], inPanel[1]);
+
   // Toggle OFF via real trusted input — the checkbox is the only sidebar
   // control under this label (CollapsibleSection "View").
   await page.getByLabel('Show content outside the panel').click();
 
   // 2. OFF: rendering is byte-identical to today — that same pixel matches
-  //    the workspace background exactly.
+  //    the workspace background exactly, and the ghosted square margin
+  //    disappears too (#97: ghost-toggle-off hides the pattern ghost).
   expectMatchesBackground(await readCanvasPixel(page, shapePt));
+  expect(await ghostCount(inSquareGutter)).toBe(0);
 
-  // 3. The pattern-only gutter point stays background in BOTH states — the
-  //    default dot-grid pattern layer never ghosts, toggle on or off.
-  expectMatchesBackground(await readCanvasPixel(page, gutterPt));
+  // 3. In-panel pixels never changed — ghost pass ON vs OFF is disjoint.
+  const inPanelOff = await readCanvasRegion(page, inPanel[0], inPanel[1]);
+  expect(inPanelOff.data).toEqual(inPanelOn.data);
+
+  // 4. Past the square's edge stays background in BOTH states.
+  expect(await ghostCount(beyondSquare)).toBe(0);
 });

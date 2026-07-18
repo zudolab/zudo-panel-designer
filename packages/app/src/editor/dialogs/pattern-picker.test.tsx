@@ -6,12 +6,12 @@
 // run its full dpr-sizing logic without throwing. We test wiring, not pixels.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { DocState, PatternLayer, Pt } from '@zpd/core';
+import { patternCoverGeometry, type DocState, type PatternLayer, type Pt } from '@zpd/core';
 import { defaultParams, PATTERN_GENERATORS } from '@zpd/patterns';
 import { getDialog } from '../registry/dialogs';
 import type { ToolContext } from '../types';
 import './pattern-picker';
-import { THUMBNAIL_SIZE_PX } from './pattern-picker';
+import { PAGE_SIZE, THUMBNAIL_SIZE_PX } from './pattern-picker';
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -62,11 +62,28 @@ const originalGetContext = HTMLCanvasElement.prototype.getContext;
 beforeEach(() => {
   HTMLCanvasElement.prototype.getContext = (() =>
     fakeCtx2d()) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+  // jsdom has no IntersectionObserver; the picker's paged/lazy sentinel (added
+  // in the search sub-issue) only instantiates one once the registry exceeds a
+  // page — now true with the ported patterns. A no-op stub is enough here: this
+  // suite tests swap/add/thumbnail wiring on the first page, not paging itself
+  // (paging behaviour is covered in pattern-picker-search.test.tsx).
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    },
+  );
 });
 
 afterEach(() => {
   cleanup();
   HTMLCanvasElement.prototype.getContext = originalGetContext;
+  vi.unstubAllGlobals();
 });
 
 describe('pattern-picker dialog — swap (opened with layerId)', () => {
@@ -78,6 +95,10 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
       patternType: 'dot-grid',
       color: 1,
       params: { spacing: 999 }, // deliberately non-default to prove the reset
+      // deliberately non-cover geometry — swap must keep the square untouched
+      x: 3,
+      y: 4,
+      size: 30,
     };
     const doc: DocState = { panelHp: 12, guides: [], layers: [existing] };
     const ctx = stubCtx({ doc });
@@ -106,6 +127,9 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
       patternType: 'dot-grid',
       color: 1,
       params: {},
+      x: 0,
+      y: 0,
+      size: 128.5,
     };
     const other: PatternLayer = {
       id: 'p2',
@@ -114,6 +138,9 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
       patternType: 'checker',
       color: 2,
       params: { size: 5 },
+      x: 1,
+      y: 2,
+      size: 20,
     };
     const doc: DocState = { panelHp: 12, guides: [], layers: [target1, other] };
     const ctx = stubCtx({ doc });
@@ -136,6 +163,9 @@ describe('pattern-picker dialog — add (opened without layerId)', () => {
       patternType: 'dot-grid',
       color: 1,
       params: {},
+      x: 0,
+      y: 0,
+      size: 128.5,
     };
     const doc: DocState = { panelHp: 12, guides: [], layers: [existing] };
     const ctx = stubCtx({ doc });
@@ -158,6 +188,8 @@ describe('pattern-picker dialog — add (opened without layerId)', () => {
       name: target.displayName,
       color: 1,
       params: defaultParams(target.name),
+      // cover geometry (#96) from stubCtx's 60×128.5 panel via the shared helper
+      ...patternCoverGeometry({ widthMm: 60, heightMm: 128.5 }),
     });
     expect(ctx.select).toHaveBeenCalledTimes(1);
     expect(ctx.select).toHaveBeenCalledWith(added.id);
@@ -166,7 +198,7 @@ describe('pattern-picker dialog — add (opened without layerId)', () => {
 });
 
 describe('pattern-picker dialog — thumbnails', () => {
-  it('renders one canvas per registered pattern, sized for the device pixel ratio', () => {
+  it('renders one canvas per registered pattern up to the first page, sized for the device pixel ratio', () => {
     const original = (globalThis as { devicePixelRatio?: number }).devicePixelRatio;
     (globalThis as { devicePixelRatio?: number }).devicePixelRatio = 2;
     try {
@@ -175,7 +207,10 @@ describe('pattern-picker dialog — thumbnails', () => {
         <PatternPickerDialog props={{}} close={vi.fn()} ctx={stubCtx()} />,
       );
       const canvases = container.querySelectorAll('canvas');
-      expect(canvases.length).toBe(PATTERN_GENERATORS.length);
+      // Paged rendering (#87) caps the first render at PAGE_SIZE; the real
+      // registry is currently well under that, but this stays correct once
+      // the epic grows it past PAGE_SIZE too.
+      expect(canvases.length).toBe(Math.min(PATTERN_GENERATORS.length, PAGE_SIZE));
       canvases.forEach((canvas) => {
         expect(canvas.width).toBe(Math.round(THUMBNAIL_SIZE_PX * 2));
         expect(canvas.height).toBe(Math.round(THUMBNAIL_SIZE_PX * 2));
