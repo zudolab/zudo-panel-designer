@@ -1,0 +1,51 @@
+---
+title: Clipboard
+description: Copy/Cut/Duplicate/Select All, the versioned OS-clipboard envelope, and paste-only ⌘V semantics.
+sidebar_position: 12
+---
+
+`use-clipboard.ts` wires up copy, cut, duplicate, and select-all as commands in the [command registry](./shortcuts-and-commands.mdx), plus a self-contained paste path that owns the browser's native `paste` event end to end.
+
+## Copy, cut, duplicate, select all
+
+| Shortcut | Action | Effect |
+|---|---|---|
+| `⌘/Ctrl+C` | Copy | Snapshots the current selection to the internal clipboard and best-effort writes it to the OS clipboard. |
+| `⌘/Ctrl+X` | Cut | Copy, then delete the selection — as **one** undo entry. |
+| `⌘/Ctrl+D` | Duplicate | Clones the selection with fresh ids and a small offset, selects the clones — one undo entry. |
+| `⌘/Ctrl+A` | Select All | Selects every non-pattern layer. |
+
+All four exclude **pattern layers** from the operated-on set — patterns are the single panel-wide background (see [Tools → Layer eligibility matrix](./tools.mdx#layer-eligibility-matrix)), so they are never copyable, cuttable, duplicable, or included by Select All. Copy/cut/duplicate/select-all are no-ops when nothing eligible is selected.
+
+Every one of these chords is registered with `shift: false` — `⌘⇧C` never copies, matching the pre-refactor behavior exactly.
+
+## Where clones land
+
+Both paste and duplicate share one clone technique (`cloneLayersWithFreshIds` from `@zpd/core`): fresh layer ids, and a **2mm cascade offset** applied to the clone's position — so a repeated paste or duplicate never stacks exactly on top of its source. The clones are appended to the top of the layer stack and become the new selection.
+
+## The OS clipboard envelope
+
+Copy and cut write a versioned JSON envelope to the real OS clipboard via `navigator.clipboard.writeText`:
+
+```ts
+interface ZpdClipboardEnvelope {
+  app: 'zpd';
+  kind: 'layers';
+  version: 1;
+  layers: Layer[];
+}
+```
+
+This is what makes copy/paste work **across zpd tabs** — copy in one tab, switch to another, paste. Writing the envelope is best-effort: `navigator.clipboard.writeText` can reject, or the API can be entirely absent (e.g. an insecure context), and either case degrades silently to internal-clipboard-only — copy/cut/duplicate/select-all never fail outright over a clipboard permission issue.
+
+On paste, the OS clipboard's `text/plain` payload is parsed and checked against the envelope shape (`app`/`kind`/`version` markers, then the `layers` array is re-validated through core's defensive `parsePanelConfig`, filtered to drop patterns). Anything that isn't a recognized zpd envelope — a URL, a sentence, JSON from an unrelated app, or a future/foreign envelope version — is left **completely untouched**; a normal text paste into, say, the layer-rename field is never hijacked.
+
+## Paste
+
+`⌘/Ctrl+V` is deliberately **not** a keydown-handled shortcut. `use-clipboard.ts` exposes no `handlePaste` at all, so there is nothing a keyboard handler could wire a `V` case to — the editor's command registry lists an `edit-paste` entry purely as `displayOnly` (so the shortcuts overlay can still show "⌘V — Paste"), and its `run()` is never invoked. The real gesture rides the browser's native `paste` event, which `use-clipboard.ts` owns via a single `window` listener, checked in priority order:
+
+1. **An image file on the OS clipboard** — e.g. copied from an image viewer or another app. Imported as a new `image` layer via the same `importImageFile` pipeline the Add image… action and drag-drop import use.
+2. **Text on the OS clipboard** — parsed as a zpd envelope. A valid envelope pastes those layers (fresh ids, cascade offset, selected). Non-envelope text is left alone entirely, **including skipping the internal-clipboard fallback below** — the OS clipboard's current content always wins over a stale in-app copy. The one exception: if *this session's own* `writeText` from the most recent copy/cut hasn't resolved yet (a fast copy-then-paste can race the async write), the read text may simply predate that write — in that case paste falls through to the internal snapshot instead of silently doing nothing.
+3. **The internal same-session clipboard** — the last resort, used when the OS clipboard has neither an image nor any text at all (e.g. `writeText` was denied on copy).
+
+Paste is ignored while an `<input>`, `<textarea>`, `<select>`, or a `contenteditable` element is focused, so a normal text paste into an editable field is never intercepted.

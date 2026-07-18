@@ -3,9 +3,11 @@ title: Round-Trip
 sidebar_position: 3
 ---
 
-The editor's **Download panel config JSON** button (`packages/app/src/editor/download.ts`)
-is the only export path in the current stage-1 app — there is no in-app
-**Open File**/import UI yet. "Round-trip" here means: the downloaded JSON,
+The editor's **⬇ JSON** button (`packages/app/src/editor/download.ts`) downloads
+the current document as an order-ready panel config JSON, and the app now has
+a matching import path back in (the header's **⬆ JSON** button, drag-and-drop
+anywhere on the page, or the command palette's *Import JSON* command — see
+[Importing](#importing) below). "Round-trip" here means: the downloaded JSON,
 fed back through `parsePanelConfig()`, reproduces the on-screen document.
 That guarantee is what makes the file trustworthy as an order artifact and
 as an interchange format for future tooling.
@@ -17,6 +19,28 @@ it (`JSON.stringify(config, null, 2)`), and triggers a browser download
 named `zpd-panel-<hp>hp.json`. The pure serialization step —
 `panelConfigJson(doc)` — is factored out separately from the DOM/Blob
 mechanics so the exact JSON string is unit-testable without a real download.
+
+## Importing
+
+Three entry points converge on the exact same code path (`importJsonFile()` in `import.ts`), so "import a file" behaves identically no matter how the file arrived:
+
+- The header's **⬆ JSON** button — a persistent hidden `<input type="file">` behind a ref.
+- **Drop-anywhere import** (`components/drop-import.tsx`) — drop a `.json` file (or an image — see below) anywhere on the page, not just a precise canvas target. A full-page overlay ("Drop image or panel JSON") appears while a file is being dragged over the window, tracked with an enter-count balanced `dragenter`/`dragleave` pair so the overlay doesn't flicker as the cursor crosses nested elements. Only file drags are intercepted (`dataTransfer.types.includes('Files')`) — dragging selected text into an in-app field, like the layer-rename input, is left completely alone.
+- The command palette's ***Import JSON*** command (chordless, palette-only) — opens a transient native file picker.
+
+The import pipeline is **strict**, unlike the lenient `parsePanelConfig()` used everywhere else in this page: it runs the raw JSON through core's `tryParsePanelConfig()`, which checks the envelope markers (`app === 'zpd'`, an `version` in the supported range, a `layers` array) *before* delegating to the same defensive per-field parsing described in [Defensive Parsing](./defensive-parsing.mdx). This distinction exists because import UX needs to tell "this is not a zpd panel config at all" apart from "this is a real config with one wonky field" — `parsePanelConfig()` alone can't (by design, it never fails; see [Defensive Parsing → Why this matters](./defensive-parsing.mdx#why-this-matters)).
+
+On a rejected file (invalid JSON, wrong `app`, missing/out-of-range `version`, or no `layers` array), the current document is left completely untouched and an error toast reports why — *"Could not import panel JSON"* with a short reason (e.g. *"File is not valid JSON."*). A valid file prompts for confirmation before anything changes:
+
+> **Replace current panel?**
+> This replaces the current panel with the imported one. This cannot be undone.
+> [Cancel] [**Replace**]
+
+Confirming replaces the whole document via the same `replaceDoc()` primitive [New panel](../editor/autosave.mdx#new-panel) uses — discarding undo/redo history, clearing the selection, and evicting stale image-cache entries — then shows a success toast (*"Panel imported"*).
+
+### Dropping or pasting an image instead
+
+Both drag-and-drop and paste accept an image/SVG file in addition to a panel JSON file (`isImportableImageFile()`: any `image/*` MIME type, or a `.svg` extension). An image is routed to `importImageFile()` instead — the same pipeline behind the **Add image…** add-action — decoding it, scaling it to fit within 80% of the panel width / 50% of the panel height, and committing it as a new `image` layer, rather than replacing the document. A file that's neither JSON nor a recognized image type shows an *"Unsupported file"* error toast (*"Drop an image or a zpd panel JSON file."*) instead of a silent no-op. See [Clipboard](../editor/clipboard.mdx) for the equivalent paste-side image path.
 
 ## What is preserved exactly
 

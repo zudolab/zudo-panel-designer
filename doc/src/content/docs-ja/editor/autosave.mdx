@@ -1,0 +1,77 @@
+---
+title: オートセーブと新規パネル
+description: localStorage によるオートセーブ、サイレントな起動時復元、保存状態チップ、New panel によるリセット。
+sidebar_position: 11
+---
+
+zpd にはサーバー側のプロジェクトストレージがありません——作業中のドキュメントはブラウザタブの中にあります。`use-autosave.ts` はそれを継続的に `localStorage` へミラーリングするため、リロード（や意図しないタブのクローズ）で作業を失うことがありません。これはあくまでローカルのみの仕組みです。何もブラウザの外へは出ませんし、ブラウザや端末をまたいで同期されることもありません。
+
+## 起動時の復元
+
+マウント時、`Editor()` は遅延評価の `useState` 初期化子——`readDoc() ?? createDemoDoc()`——を通じて、保存済みのドキュメントを一度だけ読み込みます。`doc-store.ts` が `zpd.doc.v1` キーの下に有効なエントリを見つければ、そのドキュメントはサイレントに読み込まれます。「このセッションを復元しますか？」という確認プロンプトはありません。保存済みのエントリが存在しないとき（初回訪問、またはストレージがクリアされた場合）に限り、エディタはデモドキュメント（`demo-doc.ts` の `createDemoDoc()`——すべてのレイヤー型を 1 つずつ含み、シェルが初回ロード時にあらゆるインスペクタを実行できるようにするもの）にフォールバックします。
+
+保存されるペイロードは、小さなバージョン付きのエンベロープです。
+
+```ts
+interface StoredDocPayload {
+  version: number; // DOC_STORAGE_VERSION
+  savedAt: number;
+  config: unknown; // serializePanelConfig(doc) の出力
+}
+```
+
+`readDoc()` は `config` フィールドを core の防御的な `parsePanelConfig()`（[防御的パース](../export/defensive-parsing.mdx)を参照）に通すため、壊れた・手編集されたペイロードは、起動をクラッシュさせるのではなく安全なデフォルトへ縮退します。`readDoc()`／`writeDoc()` は決して例外を投げません——`localStorage` へのすべてのアクセス（ロックダウンされたプライバシー設定下では投げうるプロパティ読み取り自体を含む）はラップされ、タグ付きの結果に還元されます。
+
+## デバウンスされたオートセーブ
+
+ドキュメントへのすべてのコミットは、500ms 後（`AUTOSAVE_DEBOUNCE_MS`）に書き込みをスケジュールします。タイマーを保持するエフェクトは `doc` をキーにしているため、新しいコミットごとに、自身のタイマーをスケジュールする前に直前の実行の保留中タイマーをクリアします——素早い編集（ドラッグや、undo/redo の連打）は、コミットごとに 1 回ではなく、1 回の書き込みにまとまります。
+
+タブが閉じられるときに保留中の書き込みが失われないよう、デバウンスを迂回する早期フラッシュのトリガーが 2 つあります。
+
+- **`pagehide`** — `beforeunload` の現代的な代替。bfcache ナビゲーションやモバイルのタブ切り替えでも発火します。
+- **`visibilitychange`** が `'hidden'` になったとき — モバイル OS は `pagehide` を一切発火させずに、バックグラウンド化したタブのプロセスを終了させることがあります。
+
+意図的に **`beforeunload` の確認プロンプト**（「サイトを離れますか？変更が保存されない場合があります」）は **ありません** ——継続的なローカル永続化がその代わりを果たすためです。
+
+## 保存状態チップ
+
+`components/save-status.tsx` は、ヘッダーのアプリ名の隣に、小さな非対話的なピル（`role="status"`）をレンダリングします。3 つの状態のいずれかを反映します。
+
+| 状態 | 表示 | スタイル |
+|---|---|---|
+| `unsaved` | "Unsaved changes…" | ニュートラルなピル |
+| `saved` | "Saved locally `HH:MM`"（24 時間表記、ローカル時刻） | ニュートラルなピル |
+| `failed`（quota） | "Save failed (document too large for local storage)" | 赤いピル。`title` ツールチップも同じ文言 |
+| `failed`（その他） | "Save failed" | 赤いピル。ツールチップは "Save failed — local storage is unavailable" |
+
+`unsaved` は明示的に保存される状態ではなく、導出された値です——このフックは、直近の書き込みの対象ドキュメントを現在の `doc` と参照で比較します。新しいコミットがあれば、その参照は必ず古くなり、それだけで「unsaved」を意味します。手動でリセットするものは何もありません。
+
+### 保存の失敗
+
+`writeDoc()` はすべての失敗に理由——`'quota'`、`'unavailable'`、`'error'`——のタグを付け、オートセーブフックは書き込みが最初に失敗したとき、セッションにつき 1 回だけ警告トースト（`toastWarning`）を発火します。そのため、以降のデバウンスのたびに quota の失敗が繰り返されても、トーストキューがスパムされることはありません。
+
+- **`quota`** — `QuotaExceededError`（あるいは Firefox の `NS_ERROR_DOM_QUOTA_REACHED`）。zpd の `image` レイヤーは base64 のデータ URL を埋め込むため、大きな画像をいくつか含むデザインは、ブラウザのオリジンごとの `localStorage` クォータを実際に超えることがあります。トースト: *"This panel is too large to save locally — some changes may be lost if you close the tab."*
+- **`unavailable`** — `localStorage` そのものにアクセスできない（プライベートブラウジングのロックダウン、サードパーティストレージのブロック、SSR）。トースト: *"Local storage is unavailable in this browser — changes are not being saved."*
+- **`error`** — その他の書き込み失敗（例: ドキュメントのシリアライズに失敗した場合）。トースト: *"Could not save your changes locally."*
+
+:::note
+チップの文言は、何を約束するかについて意図的に控えめです。これはこの **ブラウザに限った** `localStorage` であり——アカウントでも、同期されるプロジェクトでも、タブのストレージがクリアされないという保証でもありません。
+:::
+
+## 新規パネル
+
+ヘッダーの **New panel** ボタン（コマンドパレットの *File → New Panel* も同じ `newPanelAction()` を使います）は、新しいドキュメントを開始します。必ず最初に確認を求めます。
+
+> **Start a new panel?**
+> This replaces the current panel with the default starter panel. This cannot be undone.
+> [Cancel] [**New panel**]
+
+確認すると、ドキュメント全体を `createDefaultDoc()`——スクリプトや素の `@zpd/core` 利用者が得るのと同じ、プレーンなスターター文書（ドットグリッドのパターンレイヤーが 1 つだけ）——に置き換えます。上で説明した、よりリッチな初回訪問時のデモドキュメント（すべてのレイヤー型を 1 つずつ含むもの）**ではありません**。そちらは、本当に空の状態からの起動のときにしか現れません。
+
+`replaceDoc()`（`replace-doc.ts`）は、New panel と JSON インポート（[ラウンドトリップ → インポート](../export/round-trip.mdx#インポート)を参照）の両方が使う、ドキュメント全体を置き換える共通のプリミティブです。通常の `ctx.commit()`／`ctx.replace()` とは異なり、次を行います。
+
+- undo/redo 履歴 **全体** を破棄する（`ctx.reset`）——新しいドキュメントの編集履歴は、古いドキュメントに対しては意味を持たないため。
+- 現在の選択をクリアする（古いドキュメントの古いレイヤー id が残ってはいけないため）。
+- 新しいレイヤーセットにもう存在しないレンダラーの画像キャッシュエントリを退避させる。
+
+New panel は `localStorage` を直接クリアするわけではありません——インメモリのドキュメントを置き換えるだけで、次のデバウンスされたオートセーブが、他のどんな編集とも同じように、保存済みのエントリを新しいスターターパネルで上書きします。

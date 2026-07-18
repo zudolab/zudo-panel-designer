@@ -119,6 +119,8 @@ Create `dialogs/my-dialog.tsx` and call `registerDialog({ id, component })`. The
 
 The global handler routes each `keydown` to the **active tool's `onKeyDown` first**. Only if the tool does not return `true` do the app-level fallbacks run (tool shortcuts, undo/redo, delete, arrow-nudge, Esc). So a tool's Enter/Esc/draft handling stays inside its own module — no shared switch statement to touch when adding a tool. See [the full fallback order](./tools.mdx#the-pointer-keyboard-event-contract).
 
+Those app-level fallbacks are themselves **not** a discovered-via-glob registry like the four above — they're `commands.ts`'s flat, hand-listed `CommandDef` array (tool-switch commands are the one exception, derived live from the tool registry). See [Shortcuts & Command Palette](./shortcuts-and-commands.mdx) for that contract, and how it powers the searchable shortcuts overlay and the command palette.
+
 :::tip
 This page mirrors `packages/app/src/editor/README.md` in the repo. If the two ever drift, the README is the source of truth — it's read directly by contributors working in that folder.
 :::
