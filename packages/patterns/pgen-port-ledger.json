@@ -1,0 +1,123 @@
+{
+  "original": [
+    {
+      "zpdName": "dot-grid",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "diag-stripes",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "grid-lines",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "concentric-circles",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "hex-lattice",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "checker",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "wave-lines",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "crosshatch",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "radial-burst",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "brick",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "diamond-lattice",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "scallops",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    }
+  ],
+  "japanese": [
+    {
+      "zpdName": "igeta",
+      "pgenId": "igeta",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-18",
+      "notes": "trial port: dropped bg fill + colorOffset fg cycling; cell + bar width now mm params; inset ratio 0.28 kept as source const"
+    }
+  ],
+  "ornament": [],
+  "curves": [
+    {
+      "zpdName": "smith-truchet",
+      "pgenId": "smith-truchet",
+      "family": "Mazes, Truchet & Paths",
+      "status": "ported",
+      "date": "2026-07-18",
+      "notes": "trial port: per-tile rand() orientation -> hash01 on center-origin indices; granularity -> mm tile pitch; px line width -> mm param; dropped bg fill"
+    }
+  ],
+  "ringsCircuits": [],
+  "tilings": []
+}

@@ -33,3 +33,24 @@ export function centeredStart(span: number, pitch: number): number {
   const half = span / 2;
   return half - Math.ceil(half / pitch + 1) * pitch;
 }
+
+// Deterministic stand-in for the per-cell rand() calls in patterns ported from
+// pgen (tile orientation, cell skip, jitter — local independent choices ONLY,
+// never sequence-dependent simulation). Key it on cell indices measured from
+// the panel-CENTER origin — `Math.round((x - widthMm / 2) / pitch)` for a
+// centeredStart lattice — so resizing the panel re-centers the tiling without
+// rescrambling every cell. `channel` separates independent decisions within one
+// cell; `salt` separates variants. Math.imul integer mixing with a murmur3-style
+// finalizer: pure, no floats in the mix, uniform-ish output in [0, 1).
+export function hash01(ix: number, iy: number, channel = 0, salt = 0): number {
+  let h = 0x811c9dc5 ^ Math.imul(salt | 0, 0x27d4eb2f);
+  h = Math.imul(h ^ (ix | 0), 0x9e3779b1);
+  h = Math.imul(h ^ (iy | 0), 0x85ebca77);
+  h = Math.imul(h ^ (channel | 0), 0xc2b2ae3d);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 0x100000000;
+}

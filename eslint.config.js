@@ -32,9 +32,10 @@ export default tseslint.config(
     },
   },
   {
-    // Root-level Node scripts (e.g. data-generation scripts run via `node`,
-    // not bundled) — need Node globals (console, process, fetch), not browser ones.
-    files: ['scripts/**/*.{js,mjs,cjs}'],
+    // Node scripts run via `node`, not bundled (root data-generation scripts,
+    // project-skill helper scripts) — need Node globals (console, process,
+    // fetch), not browser ones.
+    files: ['scripts/**/*.{js,mjs,cjs}', '.claude/skills/**/scripts/**/*.{js,mjs,cjs}'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
