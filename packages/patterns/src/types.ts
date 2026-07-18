@@ -21,7 +21,7 @@ export interface DrawOptions {
   // A single palette hex (e.g. '#d4af37') the caller chose for this pattern.
   color: string;
   // Physical mm values keyed by PatternParamDef.key. Generators clamp each to
-  // its def's [min,max] before use (see resolveParam in patterns.ts).
+  // its def's [min,max] before use (see resolveParam in param-utils.ts).
   params: Record<string, number>;
 }
 
