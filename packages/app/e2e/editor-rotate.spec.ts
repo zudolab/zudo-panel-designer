@@ -107,6 +107,12 @@ test('@smoke resize a ROTATED shape: dims follow resizeRotatedRect via getDoc()'
 test('@smoke rotated text keeps its render pivot while a bundled font is delayed', async ({
   page,
 }) => {
+  const errors: string[] = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') errors.push(msg.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
   const layer: TextLayer = {
     id: 'delayed-rotated-text',
     name: 'Delayed rotated text',
@@ -170,7 +176,9 @@ test('@smoke rotated text keeps its render pivot while a bundled font is delayed
   const beforeReleaseHistory = await bridge(page).getHistory();
   const beforeReleaseHistoryBytes = JSON.stringify(beforeReleaseHistory);
   const beforeReleaseSerialized = await bridge(page).serialize();
+  const beforeReleaseSerializedBytes = JSON.stringify(beforeReleaseSerialized);
   const beforeReleaseSelection = await bridge(page).getSelectedIds();
+  const beforeReleaseSelectionBytes = JSON.stringify(beforeReleaseSelection);
 
   releaseFont();
   await expect.poll(() => bridge(page).getTextGeometry(layer.id)).toMatchObject({ loading: false });
@@ -186,7 +194,10 @@ test('@smoke rotated text keeps its render pivot while a bundled font is delayed
   const afterReleaseHistory = await bridge(page).getHistory();
   expect(afterReleaseHistory).toEqual(beforeReleaseHistory);
   expect(JSON.stringify(afterReleaseHistory)).toBe(beforeReleaseHistoryBytes);
-  expect(await bridge(page).serialize()).toEqual(beforeReleaseSerialized);
+  const afterReleaseSerialized = await bridge(page).serialize();
+  expect(afterReleaseSerialized).toEqual(beforeReleaseSerialized);
+  expect(JSON.stringify(afterReleaseSerialized)).toBe(beforeReleaseSerializedBytes);
+  expect(JSON.stringify(await bridge(page).getSelectedIds())).toBe(beforeReleaseSelectionBytes);
   const docLayer = (await bridge(page).getDoc()).layers[0] as TextLayer;
   expect(docLayer).toMatchObject({
     x: layer.x,
@@ -194,4 +205,5 @@ test('@smoke rotated text keeps its render pivot while a bundled font is delayed
     sizeMm: layer.sizeMm,
     rotation: layer.rotation,
   });
+  expect(errors).toEqual([]);
 });

@@ -85,5 +85,6 @@ describe('PenHintBar', () => {
     fireEvent.click(getButton(/Cancel/));
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onClosePath).toHaveBeenCalledTimes(1); // unchanged by the other clicks
+    expect(onFinishOpen).toHaveBeenCalledTimes(1);
   });
 });

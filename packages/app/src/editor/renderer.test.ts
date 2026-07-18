@@ -47,6 +47,7 @@ import {
 } from './text-geometry';
 import type { Camera } from './camera';
 import type { PanelDims } from './types';
+import { layerAlignRect } from './align-ops';
 import { outsidePanelRegion } from './outside-panel-region';
 import { hitTestCanonicalText, marqueeHitIds } from './tools/select';
 
@@ -609,6 +610,17 @@ function expectRectClose(actual: Rect | null, expected: Rect): void {
   expect(actual!.height).toBeCloseTo(expected.height);
 }
 
+function expectPointsClose(
+  actual: readonly { x: number; y: number }[],
+  expected: readonly { x: number; y: number }[],
+): void {
+  expect(actual).toHaveLength(expected.length);
+  for (const [index, point] of actual.entries()) {
+    expect(point.x).toBeCloseTo(expected[index].x);
+    expect(point.y).toBeCloseTo(expected[index].y);
+  }
+}
+
 describe('canonical rotated text geometry (#111)', () => {
   let font: ControlledFontAttempt;
 
@@ -680,6 +692,21 @@ describe('canonical rotated text geometry (#111)', () => {
       width: 20,
       height: 40,
     });
+    const fallbackAlignRect = layerAlignRect(layer);
+    expect(fallbackAlignRect.x).toBeCloseTo(20);
+    expect(fallbackAlignRect.y).toBeCloseTo(10);
+    expect(fallbackAlignRect.w).toBeCloseTo(20);
+    expect(fallbackAlignRect.h).toBeCloseTo(40);
+    expect(50 - (fallbackAlignRect.x + fallbackAlignRect.w / 2)).toBeCloseTo(20);
+    expectPointsClose(
+      ['nw', 'ne', 'se', 'sw'].map((id) => handleCenter(fallback.box, IDENTITY, 90, id)),
+      [
+        { x: 40, y: 10 },
+        { x: 40, y: 50 },
+        { x: 20, y: 50 },
+        { x: 20, y: 10 },
+      ],
+    );
     expect(rotateHandleScreenPos(fallback.box, 90, IDENTITY).x).toBeCloseTo(60);
     expect(rotateHandleScreenPos(fallback.box, 90, IDENTITY).y).toBeCloseTo(30);
     expect(
@@ -703,6 +730,30 @@ describe('canonical rotated text geometry (#111)', () => {
       width: 20,
       height: 60,
     });
+    expectRectClose(layerBbox(layer), loaded.box);
+    expectRectClose(selectionBboxes([layer], [layer.id])[0], {
+      x: 20,
+      y: 0,
+      width: 20,
+      height: 60,
+    });
+    const loadedAlignRect = layerAlignRect(layer);
+    expect(loadedAlignRect.x).toBeCloseTo(20);
+    expect(loadedAlignRect.y).toBeCloseTo(0);
+    expect(loadedAlignRect.w).toBeCloseTo(20);
+    expect(loadedAlignRect.h).toBeCloseTo(60);
+    expect(50 - (loadedAlignRect.x + loadedAlignRect.w / 2)).toBeCloseTo(20);
+    expectPointsClose(
+      ['nw', 'ne', 'se', 'sw'].map((id) => handleCenter(loaded.box, IDENTITY, 90, id)),
+      [
+        { x: 40, y: 0 },
+        { x: 40, y: 60 },
+        { x: 20, y: 60 },
+        { x: 20, y: 0 },
+      ],
+    );
+    expect(rotateHandleScreenPos(loaded.box, 90, IDENTITY).x).toBeCloseTo(60);
+    expect(rotateHandleScreenPos(loaded.box, 90, IDENTITY).y).toBeCloseTo(30);
     expect(
       outsidePanelRegion(true, [layer], { cssW: 100, cssH: 100 }, IDENTITY, {
         widthMm: 40,
@@ -712,18 +763,22 @@ describe('canonical rotated text geometry (#111)', () => {
     expect(getTextGeometry(layer)!.metricRevision).toBe(loaded.metricRevision);
   });
 
-  it('makes point (30,55) miss B0 and hit B1 for both direct and marquee consumers', async () => {
+  it('locks direct-hit and marquee consumers to the B0/B1 numeric probes', async () => {
     const layer = rotatedText();
     reconcileTextGeometry([layer]);
     getTextGeometry(layer);
-    const probe = { x: 30, y: 55 };
-    expect(hitTestCanonicalText(layer, probe)).toBe(false);
-    expect(marqueeHitIds([layer], { ...probe, width: 0, height: 0 })).toEqual([]);
+    const sharedHit = { x: 30, y: 45 };
+    const loadedOnlyHit = { x: 30, y: 55 };
+    const loadedOnlyMarquee = { x: 25, y: 52, width: 10, height: 5 };
+    expect(hitTestCanonicalText(layer, sharedHit)).toBe(true);
+    expect(hitTestCanonicalText(layer, loadedOnlyHit)).toBe(false);
+    expect(marqueeHitIds([layer], loadedOnlyMarquee)).toEqual([]);
 
     font.settle('ready');
     await Promise.resolve();
-    expect(hitTestCanonicalText(layer, probe)).toBe(true);
-    expect(marqueeHitIds([layer], { ...probe, width: 0, height: 0 })).toEqual([layer.id]);
+    expect(hitTestCanonicalText(layer, sharedHit)).toBe(true);
+    expect(hitTestCanonicalText(layer, loadedOnlyHit)).toBe(true);
+    expect(marqueeHitIds([layer], loadedOnlyMarquee)).toEqual([layer.id]);
   });
 
   it('translates a cached pivot and preserves it across nonzero rotation edits', () => {
