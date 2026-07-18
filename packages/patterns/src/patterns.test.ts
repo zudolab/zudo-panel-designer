@@ -27,6 +27,13 @@ const PAINT_METHODS = new Set(['fill', 'stroke', 'fillRect', 'strokeRect']);
 // blowup (real draws land in the hundreds to low thousands of calls).
 const MAX_CALLS_PER_DRAW = 200_000;
 
+// Extreme scans are comfortably over Vitest's 5s default under load.
+const EXTREME_DRAW_TIMEOUT_MS = 20_000;
+
+// This matrix performs two complete draws for every generator/parameter/panel
+// case. It runs in ~12s alone but shares CPU with the full suite in CI.
+const DETERMINISM_TIMEOUT_MS = 60_000;
+
 function countCalls(ctx: ReturnType<typeof createMockCtx>, method: string): number {
   return ctx.calls.filter((c) => c.method === method).length;
 }
@@ -198,10 +205,7 @@ describe('draw', () => {
         }
       }
     },
-    // Now exercises 4 realistic + 3 degenerate panel sizes per extreme, plus
-    // a finite-arg scan over every recorded call — comfortably over the 5s
-    // default under load, though quick in isolation.
-    20_000,
+    EXTREME_DRAW_TIMEOUT_MS,
   );
 
   it(
@@ -224,7 +228,7 @@ describe('draw', () => {
         }
       }
     },
-    20_000,
+    EXTREME_DRAW_TIMEOUT_MS,
   );
 });
 
@@ -260,7 +264,7 @@ describe('determinism', () => {
         }
       }
     },
-    20_000,
+    DETERMINISM_TIMEOUT_MS,
   );
 });
 
