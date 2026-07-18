@@ -405,6 +405,57 @@ describe('chordless commands (zoom / align / file / text) have run() wired to a 
   });
 });
 
+describe('help commands (issue #77) — ? opens shortcuts, Cmd/Ctrl+Shift+K opens the palette', () => {
+  it('"?" dispatches help-shortcuts, which opens the shortcut-panel dialog', () => {
+    const ctx = stubCommandCtx();
+    const match = dispatchCommand(keyEvent({ key: '?' }), ctx);
+    expect(match?.id).toBe('help-shortcuts');
+    expect(ctx.openDialog).toHaveBeenCalledWith('shortcut-panel');
+  });
+
+  it('"?" fires regardless of any held modifier, same as Escape/edit-deselect', () => {
+    const ctx = stubCommandCtx();
+    const match = dispatchCommand(keyEvent({ key: '?', shiftKey: true }), ctx);
+    expect(match?.id).toBe('help-shortcuts');
+  });
+
+  it('Cmd+Shift+K dispatches app-command-palette with preventDefault, which opens the command-palette dialog', () => {
+    const ctx = stubCommandCtx();
+    const e = keyEvent({ key: 'k', metaKey: true, shiftKey: true });
+    const match = dispatchCommand(e, ctx);
+    expect(match?.id).toBe('app-command-palette');
+    expect(ctx.openDialog).toHaveBeenCalledWith('command-palette');
+    expect(e.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it('Ctrl+Shift+K (non-Mac) also opens the palette — platform-agnostic like every other chord', () => {
+    const ctx = stubCommandCtx();
+    dispatchCommand(keyEvent({ key: 'k', ctrlKey: true, shiftKey: true }), ctx);
+    expect(ctx.openDialog).toHaveBeenCalledWith('command-palette');
+  });
+
+  it('Cmd+K without Shift does not open the palette (shift is required, not a wildcard)', () => {
+    const ctx = stubCommandCtx();
+    const match = dispatchCommand(keyEvent({ key: 'k', metaKey: true }), ctx);
+    expect(match).toBeNull();
+    expect(ctx.openDialog).not.toHaveBeenCalled();
+  });
+
+  it('both help commands are always enabled', () => {
+    const ctx = stubCommandCtx();
+    expect(
+      allCommands()
+        .find((c) => c.id === 'help-shortcuts')!
+        .isEnabled(ctx),
+    ).toBe(true);
+    expect(
+      allCommands()
+        .find((c) => c.id === 'app-command-palette')!
+        .isEnabled(ctx),
+    ).toBe(true);
+  });
+});
+
 describe('no two dispatchable commands share an identical chord', () => {
   it('every (key, meta, shift, alt) combination among chorded, non-displayOnly commands is unique enough to avoid ambiguity', () => {
     const dispatchable = allCommands().filter((c) => c.chord && !c.displayOnly);

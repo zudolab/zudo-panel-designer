@@ -64,6 +64,13 @@ describe('Header', () => {
     expect(screen.getByText('Unsaved changes…')).toBeTruthy();
   });
 
+  it('the "?" button opens the shortcut-panel dialog (issue #77)', () => {
+    const ctx = stubCtx();
+    renderHeader(ctx);
+    fireEvent.click(screen.getByTitle('Keyboard shortcuts'));
+    expect(ctx.openDialog).toHaveBeenCalledWith('shortcut-panel');
+  });
+
   it('opens a danger confirm dialog when "New panel" is clicked', () => {
     renderHeader(stubCtx());
     act(() => {

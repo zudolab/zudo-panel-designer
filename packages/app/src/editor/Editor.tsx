@@ -254,6 +254,64 @@ export function Editor() {
     );
   }, []);
 
+  // The command registry's execution context (issue #77): the SAME object
+  // the keydown fallback below dispatches through AND the one DialogHost
+  // hands to every dialog's `ctx` prop — so the command palette (a dialog)
+  // can run any registry command exactly like a keydown would. Built with
+  // getters delegating to `ctx` rather than `{...ctx}` — spreading a
+  // getter-based object snapshots its CURRENT values into plain properties,
+  // which would silently break the "commands read ctx FRESH" contract this
+  // registry relies on (see commands.ts's header comment). Stable identity:
+  // ctx/clipboard/zoomStep/fitView are themselves stable across renders.
+  const commandCtx = useMemo<CommandContext>(
+    () => ({
+      get doc() {
+        return ctx.doc;
+      },
+      get camera() {
+        return ctx.camera;
+      },
+      get panel() {
+        return ctx.panel;
+      },
+      get selectedIds() {
+        return ctx.selectedIds;
+      },
+      get selectedId() {
+        return ctx.selectedId;
+      },
+      get selectedLayer() {
+        return ctx.selectedLayer;
+      },
+      toMm: ctx.toMm,
+      toScreen: ctx.toScreen,
+      commit: ctx.commit,
+      replace: ctx.replace,
+      reset: ctx.reset,
+      beginGesture: ctx.beginGesture,
+      undo: ctx.undo,
+      redo: ctx.redo,
+      select: ctx.select,
+      selectIds: ctx.selectIds,
+      setCamera: ctx.setCamera,
+      setActiveTool: ctx.setActiveTool,
+      requestRepaint: ctx.requestRepaint,
+      evictImageCache: ctx.evictImageCache,
+      openDialog: ctx.openDialog,
+      closeDialog: ctx.closeDialog,
+      clipboard: {
+        handleCopy: clipboard.handleCopy,
+        handleCut: clipboard.handleCut,
+        handleDuplicate: clipboard.handleDuplicate,
+        handleSelectAll: clipboard.handleSelectAll,
+      },
+      zoomIn: () => zoomStep(1.25),
+      zoomOut: () => zoomStep(1 / 1.25),
+      zoomFit: () => fitView(),
+    }),
+    [ctx, clipboard, zoomStep, fitView],
+  );
+
   const measured = canvasSize.w > 0;
   useEffect(() => {
     // first measure and every panel-size change re-fits (fitView identity
@@ -369,22 +427,10 @@ export function Editor() {
       if (getTool(activeToolId)?.onKeyDown?.(keyEvent, ctx) === true) return;
 
       // Registry dispatch (#76): undo/redo, clipboard C/X/D/A, tool switches
-      // (derived from the tool registry), delete, deselect — see commands.ts
-      // for the exact parity mapping from the pre-refactor branches this
-      // replaced. clipboard/zoom need more than ToolContext (see
-      // CommandContext) — built fresh here from the same live ctx.
-      const commandCtx: CommandContext = {
-        ...ctx,
-        clipboard: {
-          handleCopy: clipboard.handleCopy,
-          handleCut: clipboard.handleCut,
-          handleDuplicate: clipboard.handleDuplicate,
-          handleSelectAll: clipboard.handleSelectAll,
-        },
-        zoomIn: () => zoomStep(1.25),
-        zoomOut: () => zoomStep(1 / 1.25),
-        zoomFit: () => fitView(),
-      };
+      // (derived from the tool registry), delete, deselect, help/palette
+      // (#77) — see commands.ts for the exact parity mapping from the
+      // pre-refactor branches this replaced. commandCtx is the SAME stable
+      // object DialogHost hands to dialogs — see its definition above.
       if (dispatchCommand(keyEvent, commandCtx)) return;
 
       // Nudge stays bespoke (display-only in the registry — see commands.ts):
@@ -416,7 +462,7 @@ export function Editor() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [activeToolId, ctx, commit, readSelectedIds, clipboard, zoomStep, fitView]);
+  }, [activeToolId, ctx, commit, readSelectedIds, commandCtx]);
 
   // --- pointer routing to the active (or Space-override pan) tool ---------
   const effectiveToolId = spaceDown ? 'pan' : activeToolId;
@@ -521,7 +567,7 @@ export function Editor() {
           onShowGuidesChange={setShowGuides}
         />
       </div>
-      <DialogHost ctx={ctx} />
+      <DialogHost ctx={commandCtx} />
       <ToastContainer />
       <DropImport ctx={ctx} />
     </div>

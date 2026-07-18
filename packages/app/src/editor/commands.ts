@@ -1,7 +1,9 @@
 // Contextual command registry (issue #76): a flat list of CommandDef entries
-// describing every app-level action reachable from a keyboard shortcut, and
-// (next sub-issue) a command palette / shortcuts overlay. Each command reads
-// `ctx` FRESH on every invocation — commands are never pre-bound closures
+// describing every app-level action reachable from a keyboard shortcut, plus
+// a command palette / shortcuts overlay (issue #77 — dialogs/command-palette.tsx
+// and dialogs/shortcut-panel.tsx) that both consume this list directly.
+//
+// Each command reads `ctx` FRESH on every invocation — commands are never pre-bound closures
 // baked in at registration time. This deliberately diverges from the
 // reference port (pgen's composer-commands.ts CommandCallbacks indirection
 // layer) per the issue's review guidance: "a contextual command model, no
@@ -329,6 +331,31 @@ const STATIC_COMMANDS: CommandDef[] = [
       if (layer && layer.type === 'text') ctx.openDialog('font-explorer', { layerId: layer.id });
     },
     isEnabled: (ctx) => ctx.selectedLayer?.type === 'text',
+  },
+
+  // ── Help ──────────────────────────────────────────────────────────────
+  // Issue #77: the two entry points into the command-system UI itself. Both
+  // dispatch through the SAME registry-routed fallback chain as every other
+  // command (see Editor.tsx's keydown handler) — no parallel keydown path.
+  // dialogs/shortcut-panel.tsx and dialogs/command-palette.tsx read ctx back
+  // as a CommandContext (Editor.tsx wires DialogHost to the same commandCtx
+  // dispatchCommand uses), so the palette can run any command it lists.
+  {
+    id: 'help-shortcuts',
+    label: 'Keyboard Shortcuts',
+    category: 'Help',
+    chord: { key: '?' },
+    run: (ctx) => ctx.openDialog('shortcut-panel'),
+    isEnabled: ALWAYS_ENABLED,
+  },
+  {
+    id: 'app-command-palette',
+    label: 'Command Palette',
+    category: 'Help',
+    chord: { key: 'k', meta: true, shift: true },
+    preventDefault: true,
+    run: (ctx) => ctx.openDialog('command-palette'),
+    isEnabled: ALWAYS_ENABLED,
   },
 ];
 
