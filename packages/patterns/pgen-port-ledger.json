@@ -1,0 +1,105 @@
+{
+  "original": [
+    {
+      "zpdName": "dot-grid",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "diag-stripes",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "grid-lines",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "concentric-circles",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "hex-lattice",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "checker",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "wave-lines",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "crosshatch",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "radial-burst",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "brick",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "diamond-lattice",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    },
+    {
+      "zpdName": "scallops",
+      "pgenId": null,
+      "family": null,
+      "status": "original",
+      "date": "2026-07-18",
+      "notes": "hand-written before the port program"
+    }
+  ],
+  "japanese": [],
+  "ornament": [],
+  "curves": [],
+  "ringsCircuits": [],
+  "tilings": []
+}
