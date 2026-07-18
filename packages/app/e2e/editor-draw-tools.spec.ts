@@ -4,6 +4,8 @@
 import { expect, test } from '@playwright/test';
 import { bridge, openEditor, toScreenPoint } from './helpers';
 
+const CONSOLE_SETTLE_MS = 500;
+
 test('@smoke pen tool draws a closed path', async ({ page }) => {
   await openEditor(page);
   const before = await bridge(page).getLayerCount();
@@ -25,6 +27,35 @@ test('@smoke pen tool draws a closed path', async ({ page }) => {
   const selectedId = await bridge(page).getSelectedId();
   const layer = (await bridge(page).getDoc()).layers.find((l) => l.id === selectedId);
   expect(layer).toMatchObject({ type: 'path', closed: true });
+});
+
+test('pen tool rapid reactivation keeps one hint root and reports no browser errors', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') errors.push(msg.text());
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await openEditor(page);
+  const hintRoots = page.locator('[data-pen-hint-root]');
+
+  for (let i = 0; i < 6; i += 1) {
+    await page.keyboard.press('p');
+    await page.keyboard.press('v');
+    await page.keyboard.press('p');
+    await expect(hintRoots).toHaveCount(1);
+    await page.keyboard.press('v');
+    await expect(hintRoots).toHaveCount(0);
+  }
+
+  await page.keyboard.press('p');
+  await expect(hintRoots).toHaveCount(1);
+  // wait-ok: the assertion is the absence of delayed React cleanup errors,
+  // so allow every queued retirement to finish before reading the listener.
+  await page.waitForTimeout(CONSOLE_SETTLE_MS);
+  expect(errors).toEqual([]);
 });
 
 test('@smoke text tool places a layer and loads the Orbitron font', async ({ page }) => {
