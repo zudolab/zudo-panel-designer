@@ -187,7 +187,88 @@
       "notes": "near-direct port; dropped bg fill + per-cell colorOffset pick; notched-square corner brackets in mm; cell + line width params; notch 0.18 kept as source const"
     }
   ],
-  "ornament": [],
+  "ornament": [
+    {
+      "zpdName": "rub-el-hizb",
+      "pgenId": "rub-el-hizb",
+      "family": "Islamic & Arabesque",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "dropped bg-fill occlusion (both rotated squares now stroked as plain crossings) + center dot; single color; cell + line width mm params"
+    },
+    {
+      "zpdName": "star-and-cross-field",
+      "pgenId": "star-and-cross-field",
+      "family": "Islamic & Arabesque",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "single color: stars and interstitial crosses both filled (they sit in the alleys between stars, reading distinctly); dropped alpha-darkened outline pass + random palette picks; cell/starRatio params"
+    },
+    {
+      "zpdName": "interlaced-bands",
+      "pgenId": "interlaced-bands",
+      "family": "Islamic & Arabesque",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "no bg paint: over-under via split under-strand segments leaving real gaps at crossings; single color; dropped colorCount select + alpha highlight"
+    },
+    {
+      "zpdName": "mughal-jali",
+      "pgenId": "mughal-jali",
+      "family": "Indian & Southeast Asian",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "redrawn as one even-odd path (region minus octagram + plus voids) instead of paint-over-bg; dropped redundant center-square void; cell + web-width mm params"
+    },
+    {
+      "zpdName": "ten-point-rosette",
+      "pgenId": "ten-point-rosette",
+      "family": "Islamic & Arabesque",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "single outlined 10-point star per cell; dropped concentric ring fills, decagon hub and alpha-darkened strokes; cell/pointDepth/line-width params"
+    },
+    {
+      "zpdName": "kolam-sikku",
+      "pgenId": "kolam-sikku",
+      "family": "Indian & Southeast Asian",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "constructive Hamiltonian loop kept (deterministic); loop + pulli dots share one color; dropped dual color-index params; cell/line-width/dot-radius mm params"
+    },
+    {
+      "zpdName": "aztec-step-fret",
+      "pgenId": "aztec-step-fret",
+      "family": "Classical & Heritage Ornament",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "collapsed banded bg + per-band/per-cell color cycling to one fill; ctx.scale flip folded into coord math; stepUnit/steps/armThickness params"
+    },
+    {
+      "zpdName": "meander",
+      "pgenId": "meander",
+      "family": "Classical & Heritage Ornament",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "re-authored only the classic Greek key as a repeating stroked polyline (columns mirror to interlock); dropped all style/fill-mode selects, frames, decoration; cell + line-width params"
+    },
+    {
+      "zpdName": "endless-knot",
+      "pgenId": "endless-knot",
+      "family": "Knots, Braids & Interlace",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "over-under weave as real gaps (under-strands retracted at crossings) since zpd draw() has no bg color to paint; single strand color; tile/strandWidth/gridN mm params"
+    },
+    {
+      "zpdName": "bishamon-koushi",
+      "pgenId": "bishamon-koushi",
+      "family": "Japanese & Manga",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "each cell an even-odd hex ring (outer hex minus inner hex → real void) instead of a second-color inner-hex punch; dropped tint jitter + color cycling; radius + innerScale params"
+    }
+  ],
   "curves": [
     {
       "zpdName": "smith-truchet",
