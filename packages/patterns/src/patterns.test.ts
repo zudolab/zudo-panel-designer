@@ -43,11 +43,19 @@ function countPaintOps(ctx: ReturnType<typeof createMockCtx>): number {
 // coordinate even when fed garbage params — a non-finite arg reaching the
 // canvas is a silent no-op at best and a real bug at worst.
 function assertNoNonFiniteArgs(ctx: ReturnType<typeof createMockCtx>): void {
-  for (const call of ctx.calls) {
-    for (const arg of call.args) {
-      if (typeof arg === 'number') expect(Number.isFinite(arg)).toBe(true);
-    }
-  }
+  // Plain scan, then a SINGLE expect per draw. A per-arg expect() costs ~8µs
+  // each in vitest; multiplied by every registered pattern × panel size × param
+  // extreme it dominates wall-clock and blows the 20s per-test budget as the
+  // registry grows (the pgen port program adds dozens of generators). The check
+  // is identical in meaning — it fails iff any recorded numeric arg is
+  // non-finite — just O(calls) cheap instead of O(args) of expect() overhead.
+  const offender = ctx.calls.find((call) =>
+    call.args.some((arg) => typeof arg === 'number' && !Number.isFinite(arg)),
+  );
+  expect(
+    offender,
+    offender && `non-finite arg in ${offender.method}(${offender.args.join(', ')})`,
+  ).toBeUndefined();
 }
 
 function assertWithinCallBudget(ctx: ReturnType<typeof createMockCtx>): void {
