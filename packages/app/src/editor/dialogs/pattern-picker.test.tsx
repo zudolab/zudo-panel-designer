@@ -11,7 +11,7 @@ import { defaultParams, PATTERN_GENERATORS } from '@zpd/patterns';
 import { getDialog } from '../registry/dialogs';
 import type { ToolContext } from '../types';
 import './pattern-picker';
-import { THUMBNAIL_SIZE_PX } from './pattern-picker';
+import { PAGE_SIZE, THUMBNAIL_SIZE_PX } from './pattern-picker';
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -166,7 +166,7 @@ describe('pattern-picker dialog — add (opened without layerId)', () => {
 });
 
 describe('pattern-picker dialog — thumbnails', () => {
-  it('renders one canvas per registered pattern, sized for the device pixel ratio', () => {
+  it('renders one canvas per registered pattern up to the first page, sized for the device pixel ratio', () => {
     const original = (globalThis as { devicePixelRatio?: number }).devicePixelRatio;
     (globalThis as { devicePixelRatio?: number }).devicePixelRatio = 2;
     try {
@@ -175,7 +175,10 @@ describe('pattern-picker dialog — thumbnails', () => {
         <PatternPickerDialog props={{}} close={vi.fn()} ctx={stubCtx()} />,
       );
       const canvases = container.querySelectorAll('canvas');
-      expect(canvases.length).toBe(PATTERN_GENERATORS.length);
+      // Paged rendering (#87) caps the first render at PAGE_SIZE; the real
+      // registry is currently well under that, but this stays correct once
+      // the epic grows it past PAGE_SIZE too.
+      expect(canvases.length).toBe(Math.min(PATTERN_GENERATORS.length, PAGE_SIZE));
       canvases.forEach((canvas) => {
         expect(canvas.width).toBe(Math.round(THUMBNAIL_SIZE_PX * 2));
         expect(canvas.height).toBe(Math.round(THUMBNAIL_SIZE_PX * 2));
