@@ -62,11 +62,28 @@ const originalGetContext = HTMLCanvasElement.prototype.getContext;
 beforeEach(() => {
   HTMLCanvasElement.prototype.getContext = (() =>
     fakeCtx2d()) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+  // jsdom has no IntersectionObserver; the picker's paged/lazy sentinel (added
+  // in the search sub-issue) only instantiates one once the registry exceeds a
+  // page — now true with the ported patterns. A no-op stub is enough here: this
+  // suite tests swap/add/thumbnail wiring on the first page, not paging itself
+  // (paging behaviour is covered in pattern-picker-search.test.tsx).
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    },
+  );
 });
 
 afterEach(() => {
   cleanup();
   HTMLCanvasElement.prototype.getContext = originalGetContext;
+  vi.unstubAllGlobals();
 });
 
 describe('pattern-picker dialog — swap (opened with layerId)', () => {
