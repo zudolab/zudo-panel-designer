@@ -27,7 +27,7 @@ export interface OutsidePanelRegion {
   // layers eligible for the ghost pass. Hidden layers are never drawn.
   // Pattern layers are excluded — this is a correctness rule, not an
   // optimization: patterns deliberately overscan the panel edges (see
-  // packages/patterns/src/patterns.ts, centeredStart()) so they read as
+  // packages/patterns/src/param-utils.ts, centeredStart()) so they read as
   // intentional at any panel size, and today's ctx.clip() in the main pass
   // is what hides that overscan. Ghosting patterns would flood the entire
   // gutter with dot-grid. Patterns are semantically panel-bound (see
