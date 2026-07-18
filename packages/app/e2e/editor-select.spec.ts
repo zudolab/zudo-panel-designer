@@ -68,9 +68,11 @@ test('@smoke marquee over a panel-wide pattern does NOT select it', async ({ pag
   await openEditor(page);
 
   // The band y 2..11 is free of every demo layer (the topmost, demo-rect,
-  // starts at y 14) but lies fully inside the panel, i.e. fully inside the
-  // panel-wide dot-grid pattern layer's bounds. hit-test.ts's invariant says
-  // patterns are only selectable via the layer list — the marquee must agree.
+  // starts at y 14) but lies fully inside the cover-default pattern square.
+  // #97: the press lands ON the unselected pattern, and the drag rule turns
+  // that into a marquee (as if empty space); marqueeHitIds still excludes
+  // patterns, so the pattern-only sweep must select nothing — patterns join
+  // a selection only by direct CLICK (two-tier) or the layer list.
   await marqueeDrag(page, { x: 5, y: 2 }, { x: 50, y: 11 });
 
   expect(await bridge(page).getSelectedIds()).toEqual([]);
