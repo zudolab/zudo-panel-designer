@@ -89,7 +89,9 @@ export function measureTextBbox(layer: {
   return { x: layer.x, y: layer.y, width, height: lineHeight * lines.length };
 }
 
-// Layer bbox in mm (pre-rotation). Pattern layers cover the whole panel.
+// Layer bbox in mm (pre-rotation). Pattern layers are bbox-bound since #96:
+// their bounds are the layer's own x/y/size square, not the panel rect, so no
+// layer type needs the panel dims here anymore.
 //
 // CANONICAL BOUNDS (#45): this app-side function is the ONE source of layer
 // bounds for selection chrome AND the marquee (#47) — both MUST read it so a
@@ -99,7 +101,7 @@ export function measureTextBbox(layer: {
 // dependency-free with no Canvas in Node; it is a Node-side hit-test fallback,
 // NOT a bounds source for anything the user sees. Do not re-point chrome/marquee
 // at core's estimate — they would visibly disagree for text.
-export function layerBbox(layer: Layer, panel: PanelDims): Rect | null {
+export function layerBbox(layer: Layer): Rect | null {
   switch (layer.type) {
     case 'shape':
     case 'image':
@@ -109,7 +111,7 @@ export function layerBbox(layer: Layer, panel: PanelDims): Rect | null {
     case 'path':
       return pathBbox(layer.points, layer.extraSubpaths);
     case 'pattern':
-      return { x: 0, y: 0, width: panel.widthMm, height: panel.heightMm };
+      return { x: layer.x, y: layer.y, width: layer.size, height: layer.size };
   }
 }
 
@@ -202,10 +204,12 @@ export function cornerHandleRects(bbox: Rect, cam: Camera): HandleRect[] {
   return resizeHandleRects(bbox, cam).filter((h) => CORNER_HANDLE_IDS.includes(h.id));
 }
 
-// Whether core's scaleLayer can change this layer at all (#52): patterns are
-// panel-wide and pass through unchanged (the epic's eligibility matrix), and
-// a path with no points anywhere (the parser accepts them; pathBbox gives it
-// a 0×0 box, not null) has no coordinates to scale.
+// Whether core's scaleLayer can change this layer at all (#52): patterns pass
+// through scaleLayer unchanged (they carry an x/y/size square since #96, but
+// pattern scaling stays excluded until the interaction sub — this gate is
+// deliberately unchanged), and a path with no points anywhere (the parser
+// accepts them; pathBbox gives it a 0×0 box, not null) has no coordinates to
+// scale.
 function layerCanScale(layer: Layer): boolean {
   switch (layer.type) {
     case 'pattern':
@@ -229,10 +233,9 @@ function layerCanScale(layer: Layer): boolean {
 export function multiResizeBbox(
   layers: readonly Layer[],
   selectedIds: readonly string[],
-  panel: PanelDims,
 ): Rect | null {
   if (selectedIds.length < 2) return null;
-  const boxes = selectionBboxes(layers, selectedIds, panel);
+  const boxes = selectionBboxes(layers, selectedIds);
   if (boxes.length < 2) return null;
   const scalable = layers.some(
     (l) => selectedIds.includes(l.id) && !l.hidden && layerCanScale(l),
@@ -261,14 +264,13 @@ export function rotateHandleScreenPos(bbox: Rect, rotationDeg: number, cam: Came
 function drawLayer(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
-  panel: PanelDims,
   images: Map<string, HTMLImageElement>,
   requestRepaint: () => void,
 ): void {
   ctx.save();
   const rotation = layerRotation(layer);
   if (rotation) {
-    const bbox = layerBbox(layer, panel);
+    const bbox = layerBbox(layer);
     if (bbox) {
       const cx = bbox.x + bbox.width / 2;
       const cy = bbox.y + bbox.height / 2;
@@ -302,13 +304,30 @@ function drawLayer(
     }
     case 'pattern': {
       const gen = patternByName(layer.patternType);
-      if (gen) {
+      // Generators assume a positive draw span — a malformed size must never
+      // reach draw() (the parse boundary guarantees finite size > 0, but docs
+      // are also built in memory by tests/the bridge).
+      if (gen && Number.isFinite(layer.size) && layer.size > 0) {
+        ctx.save();
+        ctx.translate(layer.x, layer.y);
+        // The square clip is its OWN clip op so it composes (intersects) with
+        // whatever clip the caller holds — main pass: panel ∩ square. Never
+        // fold this rect into the ghost pass's even-odd clip path
+        // (renderer.ts's outerRect+innerRect trick): an extra rect in that
+        // path would flip its even-odd regions, not bound the pattern.
+        ctx.beginPath();
+        ctx.rect(0, 0, layer.size, layer.size);
+        ctx.clip();
+        // The generator draws in object-local square space: origin at the
+        // square's top-left, span = the square side (see @zpd/patterns
+        // types.ts). Generator API unchanged.
         gen.draw(ctx, {
-          widthMm: panel.widthMm,
-          heightMm: panel.heightMm,
+          widthMm: layer.size,
+          heightMm: layer.size,
           color: PALETTE[layer.color].hex,
           params: layer.params,
         });
+        ctx.restore();
       }
       break;
     }
@@ -463,7 +482,7 @@ export function renderScene(
     ctx.translate(cam.offsetX, cam.offsetY);
     ctx.scale(cam.pxPerMm, cam.pxPerMm);
     for (const layer of outsideRegion.ghostLayers) {
-      drawLayer(ctx, layer, panel, extras.images, extras.requestRepaint);
+      drawLayer(ctx, layer, extras.images, extras.requestRepaint);
     }
     ctx.restore();
   }
@@ -477,7 +496,7 @@ export function renderScene(
   ctx.scale(cam.pxPerMm, cam.pxPerMm);
   for (const layer of doc.layers) {
     if (layer.hidden) continue;
-    drawLayer(ctx, layer, panel, extras.images, extras.requestRepaint);
+    drawLayer(ctx, layer, extras.images, extras.requestRepaint);
   }
   ctx.restore();
 
@@ -491,7 +510,7 @@ export function renderScene(
   drawGuides(ctx, cam, cssW, cssH, extras);
 
   // selection chrome — UNCLIPPED, in screen space
-  drawSelectionChrome(ctx, doc.layers, panel, cam, extras);
+  drawSelectionChrome(ctx, doc.layers, cam, extras);
 
   // active tool's draft preview hook (pen path in Wave 5, etc.)
   extras.renderDraft?.(makeDraftContext(ctx, cam, panel));
@@ -597,13 +616,12 @@ function drawGuides(
 export function selectionBboxes(
   layers: readonly Layer[],
   selectedIds: readonly string[],
-  panel: PanelDims,
 ): Rect[] {
   const boxes: Rect[] = [];
   for (const id of selectedIds) {
     const layer = layers.find((l) => l.id === id);
     if (!layer || layer.hidden) continue;
-    const raw = layerBbox(layer, panel);
+    const raw = layerBbox(layer);
     if (!raw) continue;
     // normalizeRect: a mirrored shape/image (negative width/height) reaches
     // here as a negative-sized rect when unrotated (rotatedRectAABB only
@@ -670,11 +688,10 @@ function drawHandleSquares(ctx: CanvasRenderingContext2D, rects: readonly Handle
 function drawSelectionChrome(
   ctx: CanvasRenderingContext2D,
   layers: Layer[],
-  panel: PanelDims,
   cam: Camera,
   extras: RenderExtras,
 ): void {
-  const boxes = selectionBboxes(layers, extras.selectedIds, panel);
+  const boxes = selectionBboxes(layers, extras.selectedIds);
   if (boxes.length === 0) return;
 
   // Handles + rotate affordance + path nodes are single-selection concerns:
@@ -687,7 +704,7 @@ function drawSelectionChrome(
   const rotation = selected ? layerRotation(selected) : 0;
   // RAW (pre-rotation) bbox: the oriented chrome + handles anchor to it, not
   // to the axis-aligned AABB in `boxes`.
-  const rawBbox = selected ? layerBbox(selected, panel) : null;
+  const rawBbox = selected ? layerBbox(selected) : null;
 
   ctx.save();
   ctx.strokeStyle = SELECT_COLOR;
@@ -711,7 +728,7 @@ function drawSelectionChrome(
     // Multi-resize affordance (#52): corner handles on the combined bbox.
     // multiResizeBbox is the shared eligibility gate — the select tool grabs
     // exactly the rects drawn here.
-    const multiBbox = multiResizeBbox(layers, extras.selectedIds, panel);
+    const multiBbox = multiResizeBbox(layers, extras.selectedIds);
     if (multiBbox) drawHandleSquares(ctx, cornerHandleRects(multiBbox, cam));
     ctx.restore();
     return;

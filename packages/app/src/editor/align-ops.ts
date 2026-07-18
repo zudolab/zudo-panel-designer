@@ -50,12 +50,12 @@ function addMm(a: number, b: number): number {
   return Number((a + b).toFixed(6));
 }
 
-// Pattern layers are panel-wide, position-pinned backgrounds (no x/y of their
-// own to align) — excluded from both the eligible set and its count, same
-// rule as select.tsx's multi-move/multi-resize targets. A type-predicate
-// filter (not a plain `!== 'pattern'` check) so downstream code sees the
-// PatternLayer-free type and applyDelta's fallthrough branch below can read
-// `.x`/`.y` without a cast.
+// Pattern layers are excluded from both the eligible set and its count, same
+// rule as select.tsx's multi-move/multi-resize targets (they carry an x/y/size
+// square since #96, but stay canvas-non-interactive until the interaction
+// sub). A type-predicate filter (not a plain `!== 'pattern'` check) so
+// downstream code sees the PatternLayer-free type and applyDelta's
+// fallthrough branch below can read `.x`/`.y` without a cast.
 type NonPatternLayer = Exclude<Layer, PatternLayer>;
 
 // A path with no anchors (and no extra subpaths) has no real geometry, but
@@ -76,8 +76,8 @@ export function eligibleLayers(doc: DocState, selectedIds: readonly string[]): N
   );
 }
 
-export function layerAlignRect(layer: Layer, ctx: ToolContext): AlignRect {
-  const raw = layerBbox(layer, ctx.panel) ?? { x: 0, y: 0, width: 0, height: 0 };
+export function layerAlignRect(layer: Layer): AlignRect {
+  const raw = layerBbox(layer) ?? { x: 0, y: 0, width: 0, height: 0 };
   const bbox = normalizeRect(rotatedRectAABB(raw, layerRotation(layer)));
   return { id: layer.id, x: bbox.x, y: bbox.y, w: bbox.width, h: bbox.height };
 }
@@ -149,7 +149,7 @@ export function applyAlign(
     ctx,
     targets,
     alignLayers(
-      targets.map((l) => layerAlignRect(l, ctx)),
+      targets.map((l) => layerAlignRect(l)),
       type,
       alignReferenceInput(reference, ctx),
     ),
@@ -167,7 +167,7 @@ export function applyDistribute(
     ctx,
     targets,
     distributeLayers(
-      targets.map((l) => layerAlignRect(l, ctx)),
+      targets.map((l) => layerAlignRect(l)),
       axis,
       alignReferenceInput(reference, ctx),
     ),
