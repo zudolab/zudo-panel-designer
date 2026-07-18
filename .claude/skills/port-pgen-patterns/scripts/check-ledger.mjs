@@ -145,6 +145,12 @@ for (const [section, rows] of Object.entries(ledger)) {
     if (row.pgenId !== null && typeof row.pgenId !== 'string') {
       problems.push(`${where} (${row.zpdName}): pgenId must be a string or null`);
     }
+    // ported/rejected rows MUST name their pgen source: list-candidates.mjs
+    // subtracts by pgenId, so a null here would re-offer an already-attempted
+    // pattern. Only 'original' (pre-port hand-written) rows may carry null.
+    if (row.status !== 'original' && typeof row.pgenId !== 'string') {
+      problems.push(`${where} (${row.zpdName}): status '${row.status}' requires a pgenId`);
+    }
     if (seenZpdNames.has(row.zpdName)) {
       problems.push(
         `duplicate zpdName '${row.zpdName}' (${seenZpdNames.get(row.zpdName)} and ${where})`,

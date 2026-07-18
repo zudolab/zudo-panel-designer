@@ -66,11 +66,17 @@ as the zpd name unless it collides with an existing generator).
 Append the generator to the matching **group shard**
 (`group-japanese.ts`, `group-ornament.ts`, `group-curves.ts`,
 `group-rings-circuits.ts`, `group-tilings.ts`). Do NOT add generators to
-`patterns/index.ts` directly — the registry only grows via shard spreads,
-which keeps parallel port branches conflict-free. If no existing shard fits a
-new porting round, create a new `group-<theme>.ts` shard, spread it at the END
-of the `PATTERN_GENERATORS` array in `index.ts`, and add a matching new
-section to the ledger.
+`patterns/index.ts` directly — the registry only grows via shard spreads. If
+no existing shard fits a new porting round, create a new `group-<theme>.ts`
+shard, spread it at the END of the `PATTERN_GENERATORS` array in `index.ts`,
+and add a matching new section to the ledger.
+
+**Parallel-branch rule:** shard spreading only prevents merge conflicts when
+each concurrent branch has EXCLUSIVE ownership of the shard file(s) and ledger
+section(s) it appends to. When splitting a round across parallel workers,
+partition the patterns so no two branches touch the same shard/section; if two
+batches would target the same theme, give one of them a new
+`group-<theme>-2.ts` shard + section instead of sharing.
 
 ## Step 5 — test
 
