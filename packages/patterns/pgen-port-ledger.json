@@ -116,6 +116,78 @@
       "status": "ported",
       "date": "2026-07-18",
       "notes": "trial port: per-tile rand() orientation -> hash01 on center-origin indices; granularity -> mm tile pitch; px line width -> mm param; dropped bg fill"
+    },
+    {
+      "zpdName": "hilbert-curve",
+      "pgenId": "hilbert-curve",
+      "family": "Fractals & L-Systems",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "d2xy Hilbert polyline tiled into mm square cells (reads on tall panels); order capped 5, single stroke; dropped bg fill + per-segment color cycling + granularity"
+    },
+    {
+      "zpdName": "dragon-curve",
+      "pgenId": "dragon-curve",
+      "family": "Fractals & L-Systems",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "Heighway dragon (bit-reversal turns) auto-fit per mm cell and tiled; iterations capped 11; single stroke; dropped bg fill + color banding + granularity"
+    },
+    {
+      "zpdName": "vicsek-fractal",
+      "pgenId": "vicsek-fractal",
+      "family": "Fractals & L-Systems",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "plus-of-pluses fills tiled per mm cell (edge-mid cells connect neighbours); depth bounded 2-4; one fill color; dropped bg fill + per-depth palette shuffle + saltire toggle"
+    },
+    {
+      "zpdName": "astroid-grid",
+      "pgenId": "astroid-grid",
+      "family": "Curves & Spirographs",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "sliding-ladder chord envelope of astroid stars, direct port; mm cell + line width + chord count; single stroke; dropped bg fill + per-cell fg cycling + granularity"
+    },
+    {
+      "zpdName": "maurer-rose",
+      "pgenId": "maurer-rose",
+      "family": "Curves & Spirographs",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "360 straight chords over rose r=sin(n*theta) as a medallion grid; n and d fixed as params; thin full-opacity strokes; dropped webAlpha + rose outline + layer/degree randomization + granularity"
+    },
+    {
+      "zpdName": "guilloche",
+      "pgenId": "guilloche",
+      "family": "Curves & Spirographs",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "hypotrochoid medallion per mm cell; r=R/(lobes+1) makes ratio integer so the curve closes in one revolution; R/lobes/pen distance fixed as params, steps capped 720; dropped withAlpha + multi-curve overlay + crop-beyond-bounds + granularity"
+    },
+    {
+      "zpdName": "truchet-quarter-arc",
+      "pgenId": "truchet-quarter-arc",
+      "family": "Mazes, Truchet & Paths",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "quarter-disc lens fills, orientation via hash01 on center-origin indices; dropped bg field fill AND outline/darken pass (no bg paint) so gaps are real negative space; lens in one fg color"
+    },
+    {
+      "zpdName": "labyrinth-classical",
+      "pgenId": "labyrinth-classical",
+      "family": "Mazes, Truchet & Paths",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "concentric gap-alternating arc walls + seed cross tiled per mm unit; one stroke color; dropped per-tile random color pick + colorOffset + granularity (no orientation state to hash)"
+    },
+    {
+      "zpdName": "steiner-chain",
+      "pgenId": "steiner-chain",
+      "family": "Cells, Voronoi & Packing",
+      "status": "ported",
+      "date": "2026-07-19",
+      "notes": "closed-form outer+inner bounding circles + n chain circles per mm cell; rand() rotation offset fixed to 0; chain circles stroked in one fg color instead of multi-color fills; inner ratio hardcoded 0.4"
     }
   ],
   "ringsCircuits": [],
