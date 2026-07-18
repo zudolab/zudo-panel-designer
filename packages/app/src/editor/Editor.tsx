@@ -377,27 +377,23 @@ export function Editor() {
   // --- keyboard: active tool first, then app-level fallbacks -------------
   useEffect(() => {
     const nudge = (dx: number, dy: number) => {
-      // Nudges the WHOLE selection as ONE undo entry (#45). Patterns are pinned
-      // to the panel (eligibility matrix), so a mixed selection moves only its
-      // non-pattern members — but the whole thing stays a single commit.
+      // Nudges the WHOLE selection as ONE undo entry (#45). Pattern members
+      // nudge too since #97 — their x/y square translates like any layer.
       //
-      // Every movable layer gets the SAME (dx, dy) delta so the selection
-      // translates as a rigid unit — snapping each layer's absolute position
+      // Every layer gets the SAME (dx, dy) delta so the selection translates
+      // as a rigid unit — snapping each layer's absolute position
       // independently would apply different effective deltas to off-grid
       // members (allowed via the numeric inspectors) and shear the group. dx/dy
       // are already grid steps (0.1 / 1mm), and this matches translatePathLayer,
       // which already moves paths by the raw delta.
       const ids = new Set(readSelectedIds());
       if (ids.size === 0) return;
-      let moved = false;
       const layers = docRef.current.layers.map((l) => {
-        if (!ids.has(l.id) || l.type === 'pattern') return l;
-        moved = true;
+        if (!ids.has(l.id)) return l;
         const patch =
           l.type === 'path' ? translatePathLayer(l, dx, dy) : { x: l.x + dx, y: l.y + dy };
         return { ...l, ...patch } as Layer;
       });
-      if (!moved) return; // pattern-only selection → no phantom undo entry
       commit({ ...docRef.current, layers });
     };
 

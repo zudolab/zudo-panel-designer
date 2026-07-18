@@ -50,12 +50,13 @@ function addMm(a: number, b: number): number {
   return Number((a + b).toFixed(6));
 }
 
-// Pattern layers are excluded from both the eligible set and its count, same
-// rule as select.tsx's multi-move/multi-resize targets (they carry an x/y/size
-// square since #96, but stay canvas-non-interactive until the interaction
-// sub). A type-predicate filter (not a plain `!== 'pattern'` check) so
-// downstream code sees the PatternLayer-free type and applyDelta's
-// fallthrough branch below can read `.x`/`.y` without a cast.
+// Pattern layers stay excluded from both the eligible set and its count —
+// #97 kept align/distribute pattern-free on purpose: the cover-default square
+// would dominate the combined bounds and yank real content toward it (same
+// reasoning as the marquee/select-all exclusions; patterns move via drag,
+// nudge, and the inspector instead). A type-predicate filter (not a plain
+// `!== 'pattern'` check) so downstream code sees the PatternLayer-free type
+// and applyDelta's fallthrough branch below can read `.x`/`.y` without a cast.
 type NonPatternLayer = Exclude<Layer, PatternLayer>;
 
 // A path with no anchors (and no extra subpaths) has no real geometry, but

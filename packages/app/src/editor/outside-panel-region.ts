@@ -2,9 +2,9 @@
 // (issue #43). No Canvas here — this is the *decision* (which layers ghost,
 // what the two clip rects are), node-testable without a canvas context.
 // renderer.ts turns the result into the actual ctx.rect()/ctx.clip() calls;
-// see outside-panel-region.test.ts for the ON/OFF/pattern-skip coverage and
-// editor-view.spec.ts for the pixel-level proof that the canvas clip itself
-// behaves (this module can't prove that on its own).
+// see outside-panel-region.test.ts for the ON/OFF/pattern-eligibility
+// coverage and editor-view.spec.ts for the pixel-level proof that the canvas
+// clip itself behaves (this module can't prove that on its own).
 import { normalizeRect, rotatedRectAABB, type Layer } from '@zpd/core';
 import type { Camera } from './camera';
 import { layerBbox, layerRotation } from './renderer';
@@ -25,20 +25,22 @@ export interface OutsidePanelRegion {
   // why that disjointness is load-bearing)
   innerRect: PxRect;
   // layers eligible for the ghost pass. Hidden layers are never drawn.
-  // Pattern layers are excluded — TEMPORARILY, since #96: patterns are now
-  // bbox-bound (layerBbox returns the layer's x/y/size square, and the draw
-  // branch clips to that square — see renderer.ts), so ghosting one is
-  // well-defined (square ∖ panel at low alpha; the generators' deliberate
-  // edge overscan, param-utils.ts centeredStart(), stays hidden by the square
-  // clip). The eligibility flip is the interaction follow-up sub's job —
-  // until a pattern can actually be moved off-panel, ghosting it would only
-  // dim the cover square's off-panel margin for no user benefit. Beyond
-  // that, a layer whose (rotation-aware) bbox stays fully inside the panel
-  // is also excluded — it's a pure performance cull (see
-  // crossesPanelBoundary): the exterior clip rejects every pixel such a
-  // layer paints anyway, so drawing it here would just re-render (and, for
-  // path layers, rebuild the Path2D) the whole layer a second time per
-  // repaint for zero visual effect — costly on a large trace with hundreds
+  // Pattern layers are ELIGIBLE since #97 (they're user-movable, so the
+  // off-panel part of the square must read as "will not be manufactured"
+  // like any other layer's): their draw branch clips to the layer's own
+  // x/y/size square via a SEPARATE beginPath/rect/clip that INTERSECTS
+  // whatever clip the caller holds (see renderer.ts drawLayer — never fold
+  // that rect into this pass's even-odd outer clip), so a ghosted pattern
+  // paints exactly square ∖ panel at low alpha, and the generators'
+  // deliberate edge overscan (param-utils.ts centeredStart()) can never
+  // flood the gutter beyond the square. That overscan was the original
+  // reason patterns were excluded here; the square clip (#96) solved it.
+  // The one cull left is pure PERFORMANCE (see crossesPanelBoundary): a
+  // layer whose (rotation-aware) painted bbox stays fully inside the panel
+  // can never contribute a visible ghost pixel — the exterior clip rejects
+  // every pixel it paints — so drawing it here would just re-render (and,
+  // for path layers, rebuild the Path2D) the whole layer a second time per
+  // repaint for zero visual effect, costly on a large trace with hundreds
   // of path layers.
   ghostLayers: Layer[];
 }
@@ -93,8 +95,6 @@ export function outsidePanelRegion(
       width: panel.widthMm * cam.pxPerMm,
       height: panel.heightMm * cam.pxPerMm,
     },
-    ghostLayers: layers.filter(
-      (layer) => !layer.hidden && layer.type !== 'pattern' && crossesPanelBoundary(layer, panel),
-    ),
+    ghostLayers: layers.filter((layer) => !layer.hidden && crossesPanelBoundary(layer, panel)),
   };
 }

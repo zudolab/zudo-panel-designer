@@ -247,7 +247,9 @@ describe('marquee gesture', () => {
     const h = makeHarness(threeRects());
     h.ctx.selectIds([]);
 
-    select.onPointerDown?.(h.ptr({ x: 5, y: 5 }), h.ctx); // empty space
+    // (5,5) sits on the UNSELECTED cover pattern — #97's drag rule makes this
+    // press marquee exactly as if it were empty space.
+    select.onPointerDown?.(h.ptr({ x: 5, y: 5 }), h.ctx);
     select.onPointerMove?.(h.ptr({ x: 45, y: 25 }), h.ctx); // covers r1 + r2, not r3
 
     // materialized: the rubber-band draws
@@ -259,9 +261,12 @@ describe('marquee gesture', () => {
     expect(h.getSelectedIds()).toEqual(['r1', 'r2']);
     expect(h.getBeginGestureCalls()).toBe(0);
     expect(h.getHistory().past).toHaveLength(0);
+    expect(h.layerById('pat1')).toEqual(dotGrid); // the pattern never moved
   });
 
   it('a marquee over only the panel-wide pattern selects nothing', () => {
+    // Down on the unselected pattern = marquee (#97); marqueeHitIds still
+    // excludes patterns, so a pattern-only sweep selects nothing.
     const h = makeHarness(threeRects());
     select.onPointerDown?.(h.ptr({ x: 60, y: 60 }), h.ctx);
     select.onPointerMove?.(h.ptr({ x: 90, y: 100 }), h.ctx);
@@ -273,24 +278,58 @@ describe('marquee gesture', () => {
     const h = makeHarness(threeRects());
     h.ctx.selectIds(['r1']);
 
-    select.onPointerDown?.(h.ptr({ x: 60, y: 60 }), h.ctx);
+    // (60,140) is below the pattern square (y > 128.5) — still genuinely
+    // empty space now that the square itself is click-selectable (#97).
+    select.onPointerDown?.(h.ptr({ x: 60, y: 140 }), h.ctx);
     expect(h.getSelectedIds()).toEqual([]); // plain click clears at DOWN
 
-    select.onPointerMove?.(h.ptr({ x: 62, y: 61 }), h.ctx); // ~2.2px < 4px
+    select.onPointerMove?.(h.ptr({ x: 62, y: 141 }), h.ctx); // ~2.2px < 4px
     const spy = makeDraftSpy();
     select.renderDraft?.(spy.draft, h.ctx);
     expect(spy.calls).toEqual([]); // nothing materialized
 
-    select.onPointerUp?.(h.ptr({ x: 62, y: 61 }), h.ctx);
+    select.onPointerUp?.(h.ptr({ x: 62, y: 141 }), h.ctx);
     expect(h.getSelectedIds()).toEqual([]);
+  });
+
+  // #97's click rule: the same sub-threshold press ON the unselected pattern
+  // square selects the pattern on release instead of staying deselected.
+  it('a sub-threshold press on an unselected pattern is a click that SELECTS it on release', () => {
+    const h = makeHarness(threeRects());
+    h.ctx.selectIds(['r1']);
+
+    select.onPointerDown?.(h.ptr({ x: 60, y: 60 }), h.ctx);
+    expect(h.getSelectedIds()).toEqual([]); // still clears at DOWN, like empty space
+
+    select.onPointerMove?.(h.ptr({ x: 62, y: 61 }), h.ctx); // sub-threshold jiggle
+    const spy = makeDraftSpy();
+    select.renderDraft?.(spy.draft, h.ctx);
+    expect(spy.calls).toEqual([]); // no marquee flash
+
+    select.onPointerUp?.(h.ptr({ x: 62, y: 61 }), h.ctx);
+    expect(h.getSelectedIds()).toEqual(['pat1']);
+    expect(h.getHistory().past).toHaveLength(0); // selection only — no doc change
   });
 
   it('a meta/ctrl empty click PRESERVES the selection (additive intent)', () => {
     const h = makeHarness(threeRects());
     h.ctx.selectIds(['r1']);
-    select.onPointerDown?.(h.ptr({ x: 60, y: 60 }, { metaKey: true }), h.ctx);
-    select.onPointerUp?.(h.ptr({ x: 60, y: 60 }, { metaKey: true }), h.ctx);
+    // (60,140): outside the pattern square — see the sub-threshold test (#97).
+    select.onPointerDown?.(h.ptr({ x: 60, y: 140 }, { metaKey: true }), h.ctx);
+    select.onPointerUp?.(h.ptr({ x: 60, y: 140 }, { metaKey: true }), h.ctx);
     expect(h.getSelectedIds()).toEqual(['r1']);
+  });
+
+  // #97: a modifier CLICK on an unselected pattern toggles it into the
+  // selection (release-time), while a modifier DRAG from the same point is
+  // still an additive marquee — patterns never block marquee access.
+  it('a meta/ctrl click on an unselected pattern ADDS it to the selection on release', () => {
+    const h = makeHarness(threeRects());
+    h.ctx.selectIds(['r1']);
+    select.onPointerDown?.(h.ptr({ x: 60, y: 60 }, { metaKey: true }), h.ctx);
+    expect(h.getSelectedIds()).toEqual(['r1']); // preserved at DOWN (additive intent)
+    select.onPointerUp?.(h.ptr({ x: 60, y: 60 }, { metaKey: true }), h.ctx);
+    expect(h.getSelectedIds()).toEqual(['pat1', 'r1']); // normalized to doc order
   });
 
   it('a right-click PRESERVES the selection and never arms a marquee', () => {
@@ -305,6 +344,7 @@ describe('marquee gesture', () => {
   it('a shift-marquee unions with the down-time selection', () => {
     const h = makeHarness(threeRects());
     h.ctx.selectIds(['r3']);
+    // starts on the unselected pattern — still an additive marquee (#97)
     select.onPointerDown?.(h.ptr({ x: 5, y: 5 }, { shiftKey: true }), h.ctx);
     select.onPointerMove?.(h.ptr({ x: 45, y: 25 }, { shiftKey: true }), h.ctx);
     select.onPointerUp?.(h.ptr({ x: 45, y: 25 }, { shiftKey: true }), h.ctx);
@@ -430,6 +470,18 @@ describe('hover', () => {
     // leaving with nothing hovered stays repaint-free
     select.onPointerLeave?.(h.ptr({ x: -5, y: 15 }, { buttons: 0 }), h.ctx);
     expect(h.getRepaintCalls()).toBe(2);
+  });
+
+  // #97: patterns are hover-testable via the two-tier hit, so pattern-covered
+  // "empty" panel space outlines the pattern square instead of nothing.
+  it('hovering pattern-covered space outlines the pattern square (two-tier)', () => {
+    const h = makeHarness({ panelHp: 12, guides: [], layers: [dotGrid, rect('r1', 10, 10)] });
+    select.onPointerMove?.(h.ptr({ x: 60, y: 60 }, { buttons: 0 }), h.ctx); // only the pattern is under here
+    expect(h.getRepaintCalls()).toBe(1);
+
+    const spy = makeDraftSpy();
+    select.renderDraft?.(spy.draft, h.ctx);
+    expect(spy.calls.some((c) => c.method === 'strokeRect')).toBe(true);
   });
 
   it('clears the hover outline on pointerdown so nothing draws mid-drag', () => {
