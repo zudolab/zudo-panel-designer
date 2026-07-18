@@ -65,6 +65,27 @@ describe('confirmDialog', () => {
     expect(document.activeElement?.textContent).toBe('Cancel');
   });
 
+  it('restores focus to the opener after content-driven Cancel closes it', async () => {
+    const opener = document.createElement('button');
+    try {
+      document.body.appendChild(opener);
+      opener.focus();
+      render(<DialogHost ctx={stubCtx()} />);
+
+      let result!: Promise<boolean>;
+      act(() => {
+        result = confirmDialog({ title: 'Keep focus?' });
+      });
+      expect(document.activeElement?.textContent).toBe('Cancel');
+
+      fireEvent.click(screen.getByText('Cancel'));
+      expect(await result).toBe(false);
+      expect(document.activeElement).toBe(opener);
+    } finally {
+      opener.remove();
+    }
+  });
+
   it('applies the danger styling to the confirm button when danger is set', () => {
     render(<DialogHost ctx={stubCtx()} />);
     act(() => {
