@@ -36,12 +36,16 @@ export function Header({
   };
 
   return (
-    <header className="flex items-center gap-3 border-b border-neutral-800 bg-neutral-900 px-4 py-2">
-      <h1 className="text-sm font-semibold text-amber-400">zpd</h1>
-      <span className="text-xs text-neutral-500">Zudo Panel Designer</span>
+    <header className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-neutral-800 bg-neutral-900 px-4 py-2 lg:flex-nowrap">
+      <h1 className="shrink-0 text-sm font-semibold text-amber-400">zpd</h1>
+      <span className="hidden text-xs text-neutral-500 lg:inline">Zudo Panel Designer</span>
       <SaveStatusChip status={saveStatus} />
 
-      <div className="ml-auto flex items-center gap-1.5">
+      <div
+        role="toolbar"
+        aria-label="Editor actions"
+        className="order-last flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-x-auto overscroll-x-contain p-1.5 lg:order-none lg:ml-auto lg:w-auto lg:flex-none lg:overflow-visible lg:p-0"
+      >
         <ChromeButton title="Zoom out" onClick={() => onZoomStep(1 / 1.25)}>
           −
         </ChromeButton>
@@ -56,6 +60,17 @@ export function Header({
         </ChromeButton>
 
         <span className="mx-1 h-5 w-px bg-neutral-700" />
+
+        <ChromeButton
+          data-dialog-focus-fallback="true"
+          className="order-first min-h-11 min-w-11 shrink-0 border-amber-500/80 bg-amber-500/15 font-medium text-amber-200 hover:bg-amber-500/15 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 [@media(hover:hover)]:hover:bg-amber-500/25 lg:order-none"
+          title="Preview panel in 3D"
+          onClick={() => ctx.openDialog('preview-3d')}
+        >
+          Preview 3D
+        </ChromeButton>
+
+        <span className="order-first mx-1 h-5 w-px shrink-0 bg-neutral-700 lg:order-none" />
 
         <ChromeButton title="Undo (⌘/Ctrl+Z)" disabled={!canUndo} onClick={ctx.undo}>
           ↩

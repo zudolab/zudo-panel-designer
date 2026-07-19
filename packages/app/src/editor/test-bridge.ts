@@ -16,6 +16,16 @@ import {
   type PanelConfig,
 } from '@zpd/core';
 import type { Camera } from './camera';
+import {
+  fingerprintPreviewSurfaceMap,
+  getPreviewDebugSummary,
+  samplePreviewSurfaceMap,
+} from './preview/debug-state';
+import type { PreviewDebugSummary, PreviewSurfaceMaps } from './preview/contracts';
+import type {
+  PreviewSurfaceDebugFingerprint,
+  PreviewSurfaceDebugSample,
+} from './preview/debug-state';
 import { peekTextGeometry, type TextGeometry } from './text-geometry';
 
 export interface ZpdTestLayerSummary {
@@ -36,6 +46,13 @@ export interface ZpdTestBridge {
   getSelectedId(): string | null;
   getSelectedIds(): string[];
   getCamera(): Camera | null;
+  getPreview(): PreviewDebugSummary;
+  samplePreviewSurface(
+    map: keyof PreviewSurfaceMaps,
+    normalizedX: number,
+    normalizedY: number,
+  ): PreviewSurfaceDebugSample | null;
+  fingerprintPreviewSurface(map: keyof PreviewSurfaceMaps): PreviewSurfaceDebugFingerprint | null;
   getTextGeometry(id: string): TextGeometry | null;
   serialize(): PanelConfig;
 }
@@ -78,6 +95,10 @@ export function installTestBridge(source: TestBridgeSource): void {
     getSelectedId: () => source.getSelectedId(),
     getSelectedIds: () => [...source.getSelectedIds()],
     getCamera: () => source.getCamera(),
+    getPreview: () => getPreviewDebugSummary(),
+    samplePreviewSurface: (map, normalizedX, normalizedY) =>
+      samplePreviewSurfaceMap(map, normalizedX, normalizedY),
+    fingerprintPreviewSurface: (map) => fingerprintPreviewSurfaceMap(map),
     getTextGeometry: (id) => peekTextGeometry(id),
     serialize: () => serializePanelConfig(source.getDoc()),
   };

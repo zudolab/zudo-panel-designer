@@ -13,6 +13,7 @@ import {
   rectCenter,
   rectCorners,
   rotatedRectAABB,
+  type ColorIndex,
   type Guide,
   type Layer,
   type Pt,
@@ -59,6 +60,20 @@ export interface RenderExtras {
   // face drawn this frame gets replaced by the real glyphs on repaint (#67).
   requestRepaint: () => void;
 }
+
+// Canonical layer painter shared by the interactive editor and derived
+// manufacturing surfaces. Geometry stays in one place while each consumer
+// supplies the color/material channel it needs. Image layers remain an
+// explicit opt-in because raster references are design furniture, not
+// manufacturable panel artwork.
+export interface LayerPaintOptions {
+  readonly colorFor: (color: ColorIndex) => string;
+  readonly images?: ReadonlyMap<string, HTMLImageElement>;
+  readonly paintMissingImagePlaceholder?: boolean;
+  readonly loadingTextAlpha?: number;
+}
+
+const editorPaletteColor = (color: ColorIndex): string => PALETTE[color].hex;
 
 // Layer bbox in mm (pre-rotation). Pattern layers are bbox-bound since #96:
 // their bounds are the layer's own x/y/size square, not the panel rect, so no
@@ -228,10 +243,10 @@ export function rotateHandleScreenPos(bbox: Rect, rotationDeg: number, cam: Came
   };
 }
 
-function drawLayer(
+export function paintLayer(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
-  images: Map<string, HTMLImageElement>,
+  options: LayerPaintOptions,
 ): void {
   const textGeometry = layer.type === 'text' ? getTextGeometry(layer) : null;
   // Invalid text sizes are preserved in the model for inspector recovery, but
@@ -251,7 +266,7 @@ function drawLayer(
   }
   switch (layer.type) {
     case 'shape': {
-      ctx.fillStyle = PALETTE[layer.color].hex;
+      ctx.fillStyle = options.colorFor(layer.color);
       ctx.beginPath();
       if (layer.shape === 'rect') {
         ctx.rect(layer.x, layer.y, layer.width, layer.height);
@@ -301,7 +316,7 @@ function drawLayer(
         gen.draw(ctx, {
           widthMm: layer.size,
           heightMm: layer.size,
-          color: PALETTE[layer.color].hex,
+          color: options.colorFor(layer.color),
           params: layer.params,
         });
         ctx.restore();
@@ -312,11 +327,11 @@ function drawLayer(
       const path = buildPath2D(layer.points, layer.closed, layer.extraSubpaths);
       if (path) {
         if (layer.fill !== null && layer.closed) {
-          ctx.fillStyle = PALETTE[layer.fill].hex;
+          ctx.fillStyle = options.colorFor(layer.fill);
           ctx.fill(path, 'evenodd'); // holes/islands from tracing stay holes
         }
         if (layer.stroke !== null && layer.strokeWidth > 0) {
-          ctx.strokeStyle = PALETTE[layer.stroke].hex;
+          ctx.strokeStyle = options.colorFor(layer.stroke);
           ctx.lineWidth = layer.strokeWidth;
           ctx.stroke(path);
         }
@@ -327,7 +342,7 @@ function drawLayer(
       // textGeometry was resolved before the transform above, so paint origin,
       // transform pivot, chrome and hit testing all consume one result.
       const geometry = textGeometry!;
-      ctx.fillStyle = PALETTE[layer.color].hex;
+      ctx.fillStyle = options.colorFor(layer.color);
       ctx.font = `${layer.sizeMm}px "${layer.fontFamily}"`;
       ctx.textBaseline = 'top';
       // Multiply into the CALLER's alpha (1 for the normal in-panel pass,
@@ -335,7 +350,8 @@ function drawLayer(
       // overwriting it — otherwise a loading/loaded google font would blow
       // away the ghost dim and always paint at 1 or 0.3 regardless of it.
       const inheritedAlpha = ctx.globalAlpha;
-      ctx.globalAlpha = geometry.loading ? inheritedAlpha * LOADING_FONT_ALPHA : inheritedAlpha;
+      const loadingTextAlpha = options.loadingTextAlpha ?? 1;
+      ctx.globalAlpha = geometry.loading ? inheritedAlpha * loadingTextAlpha : inheritedAlpha;
       const lineHeight = layer.sizeMm * 1.25;
       layer.content.split('\n').forEach((line, i) => {
         ctx.fillText(line, geometry.box.x, geometry.box.y + i * lineHeight);
@@ -343,10 +359,10 @@ function drawLayer(
       break;
     }
     case 'image': {
-      const img = images.get(layer.id);
+      const img = options.images?.get(layer.id);
       if (img && img.complete && img.naturalWidth > 0) {
         ctx.drawImage(img, layer.x, layer.y, layer.width, layer.height);
-      } else {
+      } else if (options.paintMissingImagePlaceholder) {
         // placeholder outline until the raster finishes loading
         ctx.strokeStyle = 'rgba(255,255,255,0.4)';
         ctx.lineWidth = 0.3;
@@ -391,6 +407,12 @@ export function renderScene(
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.width / dpr;
   const cssH = canvas.height / dpr;
+  const layerPaintOptions: LayerPaintOptions = {
+    colorFor: editorPaletteColor,
+    images: extras.images,
+    paintMissingImagePlaceholder: true,
+    loadingTextAlpha: LOADING_FONT_ALPHA,
+  };
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -450,7 +472,7 @@ export function renderScene(
     ctx.translate(cam.offsetX, cam.offsetY);
     ctx.scale(cam.pxPerMm, cam.pxPerMm);
     for (const layer of outsideRegion.ghostLayers) {
-      drawLayer(ctx, layer, extras.images);
+      paintLayer(ctx, layer, layerPaintOptions);
     }
     ctx.restore();
   }
@@ -464,7 +486,7 @@ export function renderScene(
   ctx.scale(cam.pxPerMm, cam.pxPerMm);
   for (const layer of doc.layers) {
     if (layer.hidden) continue;
-    drawLayer(ctx, layer, extras.images);
+    paintLayer(ctx, layer, layerPaintOptions);
   }
   ctx.restore();
 

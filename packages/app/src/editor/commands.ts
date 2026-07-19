@@ -281,6 +281,13 @@ const STATIC_COMMANDS: CommandDef[] = [
     run: (ctx) => ctx.zoomFit(),
     isEnabled: ALWAYS_ENABLED,
   },
+  {
+    id: 'view-preview-3d',
+    label: 'Preview 3D',
+    category: 'View',
+    run: (ctx) => ctx.openDialog('preview-3d'),
+    isEnabled: ALWAYS_ENABLED,
+  },
 
   // ── Align ─────────────────────────────────────────────────────────────
   // Chordless (palette-only), same as the reference app's align commands.

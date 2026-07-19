@@ -395,6 +395,18 @@ describe('chordless commands (zoom / align / file / text) have run() wired to a 
     expect(ctx.zoomFit).toHaveBeenCalledTimes(1);
   });
 
+  it('view-preview-3d is palette-only and opens the preview dialog', () => {
+    const ctx = stubCommandCtx();
+    const preview = allCommands().find((command) => command.id === 'view-preview-3d')!;
+
+    expect(preview.label).toBe('Preview 3D');
+    expect(preview.category).toBe('View');
+    expect(preview.chord).toBeUndefined();
+    preview.run(ctx);
+
+    expect(ctx.openDialog).toHaveBeenCalledWith('preview-3d');
+  });
+
   it('file-download-json calls downloadPanelConfig with ctx.doc', () => {
     const doc: DocState = { panelHp: 6, guides: [], layers: [] };
     const ctx = stubCommandCtx({ doc });
