@@ -32,6 +32,17 @@ export function bridge(page: Page) {
     getSelectedId: () => page.evaluate(() => window.__zpdTest!.getSelectedId()),
     getSelectedIds: () => page.evaluate(() => window.__zpdTest!.getSelectedIds()),
     getCamera: () => page.evaluate(() => window.__zpdTest!.getCamera()),
+    getPreview: () => page.evaluate(() => window.__zpdTest!.getPreview()),
+    samplePreviewSurface: (
+      map: 'baseColor' | 'metalness' | 'roughness',
+      normalizedX: number,
+      normalizedY: number,
+    ) =>
+      page.evaluate(({ mapName, x, y }) => window.__zpdTest!.samplePreviewSurface(mapName, x, y), {
+        mapName: map,
+        x: normalizedX,
+        y: normalizedY,
+      }),
     getTextGeometry: (id: string) =>
       page.evaluate((layerId) => window.__zpdTest!.getTextGeometry(layerId), id),
     serialize: () => page.evaluate(() => window.__zpdTest!.serialize()),

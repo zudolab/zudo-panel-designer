@@ -307,6 +307,21 @@ describe('preview texture ownership', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
+  it('continues disposing the owned set when one texture disposer throws', () => {
+    const baseColor = {
+      dispose: vi.fn(() => {
+        throw new Error('dispose failed');
+      }),
+    };
+    const metalness = { dispose: vi.fn() };
+    const roughness = { dispose: vi.fn() };
+
+    expect(() => disposePreviewTextureSet({ baseColor, metalness, roughness })).not.toThrow();
+    expect(baseColor.dispose).toHaveBeenCalledOnce();
+    expect(metalness.dispose).toHaveBeenCalledOnce();
+    expect(roughness.dispose).toHaveBeenCalledOnce();
+  });
+
   it('rejects overlapping ownership without installing or disposing either set', () => {
     const events: string[] = [];
     const current = textureSet('old', events);

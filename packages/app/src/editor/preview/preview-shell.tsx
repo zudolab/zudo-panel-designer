@@ -9,8 +9,6 @@ import { loadPreviewViewer } from './load-viewer';
 export { PreviewRendererUnavailable } from './preview-status';
 import type { PreviewViewerLoader, PreviewViewerModule } from './viewer-types';
 
-export const PREVIEW_PANEL_THICKNESS_MM = 2.5;
-
 const CAMERA_BUTTON_CLASS =
   'inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border border-white/25 bg-neutral-900/90 px-3 text-sm font-semibold text-white shadow-sm motion-safe:transition-colors [@media(hover:hover)]:hover:bg-neutral-700/95 active:bg-neutral-600/95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 disabled:cursor-not-allowed disabled:opacity-40';
 

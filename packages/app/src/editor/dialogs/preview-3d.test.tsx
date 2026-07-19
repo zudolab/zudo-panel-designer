@@ -2,7 +2,7 @@
 import '../registry';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import type { DocState, Pt } from '@zpd/core';
+import { PANEL_THICKNESS_MM, type DocState, type Pt } from '@zpd/core';
 import type { CommandContext } from '../commands';
 import { Header } from '../components/header';
 import { DialogHost } from '../components/dialog-host';
@@ -69,6 +69,14 @@ function AppChrome({ ctx }: { readonly ctx: CommandContext }) {
 }
 
 describe('preview-3d dialog integration', () => {
+  it('uses the manufactured core thickness in its accessible dimensions', () => {
+    const ctx = stubCtx();
+    render(<DialogHost ctx={ctx} />);
+    act(() => openDialog('preview-3d', { loadViewer: () => new Promise(() => {}) }));
+
+    expect(screen.getByText(new RegExp(`${PANEL_THICKNESS_MM} mm thick`))).toBeTruthy();
+  });
+
   it('auto-registers with an accessible title and opens through the dialog host', () => {
     expect(getDialog('preview-3d')?.labelledBy).toBe('preview-3d-title');
     const ctx = stubCtx();

@@ -213,7 +213,12 @@ describe('eager import boundary', () => {
       resolve(process.cwd(), 'packages/app/src/editor/dialogs/preview-3d.tsx'),
       'utf8',
     );
-    const eagerSources = `${shellSource}\n${loaderSource}\n${dialogSource}`;
+    const debugSource = readFileSync(`${directory}/debug-state.ts`, 'utf8');
+    const testBridgeSource = readFileSync(
+      resolve(process.cwd(), 'packages/app/src/editor/test-bridge.ts'),
+      'utf8',
+    );
+    const eagerSources = `${shellSource}\n${loaderSource}\n${dialogSource}\n${debugSource}\n${testBridgeSource}`;
 
     expect(shellSource).not.toMatch(/from\s+['"]\.\/viewer['"]/);
     expect(dialogSource).not.toMatch(/from\s+['"].*\/viewer['"]/);

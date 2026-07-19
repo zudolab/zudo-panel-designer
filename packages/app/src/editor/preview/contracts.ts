@@ -290,7 +290,14 @@ export type PreviewTextureSet<Texture extends PreviewDisposableTexture> = Readon
 export function disposePreviewTextureSet<Texture extends PreviewDisposableTexture>(
   textures: PreviewTextureSet<Texture>,
 ): void {
-  for (const texture of new Set(Object.values(textures))) texture.dispose();
+  for (const texture of new Set(Object.values(textures))) {
+    try {
+      texture.dispose();
+    } catch {
+      // Texture cleanup is terminal and best-effort. Continue so one faulty
+      // disposal listener cannot retain the rest of an owned GPU set.
+    }
+  }
 }
 
 // Ownership of a distinct replacement begins after validation. A failed
