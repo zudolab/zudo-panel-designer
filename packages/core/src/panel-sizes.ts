@@ -1,6 +1,7 @@
 // Actual product widths from the Takazudo Modular blank-panel spec tables —
 // real panels are undersized vs the nominal HP*5.08mm for mounting clearance.
 export const PANEL_HEIGHT_MM = 128.5; // 3U Eurorack panel height
+export const PANEL_THICKNESS_MM = 2.5; // fixed manufactured PCB thickness
 
 export interface PanelSize {
   hp: number;
