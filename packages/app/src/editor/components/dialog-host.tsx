@@ -44,7 +44,16 @@ export function DialogHost({ ctx }: { ctx: CommandContext }) {
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       if (getOpenDialog() !== null) return;
-      if (returnFocusTarget?.isConnected) returnFocusTarget.focus();
+      if (returnFocusTarget?.isConnected) {
+        returnFocusTarget.focus();
+        return;
+      }
+
+      // A command-palette opener can disappear while one dialog replaces
+      // another. Restore to an explicitly durable editor control instead of
+      // leaving focus on detached modal content (or implicitly on <body>).
+      const fallback = document.querySelector<HTMLElement>('[data-dialog-focus-fallback="true"]');
+      fallback?.focus();
     };
   }, [isOpen, returnFocusTarget]);
 

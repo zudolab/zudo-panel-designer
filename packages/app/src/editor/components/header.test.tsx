@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
+import '../registry';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { DocState, Pt } from '@zpd/core';
-import { closeDialog } from '../registry/dialogs';
+import { closeDialog, openDialog } from '../registry/dialogs';
 import type { CommandContext } from '../commands';
 import { DialogHost } from './dialog-host';
 import { Header } from './header';
@@ -80,6 +81,21 @@ describe('Header', () => {
     renderHeader(ctx);
     fireEvent.click(screen.getByTitle('Keyboard shortcuts'));
     expect(ctx.openDialog).toHaveBeenCalledWith('shortcut-panel');
+  });
+
+  it('opens the 3D preview from a clearly separated durable header action', () => {
+    const ctx = stubCtx({ openDialog });
+    renderHeader(ctx);
+    const opener = screen.getByRole('button', { name: 'Preview 3D' });
+
+    expect(opener.className).toContain('border-amber-500/80');
+    expect(opener.getAttribute('data-dialog-focus-fallback')).toBe('true');
+    opener.focus();
+    fireEvent.click(opener);
+
+    expect(screen.getByRole('dialog', { name: '3D PCB preview' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Close 3D preview' }));
+    expect(document.activeElement).toBe(opener);
   });
 
   it('opens a danger confirm dialog when "New panel" is clicked', () => {
