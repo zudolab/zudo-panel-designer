@@ -8,6 +8,14 @@ export interface PreviewSurfaceDebugSample {
   readonly rgba: readonly [number, number, number, number];
 }
 
+export interface PreviewSurfaceDebugFingerprint {
+  readonly map: keyof PreviewSurfaceMaps;
+  readonly surfaceRevision: number;
+  readonly widthPx: number;
+  readonly heightPx: number;
+  readonly hash: string;
+}
+
 interface PreviewDebugEntry {
   readonly summary: PreviewDebugSummary;
   readonly snapshot: PreviewSurfaceSnapshot | null;
@@ -141,5 +149,35 @@ export function samplePreviewSurfaceMap(
       number,
       number,
     ],
+  });
+}
+
+// A compact read-only observation for production-path tests that need to
+// prove a same-revision texture replacement (for example, once a font becomes
+// ready). FNV-1a is intentionally non-cryptographic: it is deterministic,
+// cheap over a preview canvas, and never exposes or mutates the owned pixels.
+export function fingerprintPreviewSurfaceMap(
+  map: keyof PreviewSurfaceMaps,
+): PreviewSurfaceDebugFingerprint | null {
+  const entry = latestPublisherId === null ? null : entries.get(latestPublisherId);
+  const snapshot = entry?.snapshot;
+  if (!snapshot) return null;
+  const context = canvas2dContext(snapshot, map);
+  if (!context) return null;
+
+  const { widthPx, heightPx } = snapshot.rasterSize;
+  const pixels = context.getImageData(0, 0, widthPx, heightPx).data;
+  let hash = 0x811c9dc5;
+  for (const byte of pixels) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+
+  return Object.freeze({
+    map,
+    surfaceRevision: snapshot.surfaceRevision,
+    widthPx,
+    heightPx,
+    hash: hash.toString(16).padStart(8, '0'),
   });
 }

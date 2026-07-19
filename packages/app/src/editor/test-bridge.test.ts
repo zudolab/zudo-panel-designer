@@ -44,6 +44,7 @@ describe('preview test bridge', () => {
     });
     expect(Object.isFrozen(window.__zpdTest?.getPreview())).toBe(true);
     expect(window.__zpdTest).not.toHaveProperty('setPreview');
+    expect(window.__zpdTest?.fingerprintPreviewSurface('baseColor')).toBeNull();
 
     publisher.clear();
     expect(window.__zpdTest?.getPreview()).toMatchObject({

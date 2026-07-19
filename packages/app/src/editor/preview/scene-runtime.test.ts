@@ -421,6 +421,7 @@ vi.mock('./board-model', () => ({
     new fakes.FakeBoard(snapshot),
 }));
 
+import { MOUSE, TOUCH } from 'three';
 import { createPreviewSurfaceSnapshot, type PreviewCanvasSource } from './contracts';
 import { getPreviewDebugSummary } from './debug-state';
 import { createPreviewSceneRuntime } from './scene-runtime';
@@ -487,6 +488,11 @@ describe('preview scene runtime lifecycle', () => {
     const renderer = fakes.state.renderers[0];
     const controls = fakes.state.controls[0];
     expect(host.querySelectorAll('canvas')).toHaveLength(1);
+    expect(controls.mouseButtons.LEFT).toBe(MOUSE.ROTATE);
+    expect(controls.mouseButtons.MIDDLE).toBe(MOUSE.DOLLY);
+    expect(controls.mouseButtons.RIGHT).toBe(MOUSE.PAN);
+    expect(controls.touches.ONE).toBe(TOUCH.ROTATE);
+    expect(controls.touches.TWO).toBe(TOUCH.DOLLY_PAN);
     expect(renderer.constructorOptions).toMatchObject({
       antialias: true,
       failIfMajorPerformanceCaveat: false,

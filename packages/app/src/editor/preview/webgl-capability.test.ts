@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import {
-  isPreviewWebGLAvailable,
   probePreviewWebGLCanvas,
   type PreviewWebGLProbeCanvas,
 } from './webgl-capability';
@@ -12,6 +11,11 @@ function probeCanvas(webgl2: WebGL2RenderingContext | null): PreviewWebGLProbeCa
     height: 8,
     getContext: vi.fn(() => webgl2),
   };
+}
+
+async function freshCapabilityModule() {
+  vi.resetModules();
+  return import('./webgl-capability');
 }
 
 describe('preview WebGL capability probe', () => {
@@ -58,15 +62,51 @@ describe('preview WebGL capability probe', () => {
     expect(canvas.height).toBe(0);
   });
 
-  it('caches the capability so StrictMode replay does not allocate a second probe', () => {
+  it('re-probes after a transient false result, then caches the successful probe', async () => {
+    const { isPreviewWebGLAvailable: isAvailable } = await freshCapabilityModule();
+    const loseContext = vi.fn();
+    const supported = probeCanvas({
+      getExtension: vi.fn(() => ({ loseContext })),
+    } as unknown as WebGL2RenderingContext);
+    const factory = vi.fn().mockReturnValueOnce(probeCanvas(null)).mockReturnValueOnce(supported);
+
+    expect(isAvailable(factory)).toBe(false);
+    expect(isAvailable(factory)).toBe(true);
+    expect(isAvailable(factory)).toBe(true);
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(loseContext).toHaveBeenCalledOnce();
+  });
+
+  it('re-probes after a transient factory throw, then caches the successful probe', async () => {
+    const { isPreviewWebGLAvailable: isAvailable } = await freshCapabilityModule();
+    const loseContext = vi.fn();
+    const supported = probeCanvas({
+      getExtension: vi.fn(() => ({ loseContext })),
+    } as unknown as WebGL2RenderingContext);
+    const factory = vi
+      .fn<() => PreviewWebGLProbeCanvas>()
+      .mockImplementationOnce(() => {
+        throw new Error('temporary canvas allocation failure');
+      })
+      .mockReturnValueOnce(supported);
+
+    expect(isAvailable(factory)).toBe(false);
+    expect(isAvailable(factory)).toBe(true);
+    expect(isAvailable(factory)).toBe(true);
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(loseContext).toHaveBeenCalledOnce();
+  });
+
+  it('caches the capability so StrictMode replay does not allocate a second probe', async () => {
+    const { isPreviewWebGLAvailable: isAvailable } = await freshCapabilityModule();
     const loseContext = vi.fn();
     const canvas = probeCanvas({
       getExtension: vi.fn(() => ({ loseContext })),
     } as unknown as WebGL2RenderingContext);
     const factory = vi.fn(() => canvas);
 
-    expect(isPreviewWebGLAvailable(factory)).toBe(true);
-    expect(isPreviewWebGLAvailable(factory)).toBe(true);
+    expect(isAvailable(factory)).toBe(true);
+    expect(isAvailable(factory)).toBe(true);
     expect(factory).toHaveBeenCalledOnce();
     expect(loseContext).toHaveBeenCalledOnce();
   });

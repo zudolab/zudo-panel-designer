@@ -6,7 +6,11 @@ export interface PreviewWebGLProbeCanvas {
 
 export type PreviewWebGLProbeCanvasFactory = () => PreviewWebGLProbeCanvas;
 
-let cachedCapability: boolean | null = null;
+// A successful probe is stable for the page lifetime and avoids allocating a
+// second temporary context during StrictMode replay. Negative probes are not
+// cached: context pressure or a transient factory failure may recover before
+// the user opens the preview again.
+let cachedCapability: true | null = null;
 
 export function probePreviewWebGLCanvas(canvas: PreviewWebGLProbeCanvas): boolean {
   const options: WebGLContextAttributes = {
@@ -39,13 +43,16 @@ export function probePreviewWebGLCanvas(canvas: PreviewWebGLProbeCanvas): boolea
 export function isPreviewWebGLAvailable(
   canvasFactory: PreviewWebGLProbeCanvasFactory = () => document.createElement('canvas'),
 ): boolean {
-  if (cachedCapability !== null) return cachedCapability;
-  if (typeof document === 'undefined') return (cachedCapability = false);
+  if (cachedCapability === true) return true;
+  if (typeof document === 'undefined') return false;
 
   try {
-    cachedCapability = probePreviewWebGLCanvas(canvasFactory());
+    if (probePreviewWebGLCanvas(canvasFactory())) {
+      cachedCapability = true;
+      return true;
+    }
   } catch {
-    cachedCapability = false;
+    // A later call may succeed after a transient allocation/factory failure.
   }
-  return cachedCapability;
+  return false;
 }
