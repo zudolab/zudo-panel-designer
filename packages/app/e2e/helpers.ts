@@ -33,6 +33,8 @@ export function bridge(page: Page) {
     getSelectedIds: () => page.evaluate(() => window.__zpdTest!.getSelectedIds()),
     getCamera: () => page.evaluate(() => window.__zpdTest!.getCamera()),
     getPreview: () => page.evaluate(() => window.__zpdTest!.getPreview()),
+    fingerprintPreviewSurface: (map: 'baseColor' | 'metalness' | 'roughness') =>
+      page.evaluate((mapName) => window.__zpdTest!.fingerprintPreviewSurface(mapName), map),
     samplePreviewSurface: (
       map: 'baseColor' | 'metalness' | 'roughness',
       normalizedX: number,
@@ -47,6 +49,34 @@ export function bridge(page: Page) {
       page.evaluate((layerId) => window.__zpdTest!.getTextGeometry(layerId), id),
     serialize: () => page.evaluate(() => window.__zpdTest!.serialize()),
   };
+}
+
+export function captureUnexpectedPageErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(`console: ${message.text()}`);
+  });
+  page.on('pageerror', (error) => errors.push(`page: ${error.message}`));
+  return errors;
+}
+
+export async function importPanelJson(page: Page, fixturePath: string): Promise<void> {
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByTitle('Import panel config JSON').click(),
+  ]);
+  await chooser.setFiles(fixturePath);
+  await page
+    .getByRole('dialog', { name: 'Replace current panel?' })
+    .getByRole('button', { name: 'Replace', exact: true })
+    .click();
+}
+
+export async function openPreviewFromCommandPalette(page: Page): Promise<void> {
+  await page.keyboard.press(`${MOD}+Shift+k`);
+  const palette = page.getByRole('dialog', { name: 'Command palette' });
+  await palette.getByRole('combobox', { name: 'Search commands' }).fill('Preview 3D');
+  await palette.getByRole('option', { name: /Preview 3D/ }).click();
 }
 
 // mm -> page-viewport px, via the live camera + the canvas's own client rect —

@@ -7,6 +7,7 @@ import {
 import {
   ZERO_PREVIEW_DEBUG_SUMMARY,
   createPreviewDebugPublisher,
+  fingerprintPreviewSurfaceMap,
   getPreviewDebugSummary,
   samplePreviewSurfaceMap,
 } from './debug-state';
@@ -94,5 +95,39 @@ describe('preview debug state', () => {
     expect(samplePreviewSurfaceMap('baseColor', Number.NaN, 0)).toBeNull();
     publisher.clear();
     expect(samplePreviewSurfaceMap('baseColor', 0, 0)).toBeNull();
+  });
+
+  it('fingerprints the latest owned pixels and observes same-revision replacements', () => {
+    let pixels = new Uint8ClampedArray([21, 21, 21, 255, 212, 175, 55, 255]);
+    const source = {
+      width: 2,
+      height: 1,
+      getContext: () => ({ getImageData: () => ({ data: pixels }) }),
+    } as unknown as PreviewCanvasSource;
+    const snapshot = createPreviewSurfaceSnapshot({
+      surfaceRevision: 12,
+      widthMm: 2,
+      heightMm: 1,
+      thicknessMm: 2.5,
+      rasterSize: { widthPx: 2, heightPx: 1, effectivePixelsPerMm: 1 },
+      canvases: { baseColor: source, metalness: source, roughness: source },
+    });
+    const publisher = createPreviewDebugPublisher();
+    publisher.publish(summary(12), snapshot);
+
+    const first = fingerprintPreviewSurfaceMap('baseColor');
+    expect(first).toMatchObject({
+      map: 'baseColor',
+      surfaceRevision: 12,
+      widthPx: 2,
+      heightPx: 1,
+    });
+    expect(Object.isFrozen(first)).toBe(true);
+
+    pixels = new Uint8ClampedArray([21, 21, 21, 255, 242, 240, 233, 255]);
+    expect(fingerprintPreviewSurfaceMap('baseColor')?.hash).not.toBe(first?.hash);
+
+    publisher.clear();
+    expect(fingerprintPreviewSurfaceMap('baseColor')).toBeNull();
   });
 });
