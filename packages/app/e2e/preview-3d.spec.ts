@@ -22,6 +22,7 @@ const PANEL_THICKNESS_MM = 2.5;
 const VIEWER_CHUNK_PATTERN = /\/assets\/viewer-[^/]+\.js(?:$|\?)/;
 const PRESS_START_FONT_PATTERN = /\/assets\/press-start-2p-latin-400-normal-[^/]+\.woff2?(?:$|\?)/;
 const ERROR_SETTLE_MS = 250;
+const PREVIEW_READY_TIMEOUT_MS = 15_000;
 
 const errorsByPage = new WeakMap<Page, string[]>();
 const deferredReleasesByPage = new WeakMap<Page, () => void>();
@@ -46,7 +47,12 @@ async function importManufacturingFixture(page: Page): Promise<void> {
 }
 
 async function waitForPreviewReady(page: Page): Promise<PreviewDebugSummary> {
-  await expect(page.locator('[data-preview-state="ready"]')).toBeVisible();
+  // Parsing the lazy Three.js chunk can contend with the rest of the fully
+  // parallel production suite. Keep the output assertions strict while giving
+  // this one heavyweight readiness boundary an explicit budget.
+  await expect(page.locator('[data-preview-state="ready"]')).toBeVisible({
+    timeout: PREVIEW_READY_TIMEOUT_MS,
+  });
   await expect(page.getByTestId('preview-webgl-canvas')).toHaveCount(1);
   await expect.poll(async () => (await bridge(page).getPreview()).sceneInstanceCount).toBe(1);
   const summary = await bridge(page).getPreview();
@@ -508,6 +514,10 @@ async function expectNoPageOverflow(page: Page): Promise<void> {
 test('@smoke 3D preview controls remain accessible and unclipped across viewports', async ({
   page,
 }) => {
+  // This flow creates a fresh renderer at three viewport sizes. It is expected
+  // to approach the default test budget when the complete suite runs in
+  // parallel, so keep the larger budget local to this scenario.
+  test.slow();
   await page.setViewportSize({ width: 320, height: 568 });
   await openEditor(page);
 
