@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
+import { PANEL_THICKNESS_MM } from '@zpd/core';
 import { registerDialog } from '../registry/dialogs';
-import { PREVIEW_PANEL_THICKNESS_MM, PreviewShell } from '../preview/preview-shell';
+import { PreviewShell } from '../preview/preview-shell';
 import type { PreviewViewerLoader } from '../preview/viewer-types';
 import type { DialogProps } from '../types';
 
@@ -14,7 +15,7 @@ export function Preview3DDialog({ props, close, ctx }: DialogProps<Preview3DDial
     () => ({
       widthMm: ctx.panel.widthMm,
       heightMm: ctx.panel.heightMm,
-      thicknessMm: PREVIEW_PANEL_THICKNESS_MM,
+      thicknessMm: PANEL_THICKNESS_MM,
     }),
     [ctx.panel.heightMm, ctx.panel.widthMm],
   );

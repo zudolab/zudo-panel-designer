@@ -16,6 +16,9 @@ import {
   type PanelConfig,
 } from '@zpd/core';
 import type { Camera } from './camera';
+import { getPreviewDebugSummary, samplePreviewSurfaceMap } from './preview/debug-state';
+import type { PreviewDebugSummary, PreviewSurfaceMaps } from './preview/contracts';
+import type { PreviewSurfaceDebugSample } from './preview/debug-state';
 import { peekTextGeometry, type TextGeometry } from './text-geometry';
 
 export interface ZpdTestLayerSummary {
@@ -36,6 +39,12 @@ export interface ZpdTestBridge {
   getSelectedId(): string | null;
   getSelectedIds(): string[];
   getCamera(): Camera | null;
+  getPreview(): PreviewDebugSummary;
+  samplePreviewSurface(
+    map: keyof PreviewSurfaceMaps,
+    normalizedX: number,
+    normalizedY: number,
+  ): PreviewSurfaceDebugSample | null;
   getTextGeometry(id: string): TextGeometry | null;
   serialize(): PanelConfig;
 }
@@ -78,6 +87,9 @@ export function installTestBridge(source: TestBridgeSource): void {
     getSelectedId: () => source.getSelectedId(),
     getSelectedIds: () => [...source.getSelectedIds()],
     getCamera: () => source.getCamera(),
+    getPreview: () => getPreviewDebugSummary(),
+    samplePreviewSurface: (map, normalizedX, normalizedY) =>
+      samplePreviewSurfaceMap(map, normalizedX, normalizedY),
     getTextGeometry: (id) => peekTextGeometry(id),
     serialize: () => serializePanelConfig(source.getDoc()),
   };
