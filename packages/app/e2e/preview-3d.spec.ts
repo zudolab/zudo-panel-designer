@@ -330,7 +330,7 @@ test('@smoke 3D preview reload recovery restores the panel and starts a fresh re
   await page.setViewportSize({ width: 1280, height: 900 });
   await openEditor(page);
   await importManufacturingFixture(page);
-  await expect(page.getByRole('status')).toHaveText(/^Saved locally /);
+  await expect(page.getByRole('banner').getByRole('status')).toHaveText(/^Saved locally /);
   const serializedBeforeReload = await bridge(page).serialize();
 
   await page.getByRole('button', { name: 'Preview 3D' }).click();
