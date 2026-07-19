@@ -180,6 +180,28 @@ describe('DialogHost', () => {
     }
   });
 
+  it('focuses a durable editor fallback when the captured opener disconnected', () => {
+    registerDialog({ id: 'demo-fallback', component: SelfFocusingDialogA });
+    const opener = document.createElement('button');
+    const fallback = document.createElement('button');
+    try {
+      fallback.dataset.dialogFocusFallback = 'true';
+      document.body.append(opener, fallback);
+      opener.focus();
+
+      render(<DialogHost ctx={stubCtx()} />);
+      act(() => openDialog('demo-fallback'));
+      opener.remove();
+      act(() => closeDialog());
+
+      expect(document.activeElement).toBe(fallback);
+    } finally {
+      opener.remove();
+      fallback.remove();
+      unregisterDialog('demo-fallback');
+    }
+  });
+
   it('stops the Escape keydown from reaching window-level listeners while a dialog is open', () => {
     registerDialog({ id: 'demo-stop', component: () => <button>x</button> });
     const windowHandler = vi.fn();

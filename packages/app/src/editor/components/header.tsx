@@ -57,6 +57,17 @@ export function Header({
 
         <span className="mx-1 h-5 w-px bg-neutral-700" />
 
+        <ChromeButton
+          data-dialog-focus-fallback="true"
+          className="border-amber-500/80 bg-amber-500/15 font-medium text-amber-200 hover:bg-amber-500/15 motion-reduce:transition-none [@media(hover:hover)]:hover:bg-amber-500/25"
+          title="Preview panel in 3D"
+          onClick={() => ctx.openDialog('preview-3d')}
+        >
+          Preview 3D
+        </ChromeButton>
+
+        <span className="mx-1 h-5 w-px bg-neutral-700" />
+
         <ChromeButton title="Undo (⌘/Ctrl+Z)" disabled={!canUndo} onClick={ctx.undo}>
           ↩
         </ChromeButton>
