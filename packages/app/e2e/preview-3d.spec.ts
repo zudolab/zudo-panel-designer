@@ -122,9 +122,33 @@ async function resourceUrls(page: Page): Promise<string[]> {
   return page.evaluate(() => performance.getEntriesByType('resource').map((entry) => entry.name));
 }
 
+function consumeExpectedViewerAbortNoise(page: Page): void {
+  const errors = errorsByPage.get(page) ?? [];
+  const isExpectedNetworkError = (error: string): boolean => {
+    const match =
+      /^console: Failed to load resource: net::ERR_(?:CONNECTION_FAILED|FAILED) \((.+)\)$/.exec(
+        error,
+      );
+    return match !== null && VIEWER_CHUNK_PATTERN.test(match[1]!);
+  };
+  const expected = errors.filter(isExpectedNetworkError);
+  const unexpected = errors.filter((error) => !isExpectedNetworkError(error));
+
+  // Chromium may emit one console-level resource error for the intentionally
+  // aborted chunk. Consume only that exact, bounded message; every other
+  // console/page error remains a failure and later-session errors stay armed.
+  expect(expected.length).toBeLessThanOrEqual(1);
+  expect(unexpected).toEqual([]);
+  errors.length = 0;
+}
+
 test('@smoke 3D preview is lazy, physically faithful, interactive, and leak-free', async ({
   page,
 }) => {
+  // This production-build flow imports the full manufacturing corpus, samples
+  // all three generated maps, drives every camera mode, and verifies three
+  // complete scene mount/dispose cycles. Keep its budget local to this test.
+  test.slow();
   await page.setViewportSize({ width: 1280, height: 900 });
   await openEditor(page);
   await importManufacturingFixture(page);
@@ -288,6 +312,80 @@ test('@smoke 3D preview is lazy, physically faithful, interactive, and leak-free
   }
 });
 
+test('@smoke 3D preview reload recovery restores the panel and starts a fresh renderer session', async ({
+  page,
+}) => {
+  let viewerRequestCount = 0;
+  let abortedFirstRequest = false;
+  await page.route(VIEWER_CHUNK_PATTERN, async (route) => {
+    viewerRequestCount += 1;
+    if (!abortedFirstRequest) {
+      abortedFirstRequest = true;
+      await route.abort('connectionfailed');
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openEditor(page);
+  await importManufacturingFixture(page);
+  await expect(page.getByRole('status')).toHaveText(/^Saved locally /);
+  const serializedBeforeReload = await bridge(page).serialize();
+
+  await page.getByRole('button', { name: 'Preview 3D' }).click();
+  const alert = page.getByRole('alert');
+  await expect(alert).toContainText('Could not load the 3D preview');
+  await expect(alert).toContainText('Reload the editor');
+  const reload = alert.getByRole('button', { name: 'Reload editor' });
+  await expect(reload).toBeVisible();
+  await expect(reload).toBeEnabled();
+  await expect(page.getByTestId('preview-webgl-canvas')).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const preview = await bridge(page).getPreview();
+      return {
+        activeCanvasCount: preview.activeCanvasCount,
+        sceneInstanceCount: preview.sceneInstanceCount,
+      };
+    })
+    .toEqual({ activeCanvasCount: 0, sceneInstanceCount: 0 });
+  expect(abortedFirstRequest).toBe(true);
+  expect(viewerRequestCount).toBe(1);
+  consumeExpectedViewerAbortNoise(page);
+
+  const mainFrameReload = page.waitForEvent(
+    'framenavigated',
+    (frame) => frame === page.mainFrame(),
+  );
+  await reload.click();
+  await mainFrameReload;
+  await page.waitForFunction(() => window.__zpdTest !== undefined);
+
+  const navigationType = await page.evaluate(() => {
+    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
+    return navigation.type;
+  });
+  expect(navigationType).toBe('reload');
+  await expect.poll(() => bridge(page).serialize()).toEqual(serializedBeforeReload);
+  expect(await bridge(page).getPanelHp()).toBe(8);
+  expect((await bridge(page).getDoc()).layers).toHaveLength(10);
+
+  await page.getByRole('button', { name: 'Preview 3D' }).click();
+  const ready = await waitForPreviewReady(page);
+  expect(viewerRequestCount).toBe(2);
+  expect(ready.physicalDimensions).toEqual({
+    widthMm: FIXTURE_WIDTH_MM,
+    heightMm: PANEL_HEIGHT_MM,
+    thicknessMm: PANEL_THICKNESS_MM,
+  });
+  await expectSurfacePixel(page, 'baseColor', 4, 4, [212, 175, 55, 255]);
+  await expectSurfacePixel(page, 'metalness', 4, 4, [255, 255, 255, 255]);
+
+  await page.getByRole('button', { name: 'Close 3D preview' }).click();
+  await expectPreviewDisposed(page);
+});
+
 test('@smoke 3D preview refreshes font surfaces and reopens on current editor state', async ({
   page,
 }) => {
@@ -390,16 +488,33 @@ async function requiredBox(locator: ReturnType<Page['getByRole']>, name: string)
   return box;
 }
 
+async function expectNoPageOverflow(page: Page): Promise<void> {
+  const pageBox = await page.evaluate(() => ({
+    bodyClientWidth: document.body.clientWidth,
+    bodyClientHeight: document.body.clientHeight,
+    bodyScrollWidth: document.body.scrollWidth,
+    bodyScrollHeight: document.body.scrollHeight,
+    rootClientWidth: document.documentElement.clientWidth,
+    rootClientHeight: document.documentElement.clientHeight,
+    rootScrollWidth: document.documentElement.scrollWidth,
+    rootScrollHeight: document.documentElement.scrollHeight,
+  }));
+  expect(pageBox.bodyScrollWidth).toBeLessThanOrEqual(pageBox.bodyClientWidth);
+  expect(pageBox.bodyScrollHeight).toBeLessThanOrEqual(pageBox.bodyClientHeight);
+  expect(pageBox.rootScrollWidth).toBeLessThanOrEqual(pageBox.rootClientWidth);
+  expect(pageBox.rootScrollHeight).toBeLessThanOrEqual(pageBox.rootClientHeight);
+}
+
 test('@smoke 3D preview controls remain accessible and unclipped across viewports', async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.setViewportSize({ width: 320, height: 568 });
   await openEditor(page);
 
   const viewports = [
-    { name: 'desktop', width: 1280, height: 900 },
-    { name: 'tablet', width: 768, height: 1024 },
     { name: 'narrow mobile', width: 320, height: 568 },
+    { name: 'tablet', width: 768, height: 1024 },
+    { name: 'desktop', width: 1280, height: 900 },
   ] as const;
   const cameraControlNames = [
     'Zoom in 3D preview',
@@ -408,10 +523,34 @@ test('@smoke 3D preview controls remain accessible and unclipped across viewport
     'Reset 3D preview view',
   ] as const;
 
-  for (const viewport of viewports) {
+  for (const [index, viewport] of viewports.entries()) {
     await test.step(viewport.name, async () => {
       await page.setViewportSize(viewport);
-      await openPreviewFromCommandPalette(page);
+      const viewportBox: Box = { x: 0, y: 0, width: viewport.width, height: viewport.height };
+
+      if (index === 0) {
+        await expect(page.getByRole('dialog', { name: '3D PCB preview' })).toHaveCount(0);
+        const banner = page.getByRole('banner');
+        const headerTrigger = banner.getByRole('button', { name: 'Preview 3D' });
+        await expect(headerTrigger).toBeVisible();
+        await expect(headerTrigger).toBeEnabled();
+        const bannerBox = await requiredBox(banner, 'editor header');
+        const triggerBox = await requiredBox(headerTrigger, 'Preview 3D header trigger');
+        expect(triggerBox.width).toBeGreaterThanOrEqual(44);
+        expect(triggerBox.height).toBeGreaterThanOrEqual(44);
+        expectContained(triggerBox, bannerBox);
+        expectContained(triggerBox, viewportBox);
+        expect(await headerTrigger.evaluate((element) => element.tabIndex)).toBeGreaterThanOrEqual(
+          0,
+        );
+        await headerTrigger.focus();
+        await expect(headerTrigger).toBeFocused();
+        await expectNoPageOverflow(page);
+        await headerTrigger.click();
+      } else {
+        await openPreviewFromCommandPalette(page);
+      }
+
       await waitForPreviewReady(page);
       const dialog = page.getByRole('dialog', { name: '3D PCB preview' });
       const stage = page.getByRole('region', { name: '3D PCB preview stage' });
@@ -421,7 +560,6 @@ test('@smoke 3D preview controls remain accessible and unclipped across viewport
       await expect(group).toBeVisible();
       await expect(dialog.getByText(/Drag to rotate/)).toBeVisible();
 
-      const viewportBox: Box = { x: 0, y: 0, width: viewport.width, height: viewport.height };
       const dialogBox = await requiredBox(dialog, 'dialog');
       const stageBox = await requiredBox(stage, 'stage');
       const groupBox = await requiredBox(group, 'camera controls');
@@ -459,14 +597,7 @@ test('@smoke 3D preview controls remain accessible and unclipped across viewport
       await close.focus();
       await expect(close).toBeFocused();
 
-      const body = await page.evaluate(() => ({
-        clientWidth: document.body.clientWidth,
-        clientHeight: document.body.clientHeight,
-        scrollWidth: document.body.scrollWidth,
-        scrollHeight: document.body.scrollHeight,
-      }));
-      expect(body.scrollWidth).toBeLessThanOrEqual(body.clientWidth);
-      expect(body.scrollHeight).toBeLessThanOrEqual(body.clientHeight);
+      await expectNoPageOverflow(page);
 
       await close.click();
       await expectPreviewDisposed(page);

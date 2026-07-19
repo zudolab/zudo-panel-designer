@@ -54,7 +54,9 @@ export function bridge(page: Page) {
 export function captureUnexpectedPageErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on('console', (message) => {
-    if (message.type() === 'error') errors.push(`console: ${message.text()}`);
+    if (message.type() !== 'error') return;
+    const sourceUrl = message.location().url;
+    errors.push(`console: ${message.text()}${sourceUrl ? ` (${sourceUrl})` : ''}`);
   });
   page.on('pageerror', (error) => errors.push(`page: ${error.message}`));
   return errors;

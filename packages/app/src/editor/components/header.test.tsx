@@ -89,6 +89,10 @@ describe('Header', () => {
     const opener = screen.getByRole('button', { name: 'Preview 3D' });
 
     expect(opener.className).toContain('border-amber-500/80');
+    expect(opener.className).toContain('min-h-11');
+    expect(opener.className).toContain('min-w-11');
+    expect(opener.className).toContain('order-first');
+    expect(opener.tabIndex).toBeGreaterThanOrEqual(0);
     expect(opener.getAttribute('data-dialog-focus-fallback')).toBe('true');
     opener.focus();
     fireEvent.click(opener);

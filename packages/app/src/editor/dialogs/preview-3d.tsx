@@ -8,6 +8,8 @@ import type { DialogProps } from '../types';
 export interface Preview3DDialogProps {
   /** Test/integration seam; production uses the eager-safe dynamic shim. */
   readonly loadViewer?: PreviewViewerLoader;
+  /** Test seam; production performs a real full-page reload. */
+  readonly reloadPage?: () => void;
 }
 
 export function Preview3DDialog({ props, close, ctx }: DialogProps<Preview3DDialogProps>) {
@@ -26,6 +28,7 @@ export function Preview3DDialog({ props, close, ctx }: DialogProps<Preview3DDial
       dimensions={dimensions}
       close={close}
       loadViewer={props.loadViewer}
+      reloadPage={props.reloadPage}
     />
   );
 }

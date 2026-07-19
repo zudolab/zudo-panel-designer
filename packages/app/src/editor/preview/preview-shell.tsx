@@ -83,33 +83,33 @@ export function PreviewCameraControlGroup({
 type ViewerLoadResult =
   | {
       readonly kind: 'ready';
-      readonly attempt: number;
       readonly loader: PreviewViewerLoader;
       readonly module: PreviewViewerModule;
     }
   | {
       readonly kind: 'error';
-      readonly attempt: number;
       readonly loader: PreviewViewerLoader;
     };
+
+function reloadEditorPage(): void {
+  window.location.reload();
+}
 
 export function LazyPreviewViewer({
   doc,
   dimensions,
   loadViewer,
+  reloadPage = reloadEditorPage,
   onCameraControlsChange,
 }: {
   readonly doc: DocState;
   readonly dimensions: PreviewPhysicalDimensions;
   readonly loadViewer: PreviewViewerLoader;
+  readonly reloadPage?: () => void;
   readonly onCameraControlsChange: (controls: PreviewCameraControls | null) => void;
 }) {
-  const [attempt, setAttempt] = useState(0);
   const [loadResult, setLoadResult] = useState<ViewerLoadResult | null>(null);
-  const loadState =
-    loadResult?.attempt === attempt && loadResult.loader === loadViewer
-      ? loadResult
-      : ({ kind: 'loading' } as const);
+  const loadState = loadResult?.loader === loadViewer ? loadResult : ({ kind: 'loading' } as const);
 
   useEffect(() => {
     let current = true;
@@ -119,20 +119,20 @@ export function LazyPreviewViewer({
       (module) => {
         if (!current) return;
         if (typeof module.default !== 'function') {
-          setLoadResult({ kind: 'error', attempt, loader: loadViewer });
+          setLoadResult({ kind: 'error', loader: loadViewer });
           return;
         }
-        setLoadResult({ kind: 'ready', attempt, loader: loadViewer, module });
+        setLoadResult({ kind: 'ready', loader: loadViewer, module });
       },
       () => {
-        if (current) setLoadResult({ kind: 'error', attempt, loader: loadViewer });
+        if (current) setLoadResult({ kind: 'error', loader: loadViewer });
       },
     );
 
     return () => {
       current = false;
     };
-  }, [attempt, loadViewer, onCameraControlsChange]);
+  }, [loadViewer, onCameraControlsChange]);
 
   if (loadState.kind === 'loading') {
     return (
@@ -151,15 +151,15 @@ export function LazyPreviewViewer({
       >
         <h3 className="text-base font-semibold text-red-100">Could not load the 3D preview</h3>
         <p className="mt-2 text-sm leading-relaxed text-red-100/80">
-          The preview chunk failed to load. Your panel is safe, and you can retry without closing
-          the editor.
+          The renderer could not be loaded in this page session. Reload the editor to try again;
+          locally saved changes reopen automatically.
         </p>
         <button
           type="button"
           className="mt-4 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border border-red-300/50 bg-red-500/20 px-4 text-sm font-semibold text-red-50 motion-safe:transition-colors [@media(hover:hover)]:hover:bg-red-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200"
-          onClick={() => setAttempt((value) => value + 1)}
+          onClick={reloadPage}
         >
-          Retry preview
+          Reload editor
         </button>
       </section>
     );
@@ -176,11 +176,13 @@ export function PreviewShell({
   dimensions,
   close,
   loadViewer = loadPreviewViewer,
+  reloadPage = reloadEditorPage,
 }: {
   readonly doc: DocState;
   readonly dimensions: PreviewPhysicalDimensions;
   readonly close: () => void;
   readonly loadViewer?: PreviewViewerLoader;
+  readonly reloadPage?: () => void;
 }) {
   const [cameraControls, setCameraControls] = useState<PreviewCameraControls | null>(null);
   const copy = useMemo(() => createPreviewAccessibilityCopy(dimensions), [dimensions]);
@@ -219,6 +221,7 @@ export function PreviewShell({
             doc={doc}
             dimensions={dimensions}
             loadViewer={loadViewer}
+            reloadPage={reloadPage}
             onCameraControlsChange={setCameraControls}
           />
         </div>

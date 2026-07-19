@@ -146,23 +146,30 @@ describe('PreviewShell', () => {
     expect(seen.at(-1)?.dimensions).toBe(dimensions);
   });
 
-  it('presents a non-crashing chunk failure and can retry the same boundary', async () => {
+  it('presents a non-crashing chunk failure and reloads instead of retrying a rejected module URL', async () => {
     const loadViewer = vi
       .fn<() => Promise<PreviewViewerModule>>()
-      .mockRejectedValueOnce(new Error('chunk unavailable'))
-      .mockResolvedValueOnce({ default: () => <div>Retry succeeded</div> });
+      .mockRejectedValueOnce(new Error('chunk unavailable'));
+    const reloadPage = vi.fn();
 
     render(
-      <PreviewShell doc={doc} dimensions={dimensions} close={vi.fn()} loadViewer={loadViewer} />,
+      <PreviewShell
+        doc={doc}
+        dimensions={dimensions}
+        close={vi.fn()}
+        loadViewer={loadViewer}
+        reloadPage={reloadPage}
+      />,
     );
 
     expect((await screen.findByRole('alert')).textContent).toContain(
       'Could not load the 3D preview',
     );
-    expect(screen.getByRole('alert').textContent).toContain('Your panel is safe');
-    fireEvent.click(screen.getByRole('button', { name: 'Retry preview' }));
-    expect(await screen.findByText('Retry succeeded')).toBeTruthy();
-    expect(loadViewer).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('alert').textContent).toContain('Reload the editor');
+    expect(screen.getByRole('alert').textContent).toContain('locally saved changes');
+    fireEvent.click(screen.getByRole('button', { name: 'Reload editor' }));
+    expect(reloadPage).toHaveBeenCalledOnce();
+    expect(loadViewer).toHaveBeenCalledOnce();
   });
 
   it('provides the deterministic renderer/WebGL-unavailable presentation', async () => {
