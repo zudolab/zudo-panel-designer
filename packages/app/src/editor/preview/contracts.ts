@@ -1,5 +1,3 @@
-export const PCB_PREVIEW_THICKNESS_MM = 2.5;
-
 export type PreviewSurfaceRevision = number;
 export type PreviewCanvasSource = HTMLCanvasElement | OffscreenCanvas;
 export type PreviewMapColorSpace = 'srgb' | 'linear-scalar';
@@ -59,6 +57,7 @@ export interface PreviewSurfaceSnapshotInput {
   readonly surfaceRevision: PreviewSurfaceRevision;
   readonly widthMm: number;
   readonly heightMm: number;
+  readonly thicknessMm: number;
   readonly rasterSize: PreviewRasterSize;
   readonly canvases: Readonly<Record<keyof PreviewSurfaceMaps, PreviewCanvasSource>>;
 }
@@ -132,6 +131,7 @@ export function createPreviewSurfaceSnapshot(
   requireSurfaceRevision(input.surfaceRevision);
   requirePositiveFinite(input.widthMm, 'widthMm');
   requirePositiveFinite(input.heightMm, 'heightMm');
+  requirePositiveFinite(input.thicknessMm, 'thicknessMm');
   requirePositiveFinite(input.rasterSize.effectivePixelsPerMm, 'effectivePixelsPerMm');
 
   if (!Number.isSafeInteger(input.rasterSize.widthPx) || input.rasterSize.widthPx < 1) {
@@ -159,7 +159,7 @@ export function createPreviewSurfaceSnapshot(
   const physicalDimensions = Object.freeze({
     widthMm: input.widthMm,
     heightMm: input.heightMm,
-    thicknessMm: PCB_PREVIEW_THICKNESS_MM,
+    thicknessMm: input.thicknessMm,
   });
   const rasterSize = Object.freeze({ ...input.rasterSize });
   const maps = Object.freeze({

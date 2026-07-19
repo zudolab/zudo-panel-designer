@@ -3,7 +3,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  PCB_PREVIEW_THICKNESS_MM,
   PREVIEW_FRONT_FACE_ORIENTATION,
   PREVIEW_MAP_COLOR_SPACES,
   choosePreviewRasterSize,
@@ -27,7 +26,7 @@ function fakeCanvas(width: number, height: number): PreviewCanvasSource {
 const dimensions: PreviewPhysicalDimensions = {
   widthMm: 100,
   heightMm: 50,
-  thicknessMm: PCB_PREVIEW_THICKNESS_MM,
+  thicknessMm: 2.5,
 };
 
 describe('choosePreviewRasterSize', () => {
@@ -140,6 +139,7 @@ describe('surface snapshot', () => {
       surfaceRevision: 7,
       widthMm: 60,
       heightMm: 128.5,
+      thicknessMm: 2.5,
       rasterSize,
       canvases: {
         baseColor: fakeCanvas(240, 514),
@@ -168,6 +168,7 @@ describe('surface snapshot', () => {
         surfaceRevision: 1,
         widthMm: 60,
         heightMm: 128.5,
+        thicknessMm: 2.5,
         rasterSize: { widthPx: 240, heightPx: 514, effectivePixelsPerMm: 4 },
         canvases: {
           baseColor: fakeCanvas(239, 514),
@@ -176,6 +177,23 @@ describe('surface snapshot', () => {
         },
       }),
     ).toThrow('every preview canvas must match');
+  });
+
+  it('rejects a non-positive supplied thickness', () => {
+    expect(() =>
+      createPreviewSurfaceSnapshot({
+        surfaceRevision: 1,
+        widthMm: 60,
+        heightMm: 128.5,
+        thicknessMm: 0,
+        rasterSize: { widthPx: 240, heightPx: 514, effectivePixelsPerMm: 4 },
+        canvases: {
+          baseColor: fakeCanvas(240, 514),
+          metalness: fakeCanvas(240, 514),
+          roughness: fakeCanvas(240, 514),
+        },
+      }),
+    ).toThrow('thicknessMm must be a positive finite number');
   });
 });
 
