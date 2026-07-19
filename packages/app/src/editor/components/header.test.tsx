@@ -86,8 +86,12 @@ describe('Header', () => {
   it('opens the 3D preview from a clearly separated durable header action', () => {
     const ctx = stubCtx({ openDialog });
     renderHeader(ctx);
+    const toolbar = screen.getByRole('toolbar', { name: 'Editor actions' });
     const opener = screen.getByRole('button', { name: 'Preview 3D' });
 
+    expect(toolbar.className).toContain('overflow-x-auto');
+    expect(toolbar.className).toContain('p-1.5');
+    expect(toolbar.className).toContain('lg:p-0');
     expect(opener.className).toContain('border-amber-500/80');
     expect(opener.className).toContain('min-h-11');
     expect(opener.className).toContain('min-w-11');

@@ -41,7 +41,11 @@ export function Header({
       <span className="hidden text-xs text-neutral-500 lg:inline">Zudo Panel Designer</span>
       <SaveStatusChip status={saveStatus} />
 
-      <div className="order-last flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-x-auto overscroll-x-contain lg:order-none lg:ml-auto lg:w-auto lg:flex-none lg:overflow-visible">
+      <div
+        role="toolbar"
+        aria-label="Editor actions"
+        className="order-last flex w-full min-w-0 max-w-full items-center gap-1.5 overflow-x-auto overscroll-x-contain p-1.5 lg:order-none lg:ml-auto lg:w-auto lg:flex-none lg:overflow-visible lg:p-0"
+      >
         <ChromeButton title="Zoom out" onClick={() => onZoomStep(1 / 1.25)}>
           −
         </ChromeButton>

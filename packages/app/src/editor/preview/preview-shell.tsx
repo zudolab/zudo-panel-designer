@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ButtonHTMLAttributes } from 'react';
 import type { DocState } from '@zpd/core';
+import { writeDoc, type WriteDocFailureReason, type WriteDocResult } from '../doc-store';
 import {
   createPreviewAccessibilityCopy,
   type PreviewCameraControls,
@@ -95,20 +96,34 @@ function reloadEditorPage(): void {
   window.location.reload();
 }
 
+export type PersistPreviewDocument = (doc: DocState) => WriteDocResult;
+
+const RECOVERY_FAILURE_COPY: Record<WriteDocFailureReason, string> = {
+  quota:
+    'This panel is too large to save locally. Close the preview and Download JSON before reloading the editor.',
+  unavailable:
+    'Local storage is unavailable. Close the preview and Download JSON before reloading the editor.',
+  error:
+    'The panel could not be saved locally. Close the preview and Download JSON before reloading the editor.',
+};
+
 export function LazyPreviewViewer({
   doc,
   dimensions,
   loadViewer,
+  persistDoc = writeDoc,
   reloadPage = reloadEditorPage,
   onCameraControlsChange,
 }: {
   readonly doc: DocState;
   readonly dimensions: PreviewPhysicalDimensions;
   readonly loadViewer: PreviewViewerLoader;
+  readonly persistDoc?: PersistPreviewDocument;
   readonly reloadPage?: () => void;
   readonly onCameraControlsChange: (controls: PreviewCameraControls | null) => void;
 }) {
   const [loadResult, setLoadResult] = useState<ViewerLoadResult | null>(null);
+  const [recoveryFailure, setRecoveryFailure] = useState<WriteDocFailureReason | null>(null);
   const loadState = loadResult?.loader === loadViewer ? loadResult : ({ kind: 'loading' } as const);
 
   useEffect(() => {
@@ -144,6 +159,15 @@ export function LazyPreviewViewer({
   }
 
   if (loadState.kind === 'error') {
+    const handleRecovery = () => {
+      const result = persistDoc(doc);
+      if (!result.ok) {
+        setRecoveryFailure(result.reason);
+        return;
+      }
+      reloadPage();
+    };
+
     return (
       <section
         role="alert"
@@ -151,15 +175,20 @@ export function LazyPreviewViewer({
       >
         <h3 className="text-base font-semibold text-red-100">Could not load the 3D preview</h3>
         <p className="mt-2 text-sm leading-relaxed text-red-100/80">
-          The renderer could not be loaded in this page session. Reload the editor to try again;
-          locally saved changes reopen automatically.
+          The renderer could not be loaded in this page session. Save the current panel locally and
+          reload the editor to try again.
         </p>
+        {recoveryFailure ? (
+          <p className="mt-3 text-sm font-medium leading-relaxed text-red-100">
+            {RECOVERY_FAILURE_COPY[recoveryFailure]}
+          </p>
+        ) : null}
         <button
           type="button"
           className="mt-4 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border border-red-300/50 bg-red-500/20 px-4 text-sm font-semibold text-red-50 motion-safe:transition-colors [@media(hover:hover)]:hover:bg-red-500/30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200"
-          onClick={reloadPage}
+          onClick={handleRecovery}
         >
-          Reload editor
+          Save and reload editor
         </button>
       </section>
     );
@@ -176,12 +205,14 @@ export function PreviewShell({
   dimensions,
   close,
   loadViewer = loadPreviewViewer,
+  persistDoc = writeDoc,
   reloadPage = reloadEditorPage,
 }: {
   readonly doc: DocState;
   readonly dimensions: PreviewPhysicalDimensions;
   readonly close: () => void;
   readonly loadViewer?: PreviewViewerLoader;
+  readonly persistDoc?: PersistPreviewDocument;
   readonly reloadPage?: () => void;
 }) {
   const [cameraControls, setCameraControls] = useState<PreviewCameraControls | null>(null);
@@ -221,6 +252,7 @@ export function PreviewShell({
             doc={doc}
             dimensions={dimensions}
             loadViewer={loadViewer}
+            persistDoc={persistDoc}
             reloadPage={reloadPage}
             onCameraControlsChange={setCameraControls}
           />

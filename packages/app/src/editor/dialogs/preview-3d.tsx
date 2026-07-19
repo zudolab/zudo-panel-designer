@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { PANEL_THICKNESS_MM } from '@zpd/core';
 import { registerDialog } from '../registry/dialogs';
-import { PreviewShell } from '../preview/preview-shell';
+import { PreviewShell, type PersistPreviewDocument } from '../preview/preview-shell';
 import type { PreviewViewerLoader } from '../preview/viewer-types';
 import type { DialogProps } from '../types';
 
@@ -10,6 +10,8 @@ export interface Preview3DDialogProps {
   readonly loadViewer?: PreviewViewerLoader;
   /** Test seam; production performs a real full-page reload. */
   readonly reloadPage?: () => void;
+  /** Test seam; production synchronously persists the current panel before reload. */
+  readonly persistDoc?: PersistPreviewDocument;
 }
 
 export function Preview3DDialog({ props, close, ctx }: DialogProps<Preview3DDialogProps>) {
@@ -28,6 +30,7 @@ export function Preview3DDialog({ props, close, ctx }: DialogProps<Preview3DDial
       dimensions={dimensions}
       close={close}
       loadViewer={props.loadViewer}
+      persistDoc={props.persistDoc}
       reloadPage={props.reloadPage}
     />
   );

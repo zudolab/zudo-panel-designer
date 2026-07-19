@@ -336,14 +336,18 @@ test('@smoke 3D preview reload recovery restores the panel and starts a fresh re
   await page.setViewportSize({ width: 1280, height: 900 });
   await openEditor(page);
   await importManufacturingFixture(page);
-  await expect(page.getByRole('banner').getByRole('status')).toHaveText(/^Saved locally /);
+  // Make a trusted last-moment edit without waiting for the debounced autosave.
+  // The recovery action itself synchronously persists this exact in-memory
+  // document before allowing the page to reload.
+  await page.getByRole('combobox', { name: 'Size' }).selectOption('20');
+  await expect.poll(() => bridge(page).getPanelHp()).toBe(20);
   const serializedBeforeReload = await bridge(page).serialize();
 
   await page.getByRole('button', { name: 'Preview 3D' }).click();
   const alert = page.getByRole('alert');
   await expect(alert).toContainText('Could not load the 3D preview');
-  await expect(alert).toContainText('Reload the editor');
-  const reload = alert.getByRole('button', { name: 'Reload editor' });
+  await expect(alert).toContainText('reload the editor');
+  const reload = alert.getByRole('button', { name: 'Save and reload editor' });
   await expect(reload).toBeVisible();
   await expect(reload).toBeEnabled();
   await expect(page.getByTestId('preview-webgl-canvas')).toHaveCount(0);
@@ -374,19 +378,19 @@ test('@smoke 3D preview reload recovery restores the panel and starts a fresh re
   });
   expect(navigationType).toBe('reload');
   await expect.poll(() => bridge(page).serialize()).toEqual(serializedBeforeReload);
-  expect(await bridge(page).getPanelHp()).toBe(8);
+  expect(await bridge(page).getPanelHp()).toBe(20);
   expect((await bridge(page).getDoc()).layers).toHaveLength(10);
 
   await page.getByRole('button', { name: 'Preview 3D' }).click();
   const ready = await waitForPreviewReady(page);
   expect(viewerRequestCount).toBe(2);
   expect(ready.physicalDimensions).toEqual({
-    widthMm: FIXTURE_WIDTH_MM,
+    widthMm: 101.3,
     heightMm: PANEL_HEIGHT_MM,
     thicknessMm: PANEL_THICKNESS_MM,
   });
-  await expectSurfacePixel(page, 'baseColor', 4, 4, [212, 175, 55, 255]);
-  await expectSurfacePixel(page, 'metalness', 4, 4, [255, 255, 255, 255]);
+  await expectSurfacePixel(page, 'baseColor', 4, 4, [212, 175, 55, 255], 101.3);
+  await expectSurfacePixel(page, 'metalness', 4, 4, [255, 255, 255, 255], 101.3);
 
   await page.getByRole('button', { name: 'Close 3D preview' }).click();
   await expectPreviewDisposed(page);
@@ -541,20 +545,43 @@ test('@smoke 3D preview controls remain accessible and unclipped across viewport
       if (index === 0) {
         await expect(page.getByRole('dialog', { name: '3D PCB preview' })).toHaveCount(0);
         const banner = page.getByRole('banner');
+        const toolbar = banner.getByRole('toolbar', { name: 'Editor actions' });
         const headerTrigger = banner.getByRole('button', { name: 'Preview 3D' });
+        await expect(toolbar).toBeVisible();
         await expect(headerTrigger).toBeVisible();
         await expect(headerTrigger).toBeEnabled();
         const bannerBox = await requiredBox(banner, 'editor header');
+        const toolbarBox = await requiredBox(toolbar, 'editor actions');
         const triggerBox = await requiredBox(headerTrigger, 'Preview 3D header trigger');
         expect(triggerBox.width).toBeGreaterThanOrEqual(44);
         expect(triggerBox.height).toBeGreaterThanOrEqual(44);
         expectContained(triggerBox, bannerBox);
+        expectContained(triggerBox, toolbarBox);
         expectContained(triggerBox, viewportBox);
         expect(await headerTrigger.evaluate((element) => element.tabIndex)).toBeGreaterThanOrEqual(
           0,
         );
         await headerTrigger.focus();
         await expect(headerTrigger).toBeFocused();
+        const focusRing = await headerTrigger.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return {
+            outlineStyle: style.outlineStyle,
+            outlineWidth: Number.parseFloat(style.outlineWidth),
+            outlineOffset: Number.parseFloat(style.outlineOffset),
+          };
+        });
+        expect(focusRing.outlineStyle).not.toBe('none');
+        const focusClearance = focusRing.outlineWidth + focusRing.outlineOffset;
+        expect(focusClearance).toBeGreaterThanOrEqual(4);
+        expect(triggerBox.x - toolbarBox.x).toBeGreaterThanOrEqual(focusClearance);
+        expect(triggerBox.y - toolbarBox.y).toBeGreaterThanOrEqual(focusClearance);
+        expect(
+          toolbarBox.x + toolbarBox.width - (triggerBox.x + triggerBox.width),
+        ).toBeGreaterThanOrEqual(focusClearance);
+        expect(
+          toolbarBox.y + toolbarBox.height - (triggerBox.y + triggerBox.height),
+        ).toBeGreaterThanOrEqual(focusClearance);
         await expectNoPageOverflow(page);
         await headerTrigger.click();
       } else {

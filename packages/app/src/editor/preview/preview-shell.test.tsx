@@ -10,6 +10,7 @@ import {
   PreviewCameraControlGroup,
   PreviewRendererUnavailable,
   PreviewShell,
+  type PersistPreviewDocument,
 } from './preview-shell';
 import type { PreviewViewerModule, PreviewViewerProps } from './viewer-types';
 
@@ -146,10 +147,11 @@ describe('PreviewShell', () => {
     expect(seen.at(-1)?.dimensions).toBe(dimensions);
   });
 
-  it('presents a non-crashing chunk failure and reloads instead of retrying a rejected module URL', async () => {
+  it('persists the exact current document before reloading instead of retrying a rejected module URL', async () => {
     const loadViewer = vi
       .fn<() => Promise<PreviewViewerModule>>()
       .mockRejectedValueOnce(new Error('chunk unavailable'));
+    const persistDoc = vi.fn<PersistPreviewDocument>(() => ({ ok: true }));
     const reloadPage = vi.fn();
 
     render(
@@ -158,6 +160,7 @@ describe('PreviewShell', () => {
         dimensions={dimensions}
         close={vi.fn()}
         loadViewer={loadViewer}
+        persistDoc={persistDoc}
         reloadPage={reloadPage}
       />,
     );
@@ -165,12 +168,54 @@ describe('PreviewShell', () => {
     expect((await screen.findByRole('alert')).textContent).toContain(
       'Could not load the 3D preview',
     );
-    expect(screen.getByRole('alert').textContent).toContain('Reload the editor');
-    expect(screen.getByRole('alert').textContent).toContain('locally saved changes');
-    fireEvent.click(screen.getByRole('button', { name: 'Reload editor' }));
+    expect(screen.getByRole('alert').textContent).toContain('Save the current panel locally');
+    fireEvent.click(screen.getByRole('button', { name: 'Save and reload editor' }));
+    expect(persistDoc).toHaveBeenCalledOnce();
+    expect(persistDoc).toHaveBeenCalledWith(doc);
     expect(reloadPage).toHaveBeenCalledOnce();
     expect(loadViewer).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    { reason: 'quota' as const, copy: 'too large to save locally' },
+    { reason: 'unavailable' as const, copy: 'Local storage is unavailable' },
+    { reason: 'error' as const, copy: 'could not be saved locally' },
+  ])(
+    'blocks reload after a $reason save failure and allows a safe retry',
+    async ({ reason, copy }) => {
+      const loadViewer = vi
+        .fn<() => Promise<PreviewViewerModule>>()
+        .mockRejectedValueOnce(new Error('chunk unavailable'));
+      const persistDoc = vi
+        .fn<PersistPreviewDocument>()
+        .mockReturnValueOnce({ ok: false, reason })
+        .mockReturnValueOnce({ ok: true });
+      const reloadPage = vi.fn();
+
+      render(
+        <PreviewShell
+          doc={doc}
+          dimensions={dimensions}
+          close={vi.fn()}
+          loadViewer={loadViewer}
+          persistDoc={persistDoc}
+          reloadPage={reloadPage}
+        />,
+      );
+
+      const alert = await screen.findByRole('alert');
+      const recovery = screen.getByRole('button', { name: 'Save and reload editor' });
+      fireEvent.click(recovery);
+      expect(reloadPage).not.toHaveBeenCalled();
+      expect(alert.textContent).toContain(copy);
+      expect(alert.textContent).toContain('Close the preview and Download JSON');
+
+      fireEvent.click(recovery);
+      expect(persistDoc).toHaveBeenCalledTimes(2);
+      expect(reloadPage).toHaveBeenCalledOnce();
+      expect(loadViewer).toHaveBeenCalledOnce();
+    },
+  );
 
   it('provides the deterministic renderer/WebGL-unavailable presentation', async () => {
     render(
