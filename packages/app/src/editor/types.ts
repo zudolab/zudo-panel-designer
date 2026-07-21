@@ -51,6 +51,14 @@ export interface ToolContext {
   replace(next: DocState): void;
   reset(next: DocState): void;
   beginGesture(): void;
+  // Cancels an open gesture (Escape): pops the past entry beginGesture
+  // pushed and restores present to it, so the whole replace stream is
+  // discarded with zero undo/redo residue (@zpd/core's abortGesture). No-op
+  // when no gesture is open. Callers must track their OWN "did I open a
+  // gesture" flag (mirroring select.tsx's ensureGesture/gestureOpen) before
+  // calling this — it blindly pops the most recent past entry, which would
+  // be some UNRELATED commit if no gesture of this caller's is actually open.
+  abortGesture(): void;
   undo(): void;
   redo(): void;
 

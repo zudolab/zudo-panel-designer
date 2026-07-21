@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_HISTORY,
+  abortGesture,
   beginGesture,
   canRedo,
   canUndo,
@@ -75,6 +76,41 @@ describe('beginGesture', () => {
 
     const afterUndo = undo(state);
     expect(afterUndo.present).toBe('v1'); // the whole gesture undoes in one step
+  });
+});
+
+describe('abortGesture', () => {
+  it('pops the gesture entry and restores present from it, leaving future untouched', () => {
+    const s0 = commit(createHistory('v0'), 'v1');
+    let state = beginGesture(s0); // past=['v0','v1'], present='v1'
+    state = replace(state, 'v1-drag-1');
+    state = replace(state, 'v1-drag-2');
+
+    const aborted = abortGesture(state);
+    expect(aborted).toEqual({ past: ['v0'], present: 'v1', future: [] });
+  });
+
+  it('pops exactly one past entry', () => {
+    const s0 = commit(createHistory('v0'), 'v1');
+    const state = beginGesture(s0);
+    expect(state.past).toEqual(['v0', 'v1']);
+    const aborted = abortGesture(state);
+    expect(aborted.past).toEqual(['v0']);
+  });
+
+  it('is a no-op when no gesture is open (past is empty)', () => {
+    const state = createHistory('v0');
+    expect(abortGesture(state)).toEqual(state);
+  });
+
+  it('leaves future untouched — only the popped past entry changes', () => {
+    // Constructed directly rather than via beginGesture: beginGesture is
+    // commit() under the hood, which already clears any redo branch, so a
+    // real gesture never has a future to preserve. This isolates
+    // abortGesture's own contract — it must not go near `future` at all.
+    const state = { past: ['v0', 'v1'], present: 'v1-preview', future: ['v2'] };
+    const aborted = abortGesture(state);
+    expect(aborted).toEqual({ past: ['v0'], present: 'v1', future: ['v2'] });
   });
 });
 

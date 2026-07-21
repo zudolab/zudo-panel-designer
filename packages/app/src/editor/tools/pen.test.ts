@@ -42,6 +42,7 @@ import {
 } from './pen';
 import { getTool } from '../registry/tools';
 import {
+  abortGesture as coreAbortGesture,
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
@@ -112,6 +113,9 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
     },
     beginGesture: () => {
       history = coreBeginGesture(history);
+    },
+    abortGesture: () => {
+      history = coreAbortGesture(history);
     },
     undo: () => {
       history = coreUndo(history);

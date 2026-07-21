@@ -70,6 +70,7 @@ export function Editor() {
     replace,
     reset,
     beginGesture,
+    abortGesture,
     undo,
     redo,
   } = useDocHistory(initialDoc);
@@ -212,6 +213,7 @@ export function Editor() {
       replace,
       reset,
       beginGesture,
+      abortGesture,
       undo,
       redo,
       select: (id) => setRawSelectedIds(id === null ? [] : [id]),
@@ -224,7 +226,7 @@ export function Editor() {
       openDialog,
       closeDialog,
     }),
-    [commit, replace, reset, beginGesture, undo, redo, readSelectedId, readSelectedIds],
+    [commit, replace, reset, beginGesture, abortGesture, undo, redo, readSelectedId, readSelectedIds],
   );
 
   // Clipboard (#74): Cmd/Ctrl+C/X/D/A (wired into the keydown fallback below)
@@ -324,6 +326,7 @@ export function Editor() {
       replace: ctx.replace,
       reset: ctx.reset,
       beginGesture: ctx.beginGesture,
+      abortGesture: ctx.abortGesture,
       undo: ctx.undo,
       redo: ctx.redo,
       select: ctx.select,
