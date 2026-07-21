@@ -102,13 +102,24 @@ function drawPreview(canvas: HTMLCanvasElement, layers: PathLayer[]): void {
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
+  let maxStrokeWidth = 0;
   for (const layer of layers) {
     const box = pathBbox(layer.points, layer.extraSubpaths);
     minX = Math.min(minX, box.x);
     minY = Math.min(minY, box.y);
     maxX = Math.max(maxX, box.x + box.width);
     maxY = Math.max(maxY, box.y + box.height);
+    if (layer.stroke !== null) maxStrokeWidth = Math.max(maxStrokeWidth, layer.strokeWidth);
   }
+  // A stroke-only horizontal/vertical line has a zero-height or zero-width
+  // point bbox even though it is fully visible once stroked — pad by the
+  // stroke's own extent so a straight line still gets a nonzero fitting box
+  // instead of a blank preview.
+  const strokeMargin = maxStrokeWidth / 2;
+  minX -= strokeMargin;
+  minY -= strokeMargin;
+  maxX += strokeMargin;
+  maxY += strokeMargin;
   const bboxWidth = maxX - minX;
   const bboxHeight = maxY - minY;
   if (!(bboxWidth > 0) || !(bboxHeight > 0)) return;
@@ -139,13 +150,23 @@ function drawPreview(canvas: HTMLCanvasElement, layers: PathLayer[]): void {
 }
 
 function SvgImportDialog({ props, close, ctx }: DialogProps<SvgImportDialogProps>) {
-  // Run once per dialog open — props.svgText never changes across this
-  // dialog's lifetime (a replacement dialog is a fresh mount).
   const analysis = useMemo(() => analyzeSvg(props.svgText), [props.svgText]);
 
   const [mappings, setMappings] = useState<Record<string, ColorIndex>>(() =>
     seedMappings(analysis.sourceColors),
   );
+  // Re-seed when a NEW svg-import dialog replaces this one while it's still
+  // open (e.g. a second SVG dropped before Cancel/Import) — DialogHost keeps
+  // the same component instance across a same-id replacement, so `analysis`
+  // changing via props.svgText would otherwise leave stale mappings behind,
+  // which then fail buildPathLayers' exact-coverage check against the new
+  // sourceColors. Render-time state adjustment (not useEffect), same pattern
+  // as NumberField in inspector-ui.tsx.
+  const [seededFor, setSeededFor] = useState(analysis);
+  if (analysis !== seededFor) {
+    setSeededFor(analysis);
+    setMappings(seedMappings(analysis.sourceColors));
+  }
 
   const cancelRef = useRef<HTMLButtonElement>(null);
   // Explicit focus, same technique as confirm-dialog.tsx: this layout effect

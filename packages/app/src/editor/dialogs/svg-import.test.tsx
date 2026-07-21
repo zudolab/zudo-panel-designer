@@ -67,6 +67,11 @@ function svg(inner: string, rootAttrs = 'viewBox="0 0 100 100"'): string {
 }
 
 const OK_SVG = svg('<path d="M0 0 L10 0 L10 10 Z" fill="#ff0000"/>');
+const OK_SVG_DIFFERENT_COLOR = svg('<path d="M0 0 L10 0 L10 10 Z" fill="#00ff00"/>');
+// A stroke-only horizontal line: an open contour whose points share one y,
+// so its point-only bbox has zero height (see extract-shapes.test.ts for the
+// fill="none" stroke-only shape convention).
+const HORIZONTAL_LINE_SVG = svg('<path d="M0 10 L100 10" fill="none" stroke="#ff0000" stroke-width="10"/>');
 // Fails the safety gate before extraction even runs (parse-svg-document.ts) —
 // an analysis-fatal state.
 const ANALYSIS_FATAL_SVG = `<!DOCTYPE svg>${svg('<path d="M0 0 L10 0 L10 10 Z"/>')}`;
@@ -108,6 +113,71 @@ describe('svg-import dialog', () => {
     expect(container.querySelector('canvas')).toBeTruthy();
     expect(container.querySelector('img')).toBeNull();
     expect(container.innerHTML).not.toContain('<svg');
+  });
+
+  it('re-seeds mappings when the dialog input is replaced while still open', () => {
+    // DialogHost reuses the same component instance across a same-id
+    // openDialog('svg-import', …) replacement (e.g. a second SVG dropped
+    // before Cancel/Import). Without re-seeding on props.svgText change, the
+    // mapping keyed to the first file's colors would fail buildPathLayers'
+    // exact-coverage check against the second file's colors and incorrectly
+    // fall back to the fatal state.
+    const ctx = stubCtx();
+    const Dialog = getDialog('svg-import')!.component;
+    const { rerender } = render(
+      <Dialog props={{ fileName: 'a.svg', svgText: OK_SVG }} close={vi.fn()} ctx={ctx} />,
+    );
+    expect(screen.getByRole('combobox', { name: 'color for #ff0000' })).toBeTruthy();
+
+    rerender(
+      <Dialog
+        props={{ fileName: 'b.svg', svgText: OK_SVG_DIFFERENT_COLOR }}
+        close={vi.fn()}
+        ctx={ctx}
+      />,
+    );
+
+    expect(screen.getByText('1 editable shapes')).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'color for #00ff00' })).toBeTruthy();
+    expect(screen.queryByText('Import as image instead')).toBeNull();
+  });
+
+  it('preview: a stroke-only horizontal/vertical line still gets a nonzero fitting box, not a blank preview', () => {
+    // jsdom has no Path2D (buildPath2D always returns null here, see the
+    // file header), so fill()/stroke() never fire in this environment either
+    // way -- what this test proves is that the degenerate-bbox guard does
+    // NOT bail out before context.scale(), which it did prior to the
+    // stroke-width margin fix (a point-only bbox for a horizontal line has
+    // zero height).
+    const scaleCalls: unknown[] = [];
+    const fakeContext = {
+      clearRect: vi.fn(),
+      fillRect: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      scale: vi.fn((...args: unknown[]) => scaleCalls.push(args)),
+      fill: vi.fn(),
+      stroke: vi.fn(),
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 0,
+    };
+    const getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(fakeContext as unknown as CanvasRenderingContext2D);
+    const ctx = stubCtx();
+    const Dialog = getDialog('svg-import')!.component;
+    render(
+      <Dialog
+        props={{ fileName: 'line.svg', svgText: HORIZONTAL_LINE_SVG }}
+        close={vi.fn()}
+        ctx={ctx}
+      />,
+    );
+
+    expect(scaleCalls.length).toBeGreaterThan(0);
+    getContextSpy.mockRestore();
   });
 
   it('explicitly exercises the preview draw guard when getContext returns null', () => {
