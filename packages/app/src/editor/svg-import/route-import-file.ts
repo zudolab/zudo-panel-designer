@@ -48,7 +48,14 @@ export async function routeImportFile(file: File, ctx: ToolContext): Promise<voi
       }
       // Clipboard-pasted files can arrive with an empty name (#141 spec) --
       // the dialog still needs something to display/save as.
-      ctx.openDialog('svg-import', { fileName: file.name || 'clipboard.svg', svgText });
+      //
+      // The original File rides along untouched: file.text() above always
+      // decodes as UTF-8, so an SVG stored in another XML-supported encoding
+      // (UTF-16, ...) is mojibake by now. The dialog's "import as image
+      // instead" fallback must re-read the raw bytes rather than re-encode
+      // svgText, or such files -- which imported fine as rasters before this
+      // feature existed -- would fail on both paths.
+      ctx.openDialog('svg-import', { fileName: file.name || 'clipboard.svg', svgText, file });
       return;
     }
 

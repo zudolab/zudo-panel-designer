@@ -33,6 +33,9 @@ import { nearestPaletteIndex } from '../nearest-palette-color';
 interface SvgImportDialogProps {
   fileName: string;
   svgText: string;
+  // The original, still-undecoded File — only the "import as image instead"
+  // fallback uses it; see importAsImageInstead for why svgText can't stand in.
+  file: File;
 }
 
 const SVG_IMPORT_DIALOG_TITLE_ID = 'svg-import-dialog-title';
@@ -225,7 +228,14 @@ function SvgImportDialog({ props, close, ctx }: DialogProps<SvgImportDialogProps
   };
 
   const importAsImageInstead = () => {
-    const file = new File([props.svgText], props.fileName, { type: 'image/svg+xml' });
+    // Rebuilt from the ORIGINAL bytes, never from props.svgText: File.text()
+    // decodes as UTF-8, so an SVG in another XML-supported encoding (UTF-16,
+    // ...) reaches this dialog as mojibake, and re-encoding that string would
+    // break the raster fallback too. Only the name is re-applied (a clipboard
+    // file can be unnamed) and the MIME pinned — importImageFile bakes
+    // file.type straight into its data URL, and the classifier already
+    // established this file is SVG.
+    const file = new File([props.file], props.fileName, { type: 'image/svg+xml' });
     importImageFile(file, ctx).catch((err: unknown) => {
       toastError('Could not import image', { description: errorMessage(err) });
     });

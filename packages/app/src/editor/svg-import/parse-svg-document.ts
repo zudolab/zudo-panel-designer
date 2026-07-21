@@ -148,12 +148,85 @@ function preParseReject(text: string): SvgImportDiagnostic | null {
   return null;
 }
 
-const DISPLAY_NONE = /(?:^|;)\s*display\s*:\s*none\s*(?:!important\s*)?(?:;|$)/i;
+// Every value a browser accepts for `display`, including the two-value syntax
+// ("display: inline flow-root") and the CSS-wide keywords. Needed in full
+// because CSS DROPS a declaration whose value it does not recognize: without
+// this set, style="display:bogus" would look like a valid override and un-hide
+// a display="none" subtree the browser still hides.
+const DISPLAY_KEYWORDS = new Set([
+  'none',
+  'contents',
+  'block',
+  'inline',
+  'run-in',
+  'flow',
+  'flow-root',
+  'list-item',
+  'inline-block',
+  'flex',
+  'inline-flex',
+  'grid',
+  'inline-grid',
+  'table',
+  'inline-table',
+  'table-row-group',
+  'table-header-group',
+  'table-footer-group',
+  'table-row',
+  'table-cell',
+  'table-column-group',
+  'table-column',
+  'table-caption',
+  'ruby',
+  'ruby-base',
+  'ruby-text',
+  'ruby-base-container',
+  'ruby-text-container',
+  'inherit',
+  'initial',
+  'unset',
+  'revert',
+  'revert-layer',
+]);
+
+// Returns the normalized value, or null when CSS would drop the declaration
+// as invalid (unknown keyword, empty value) and keep the previous one.
+function validDisplayValue(raw: string | null): string | null {
+  if (raw === null) return null;
+  const value = raw.trim().toLowerCase();
+  if (value === '') return null;
+  const tokens = value.split(/\s+/);
+  return tokens.every((token) => DISPLAY_KEYWORDS.has(token)) ? value : null;
+}
+
+// `display` obeys the CSS cascade, not "whichever source says none first": the
+// presentation attribute comes first, then inline `style` declarations in
+// order, with `!important` outranking any later normal declaration. So
+// <g display="none" style="display:inline"> renders and must not be pruned
+// here, while style="display:none!important;display:inline" stays hidden.
+function effectiveDisplay(el: Element): string {
+  let display = validDisplayValue(el.getAttribute('display')) ?? '';
+  // A presentation attribute can never carry `!important`.
+  let important = false;
+  const style = el.getAttribute('style');
+  if (!style) return display;
+  for (const chunk of stripCssComments(style).split(';')) {
+    const colon = chunk.indexOf(':');
+    if (colon < 0) continue;
+    if (chunk.slice(0, colon).trim().toLowerCase() !== 'display') continue;
+    const rawValue = chunk.slice(colon + 1);
+    const declaredImportant = /!\s*important\s*$/i.test(rawValue);
+    const value = validDisplayValue(rawValue.replace(/!\s*important\s*$/i, ''));
+    if (value === null) continue;
+    if (important && !declaredImportant) continue;
+    display = value;
+    important = declaredImportant;
+  }
+  return display;
+}
 
 function isDisplayNone(el: Element): boolean {
-  if (el.getAttribute('display') === 'none') return true;
-  const style = el.getAttribute('style');
-  return !!style && DISPLAY_NONE.test(stripCssComments(style));
+  return effectiveDisplay(el) === 'none';
 }
 
 function isInertAttr(name: string): boolean {

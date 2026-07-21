@@ -63,6 +63,17 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   } as unknown as ToolContext;
 }
 
+// The dialog contract routeImportFile() opens with: a display name, the
+// decoded text, and the ORIGINAL File the text was decoded from (the image
+// fallback reads its raw bytes — see the encoding test below).
+function dialogProps(fileName: string, svgText: string, file?: File) {
+  return {
+    fileName,
+    svgText,
+    file: file ?? new File([svgText], fileName, { type: 'image/svg+xml' }),
+  };
+}
+
 function svg(inner: string, rootAttrs = 'viewBox="0 0 100 100"'): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" ${rootAttrs}>${inner}</svg>`;
 }
@@ -72,7 +83,9 @@ const OK_SVG_DIFFERENT_COLOR = svg('<path d="M0 0 L10 0 L10 10 Z" fill="#00ff00"
 // A stroke-only horizontal line: an open contour whose points share one y,
 // so its point-only bbox has zero height (see extract-shapes.test.ts for the
 // fill="none" stroke-only shape convention).
-const HORIZONTAL_LINE_SVG = svg('<path d="M0 10 L100 10" fill="none" stroke="#ff0000" stroke-width="10"/>');
+const HORIZONTAL_LINE_SVG = svg(
+  '<path d="M0 10 L100 10" fill="none" stroke="#ff0000" stroke-width="10"/>',
+);
 // Fails the safety gate before extraction even runs (parse-svg-document.ts) —
 // an analysis-fatal state.
 const ANALYSIS_FATAL_SVG = `<!DOCTYPE svg>${svg('<path d="M0 0 L10 0 L10 10 Z"/>')}`;
@@ -89,7 +102,7 @@ describe('svg-import dialog', () => {
   it('ok state: shows the editable-shape count, a seeded mapping row, and an enabled import button', () => {
     const ctx = stubCtx();
     const Dialog = getDialog('svg-import')!.component;
-    render(<Dialog props={{ fileName: 'icon.svg', svgText: OK_SVG }} close={vi.fn()} ctx={ctx} />);
+    render(<Dialog props={dialogProps('icon.svg', OK_SVG)} close={vi.fn()} ctx={ctx} />);
 
     expect(screen.getByText('icon.svg')).toBeTruthy();
     expect(screen.getByText('1 editable shapes')).toBeTruthy();
@@ -113,7 +126,7 @@ describe('svg-import dialog', () => {
     // contract (max-height + overflow-y-auto) rather than pixel overflow.
     const ctx = stubCtx();
     const Dialog = getDialog('svg-import')!.component;
-    render(<Dialog props={{ fileName: 'icon.svg', svgText: OK_SVG }} close={vi.fn()} ctx={ctx} />);
+    render(<Dialog props={dialogProps('icon.svg', OK_SVG)} close={vi.fn()} ctx={ctx} />);
 
     const list = screen.getByTestId('color-mapping-list');
     expect(list.className).toContain('overflow-y-auto');
@@ -124,7 +137,7 @@ describe('svg-import dialog', () => {
     const ctx = stubCtx();
     const Dialog = getDialog('svg-import')!.component;
     const { container } = render(
-      <Dialog props={{ fileName: 'icon.svg', svgText: OK_SVG }} close={vi.fn()} ctx={ctx} />,
+      <Dialog props={dialogProps('icon.svg', OK_SVG)} close={vi.fn()} ctx={ctx} />,
     );
 
     expect(container.querySelector('canvas')).toBeTruthy();
@@ -142,16 +155,12 @@ describe('svg-import dialog', () => {
     const ctx = stubCtx();
     const Dialog = getDialog('svg-import')!.component;
     const { rerender } = render(
-      <Dialog props={{ fileName: 'a.svg', svgText: OK_SVG }} close={vi.fn()} ctx={ctx} />,
+      <Dialog props={dialogProps('a.svg', OK_SVG)} close={vi.fn()} ctx={ctx} />,
     );
     expect(screen.getByRole('combobox', { name: 'color for #ff0000' })).toBeTruthy();
 
     rerender(
-      <Dialog
-        props={{ fileName: 'b.svg', svgText: OK_SVG_DIFFERENT_COLOR }}
-        close={vi.fn()}
-        ctx={ctx}
-      />,
+      <Dialog props={dialogProps('b.svg', OK_SVG_DIFFERENT_COLOR)} close={vi.fn()} ctx={ctx} />,
     );
 
     expect(screen.getByText('1 editable shapes')).toBeTruthy();
@@ -186,11 +195,7 @@ describe('svg-import dialog', () => {
     const ctx = stubCtx();
     const Dialog = getDialog('svg-import')!.component;
     render(
-      <Dialog
-        props={{ fileName: 'line.svg', svgText: HORIZONTAL_LINE_SVG }}
-        close={vi.fn()}
-        ctx={ctx}
-      />,
+      <Dialog props={dialogProps('line.svg', HORIZONTAL_LINE_SVG)} close={vi.fn()} ctx={ctx} />,
     );
 
     expect(scaleCalls.length).toBeGreaterThan(0);
@@ -198,14 +203,12 @@ describe('svg-import dialog', () => {
   });
 
   it('explicitly exercises the preview draw guard when getContext returns null', () => {
-    const getContextSpy = vi
-      .spyOn(HTMLCanvasElement.prototype, 'getContext')
-      .mockReturnValue(null);
+    const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
     const ctx = stubCtx();
     const Dialog = getDialog('svg-import')!.component;
 
     expect(() =>
-      render(<Dialog props={{ fileName: 'icon.svg', svgText: OK_SVG }} close={vi.fn()} ctx={ctx} />),
+      render(<Dialog props={dialogProps('icon.svg', OK_SVG)} close={vi.fn()} ctx={ctx} />),
     ).not.toThrow();
     expect(getContextSpy).toHaveBeenCalled();
     getContextSpy.mockRestore();
@@ -214,13 +217,7 @@ describe('svg-import dialog', () => {
   it('analysis-fatal state: shows the fallback explanation and only the image-import action', () => {
     const ctx = stubCtx();
     const Dialog = getDialog('svg-import')!.component;
-    render(
-      <Dialog
-        props={{ fileName: 'bad.svg', svgText: ANALYSIS_FATAL_SVG }}
-        close={vi.fn()}
-        ctx={ctx}
-      />,
-    );
+    render(<Dialog props={dialogProps('bad.svg', ANALYSIS_FATAL_SVG)} close={vi.fn()} ctx={ctx} />);
 
     expect(screen.getByText(/import as an image instead/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Import as image instead' })).toBeTruthy();
@@ -231,11 +228,7 @@ describe('svg-import dialog', () => {
     const ctx = stubCtx();
     const Dialog = getDialog('svg-import')!.component;
     render(
-      <Dialog
-        props={{ fileName: 'empty.svg', svgText: BUILDER_FATAL_SVG }}
-        close={vi.fn()}
-        ctx={ctx}
-      />,
+      <Dialog props={dialogProps('empty.svg', BUILDER_FATAL_SVG)} close={vi.fn()} ctx={ctx} />,
     );
 
     expect(screen.getByText(/import as an image instead/)).toBeTruthy();
@@ -250,7 +243,7 @@ describe('svg-import dialog', () => {
     const ctx = stubCtx();
     const close = vi.fn();
     const Dialog = getDialog('svg-import')!.component;
-    render(<Dialog props={{ fileName: 'icon.svg', svgText: OK_SVG }} close={close} ctx={ctx} />);
+    render(<Dialog props={dialogProps('icon.svg', OK_SVG)} close={close} ctx={ctx} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Import 1 shape' }));
 
@@ -268,13 +261,7 @@ describe('svg-import dialog', () => {
     const ctx = stubCtx();
     const close = vi.fn();
     const Dialog = getDialog('svg-import')!.component;
-    render(
-      <Dialog
-        props={{ fileName: 'bad.svg', svgText: ANALYSIS_FATAL_SVG }}
-        close={close}
-        ctx={ctx}
-      />,
-    );
+    render(<Dialog props={dialogProps('bad.svg', ANALYSIS_FATAL_SVG)} close={close} ctx={ctx} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Import as image instead' }));
 
@@ -286,17 +273,42 @@ describe('svg-import dialog', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  // REGRESSION (codex review): routeImportFile's file.text() always decodes as
+  // UTF-8, so an SVG stored in another XML-supported encoding (UTF-16 here)
+  // reaches this dialog as mojibake. Rebuilding the fallback File from that
+  // string corrupted the raster path too — and such files imported fine before
+  // native SVG import existed, so losing both paths is a regression, not a gap.
+  it('import as image instead: carries the ORIGINAL bytes, not a UTF-8 re-encoding of the decoded text', () => {
+    vi.mocked(importImageFile).mockResolvedValue();
+    // "<svg/>" in UTF-16LE, with a byte-order mark.
+    const utf16Bytes = new Uint8Array([
+      0xff, 0xfe, 0x3c, 0x00, 0x73, 0x00, 0x76, 0x00, 0x67, 0x00, 0x2f, 0x00, 0x3e, 0x00,
+    ]);
+    const original = new File([utf16Bytes], 'utf16.svg', { type: 'image/svg+xml' });
+    const mojibake = new TextDecoder().decode(utf16Bytes); // what file.text() yields
+    const ctx = stubCtx();
+    const Dialog = getDialog('svg-import')!.component;
+    render(
+      <Dialog props={dialogProps('utf16.svg', mojibake, original)} close={vi.fn()} ctx={ctx} />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import as image instead' }));
+
+    expect(importImageFile).toHaveBeenCalledTimes(1);
+    const [passed] = vi.mocked(importImageFile).mock.calls[0];
+    expect(passed.size).toBe(original.size);
+    // Re-encoding the mojibake as UTF-8 changes the byte length — that is the
+    // exact corruption this guards against.
+    expect(passed.size).not.toBe(new File([mojibake], 'utf16.svg').size);
+    expect(passed.name).toBe('utf16.svg');
+    expect(passed.type).toBe('image/svg+xml');
+  });
+
   it('import as image instead: a decode/read failure surfaces via the error toast', async () => {
     vi.mocked(importImageFile).mockRejectedValue(new Error('could not decode'));
     const ctx = stubCtx();
     const Dialog = getDialog('svg-import')!.component;
-    render(
-      <Dialog
-        props={{ fileName: 'bad.svg', svgText: ANALYSIS_FATAL_SVG }}
-        close={vi.fn()}
-        ctx={ctx}
-      />,
-    );
+    render(<Dialog props={dialogProps('bad.svg', ANALYSIS_FATAL_SVG)} close={vi.fn()} ctx={ctx} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Import as image instead' }));
     await vi.waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
@@ -307,7 +319,7 @@ describe('svg-import dialog', () => {
     const ctx = stubCtx();
     render(<DialogHost ctx={ctx as CommandContext} />);
 
-    act(() => openDialog('svg-import', { fileName: 'icon.svg', svgText: OK_SVG }));
+    act(() => openDialog('svg-import', dialogProps('icon.svg', OK_SVG)));
 
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
   });
@@ -316,7 +328,7 @@ describe('svg-import dialog', () => {
     const ctx = stubCtx();
     render(<DialogHost ctx={ctx as CommandContext} />);
 
-    act(() => openDialog('svg-import', { fileName: 'icon.svg', svgText: OK_SVG }));
+    act(() => openDialog('svg-import', dialogProps('icon.svg', OK_SVG)));
 
     expect(screen.getByRole('dialog', { name: 'Import SVG' })).toBeTruthy();
   });

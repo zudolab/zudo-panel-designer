@@ -177,6 +177,99 @@ describe('parseSvgDocument -- display:none pruning', () => {
       expect(result.root.getElementsByTagName('script').length).toBe(0);
     }
   });
+
+  // The cascade decides display, not whichever source mentions "none" first:
+  // an inline declaration beats the presentation attribute. Pruning on the
+  // attribute alone silently deleted shapes the browser renders.
+  it('keeps a subtree whose inline style re-shows it over a display="none" attribute', () => {
+    const text = svg(
+      '<g display="none" style="display:inline"><path d="M0 0L1 1"/></g>',
+      'width="10" height="10"',
+    );
+    const result = parseSvgDocument(text);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.root.getElementsByTagName('path').length).toBe(1);
+      expect(result.diagnostics.some((d) => d.code === 'hidden-content-skipped')).toBe(false);
+    }
+  });
+
+  it('keeps a subtree whose later style declaration overrides an earlier display:none', () => {
+    const text = svg(
+      '<g style="display:none;display:inline"><path d="M0 0L1 1"/></g>',
+      'width="10" height="10"',
+    );
+    const result = parseSvgDocument(text);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.root.getElementsByTagName('path').length).toBe(1);
+      expect(result.diagnostics.some((d) => d.code === 'hidden-content-skipped')).toBe(false);
+    }
+  });
+
+  // CSS priority, not source order: an !important declaration outranks every
+  // later normal one, so this subtree is still hidden in a browser.
+  it('still prunes when an !important display:none outranks a later normal declaration', () => {
+    const text = svg(
+      '<g style="display:none!important;display:inline"><script>alert(1)</script></g><path d="M0 0L1 1"/>',
+      'width="10" height="10"',
+    );
+    const result = parseSvgDocument(text);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.root.getElementsByTagName('script').length).toBe(0);
+    }
+  });
+
+  // CSS drops a declaration whose value it does not recognize and keeps the
+  // previously effective one -- an unknown keyword must not un-hide a subtree.
+  it('still prunes when the overriding display value is invalid', () => {
+    const viaAttribute = parseSvgDocument(
+      svg(
+        '<g display="none" style="display:bogus"><script>alert(1)</script></g><path d="M0 0L1 1"/>',
+        'width="10" height="10"',
+      ),
+    );
+    expect(viaAttribute.status).toBe('ok');
+    if (viaAttribute.status === 'ok') {
+      expect(viaAttribute.root.getElementsByTagName('script').length).toBe(0);
+    }
+
+    const viaStyle = parseSvgDocument(
+      svg(
+        '<g style="display:none;display:bogus"><script>alert(1)</script></g><path d="M0 0L1 1"/>',
+        'width="10" height="10"',
+      ),
+    );
+    expect(viaStyle.status).toBe('ok');
+    if (viaStyle.status === 'ok') {
+      expect(viaStyle.root.getElementsByTagName('script').length).toBe(0);
+    }
+  });
+
+  it('honors the two-value display syntax as a valid, visible override', () => {
+    const text = svg(
+      '<g display="none" style="display:inline flow-root"><path d="M0 0L1 1"/></g>',
+      'width="10" height="10"',
+    );
+    const result = parseSvgDocument(text);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.root.getElementsByTagName('path').length).toBe(1);
+    }
+  });
+
+  it('still prunes when a later style declaration re-hides an inline display', () => {
+    const text = svg(
+      '<g display="inline" style="display:inline;display:none"><script>alert(1)</script></g><path d="M0 0L1 1"/>',
+      'width="10" height="10"',
+    );
+    const result = parseSvgDocument(text);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.root.getElementsByTagName('script').length).toBe(0);
+    }
+  });
 });
 
 describe('parseSvgDocument -- attribute tiers', () => {

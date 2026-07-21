@@ -50,8 +50,25 @@ describe('routeImportFile — svg', () => {
     expect(ctx.openDialog).toHaveBeenCalledWith('svg-import', {
       fileName: 'icon.svg',
       svgText: '<svg></svg>',
+      file,
     });
     expect(importImageFile).not.toHaveBeenCalled();
+  });
+
+  // REGRESSION (codex review): file.text() decodes as UTF-8 unconditionally, so
+  // an SVG in another XML-supported encoding (UTF-16, ...) is mojibake by the
+  // time the dialog sees svgText. The dialog's "import as image instead"
+  // fallback needs the untouched bytes to stay usable, so the ORIGINAL File --
+  // not a re-encoding of svgText -- has to travel with the dialog props.
+  it('passes the original File instance through so the image fallback can use the raw bytes', async () => {
+    vi.mocked(classifyImportFile).mockResolvedValue('svg');
+    const ctx = stubCtx();
+    const file = new File(['<svg></svg>'], 'icon.svg', { type: 'image/svg+xml' });
+
+    await routeImportFile(file, ctx);
+
+    const [, props] = vi.mocked(ctx.openDialog).mock.calls[0] as [string, { file: File }];
+    expect(props.file).toBe(file);
   });
 
   it('falls back to "clipboard.svg" for an unnamed file (pasted clipboard files can be unnamed)', async () => {
@@ -106,9 +123,7 @@ describe('routeImportFile — raster', () => {
     await routeImportFile(file, ctx);
 
     expect(importImageFile).toHaveBeenCalledWith(file, ctx);
-    expect(toastWarning).toHaveBeenCalledWith(
-      expect.stringContaining('imported as image'),
-    );
+    expect(toastWarning).toHaveBeenCalledWith(expect.stringContaining('imported as image'));
   });
 
   it('propagates an importImageFile rejection to the caller instead of swallowing it', async () => {
@@ -129,7 +144,7 @@ describe('routeImportFile — raster', () => {
   // XML-parse the raster bytes and fails outright (confirmed against a real
   // browser in svg-import.spec.ts). routeImportFile must correct the type
   // before handing the file to importImageFile.
-  it('corrects a misleading raster file\'s type before importing', async () => {
+  it("corrects a misleading raster file's type before importing", async () => {
     vi.mocked(classifyImportFile).mockResolvedValue('raster');
     vi.mocked(sniffedRasterMimeType).mockResolvedValue('image/png');
     vi.mocked(importImageFile).mockResolvedValue(undefined);
@@ -159,7 +174,7 @@ describe('routeImportFile — raster', () => {
 });
 
 describe('routeImportFile — svg-oversize', () => {
-  it('imports via importImageFile and shows the oversize notice, preserving today\'s large-SVG behavior (no regression)', async () => {
+  it("imports via importImageFile and shows the oversize notice, preserving today's large-SVG behavior (no regression)", async () => {
     vi.mocked(classifyImportFile).mockResolvedValue('svg-oversize');
     vi.mocked(importImageFile).mockResolvedValue(undefined);
     const ctx = stubCtx();
@@ -168,9 +183,7 @@ describe('routeImportFile — svg-oversize', () => {
     await routeImportFile(file, ctx);
 
     expect(importImageFile).toHaveBeenCalledWith(file, ctx);
-    expect(toastWarning).toHaveBeenCalledWith(
-      expect.stringContaining('imported as image'),
-    );
+    expect(toastWarning).toHaveBeenCalledWith(expect.stringContaining('imported as image'));
   });
 
   it('propagates an importImageFile rejection instead of swallowing it', async () => {
