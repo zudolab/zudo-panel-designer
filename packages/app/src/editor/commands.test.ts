@@ -455,18 +455,40 @@ describe('edit-group (⌘G) — #155', () => {
 
   it('disabled (and a no-op with NO history entry) when grouping would exceed MAX_GROUP_DEPTH', () => {
     const cmd = allCommands().find((c) => c.id === 'edit-group')!;
-    // A chain of MAX_GROUP_DEPTH nested single-child groups already sits at
-    // the cap; wrapping it (+ a sibling leaf, so this isn't the lone-group
-    // case) alongside anything else would push depth to MAX_GROUP_DEPTH + 1.
-    const deepGroup = nestedGroup(MAX_GROUP_DEPTH, rect('deep-leaf', 0, 0), 'deep-g') as GroupNode;
+    // The parse boundary (serialize.ts) caps GROUP nesting at depthOfNodeById
+    // 0..MAX_GROUP_DEPTH — a chain of MAX_GROUP_DEPTH + 1 nested groups is
+    // one GROUP past legal. maxSubtreeDepth of that chain's outermost node
+    // equals MAX_GROUP_DEPTH + 1, and wrapping it in a new top-level group
+    // would push its innermost group one level past the cap.
+    const tooDeepGroup = nestedGroup(
+      MAX_GROUP_DEPTH + 1,
+      rect('deep-leaf', 0, 0),
+      'deep-g',
+    ) as GroupNode;
     const ctx = stubCommandCtx({
-      doc: { panelHp: 12, guides: [], layers: [deepGroup, rect('sibling', 5, 5)] },
-      selectedIds: [deepGroup.id, 'sibling'],
+      doc: { panelHp: 12, guides: [], layers: [tooDeepGroup, rect('sibling', 5, 5)] },
+      selectedIds: [tooDeepGroup.id, 'sibling'],
     });
     expect(cmd.isEnabled(ctx)).toBe(false);
     cmd.run(ctx);
     expect(ctx.commit).not.toHaveBeenCalled();
     expect(ctx.selectIds).not.toHaveBeenCalled();
+  });
+
+  it('a root already at maxSubtreeDepth === MAX_GROUP_DEPTH is STILL safe to wrap (boundary, codex review #155)', () => {
+    // Wrapping this root makes it the new top group's child (depth 1); every
+    // GROUP inside it that was already legal (depthOfNodeById 0..MAX-1
+    // relative to itself) shifts to 1..MAX relative to the new top — still
+    // entirely within the parse boundary's legal 0..MAX_GROUP_DEPTH range.
+    // The naive `1 + maxSubtreeDepth(root) <= MAX_GROUP_DEPTH` check would
+    // wrongly reject this exact case.
+    const cmd = allCommands().find((c) => c.id === 'edit-group')!;
+    const atCapGroup = nestedGroup(MAX_GROUP_DEPTH, rect('deep-leaf', 0, 0), 'deep-g') as GroupNode;
+    const ctx = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [atCapGroup, rect('sibling', 5, 5)] },
+      selectedIds: [atCapGroup.id, 'sibling'],
+    });
+    expect(cmd.isEnabled(ctx)).toBe(true);
   });
 
   it('one root, one level shallower than the cap, still fits — sanity check on the boundary', () => {
@@ -535,6 +557,21 @@ describe('edit-group (⌘G) — #155', () => {
     const ctx = stubCommandCtx({ doc, selectedIds: ['a', 'b'] });
     const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true, shiftKey: true }), ctx);
     expect(match?.id).not.toBe('edit-group');
+  });
+
+  // codex review (#155): edit-group's chord shadows the browser's native
+  // Find Next. Without alwaysClaimsChord, a disabled edit-group would never
+  // match at all, dispatchCommand would never preventDefault, and the
+  // browser's own Find would fire instead — a real, user-visible regression.
+  it('dispatchCommand: ⌘G still preventDefaults (and matches) even when edit-group is DISABLED — no run()', () => {
+    const doc: DocState = { panelHp: 12, guides: [], layers: [] };
+    const ctx = stubCommandCtx({ doc, selectedIds: [] }); // 0 selected — disabled
+    const e = keyEvent({ key: 'g', metaKey: true });
+    const match = dispatchCommand(e, ctx);
+    expect(match?.id).toBe('edit-group');
+    expect(e.preventDefault).toHaveBeenCalledTimes(1); // browser Find suppressed
+    expect(ctx.commit).not.toHaveBeenCalled(); // but run() did NOT execute
+    expect(ctx.selectIds).not.toHaveBeenCalled();
   });
 });
 
@@ -641,6 +678,19 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
     const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
     const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true }), ctx);
     expect(match?.id).not.toBe('edit-ungroup');
+  });
+
+  // codex review (#155): same alwaysClaimsChord reasoning as edit-group —
+  // ⌘⇧G shadows the browser's Find Previous.
+  it('dispatchCommand: ⌘⇧G still preventDefaults (and matches) even when edit-ungroup is DISABLED — no run()', () => {
+    const doc: DocState = { panelHp: 12, guides: [], layers: [rect('a', 0, 0)] };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['a'] }); // no group selected — disabled
+    const e = keyEvent({ key: 'g', metaKey: true, shiftKey: true });
+    const match = dispatchCommand(e, ctx);
+    expect(match?.id).toBe('edit-ungroup');
+    expect(e.preventDefault).toHaveBeenCalledTimes(1);
+    expect(ctx.commit).not.toHaveBeenCalled();
+    expect(ctx.selectIds).not.toHaveBeenCalled();
   });
 });
 

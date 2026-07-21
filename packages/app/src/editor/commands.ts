@@ -99,6 +99,20 @@ export interface CommandDef {
    * so that asymmetry survives the refactor exactly.
    */
   preventDefault?: boolean;
+  /**
+   * True for a command whose chord shadows a browser-native shortcut the app
+   * must ALWAYS suppress, even while the command itself is disabled (⌘G /
+   * ⌘⇧G shadow Find Next/Previous — see edit-group/edit-ungroup below).
+   * Without this, findMatchingCommand's disabled-command skip falls through
+   * to no match at all, dispatchCommand never calls preventDefault, and the
+   * browser's own Find fires — a real, user-visible regression a codex
+   * review of #155 caught. Defaults to false/undefined: every pre-existing
+   * command is either ALWAYS_ENABLED or, when conditionally disabled
+   * (Align/Distribute), chordless — so this flag changes nothing for them.
+   * Only affects chord-claiming/preventDefault; run() still only fires when
+   * isEnabled(ctx) is true (see dispatchCommand).
+   */
+  alwaysClaimsChord?: boolean;
   run(ctx: CommandContext): void;
   isEnabled(ctx: CommandContext): boolean;
   /** Overrides the auto-derived display string (see formatChord). */
@@ -110,9 +124,23 @@ const ALWAYS_ENABLED = () => true;
 // --- Group/Ungroup gating (#155) ----------------------------------------
 //
 // `groupNodes` always inserts the new group at the TOP LEVEL, stripping the
-// selected roots from wherever they currently live (see group-ops.ts) — so
-// the resulting subtree's depth is `1 + max(maxSubtreeDepth(root))` for the
-// selected roots, regardless of how deeply nested those roots are today.
+// selected roots from wherever they currently live (see group-ops.ts). Per
+// the parse boundary (serialize.ts's parseLayerNode), MAX_GROUP_DEPTH caps
+// GROUP nesting only — a group may legally sit at depthOfNodeById 0..8, and
+// a LEAF directly inside the deepest legal group (depth 8) is NOT capped
+// further (parseLayerNode only rejects a node when it itself has `kind:
+// 'group'` and `depth > MAX_GROUP_DEPTH`; parseLayer has no depth check at
+// all). Wrapping `root` in a new top-level group shifts every GROUP inside
+// `root`'s own subtree one level deeper; the new deepest-group-depth from
+// the new top group equals `maxSubtreeDepth(root)` itself (not +1 — a chain
+// of N nested groups then a leaf has maxSubtreeDepth(outermost) === N, and
+// wrapping makes that outermost group the new depth-1 node, so its own
+// former deepest-group-offset of N-1 becomes N from the new top). So the
+// cap is `maxSubtreeDepth(root) <= MAX_GROUP_DEPTH` — a root already at
+// maxSubtreeDepth === MAX_GROUP_DEPTH is still safe to wrap (codex review,
+// #155: the naive `1 + maxRootDepth <= MAX_GROUP_DEPTH` rejected this valid
+// boundary case one level too early).
+//
 // This is the gate that gives ⌘G its depth-cap enforcement: the pure
 // `groupNodes`/`ungroupGroupById` ops deliberately don't enforce
 // MAX_GROUP_DEPTH themselves (the parse boundary and panel drag-into-group
@@ -138,7 +166,7 @@ function isGroupableRootSelection(tree: LayerNode[], rootIds: readonly string[])
     const found = findNodeById(tree, rootIds[0]!);
     if (!found || isGroupNode(found.node)) return false;
   }
-  return 1 + maxRootDepth(tree, rootIds) <= MAX_GROUP_DEPTH;
+  return maxRootDepth(tree, rootIds) <= MAX_GROUP_DEPTH;
 }
 
 // --- tool-switch commands: derived from the tool registry ------------------
@@ -292,9 +320,12 @@ const STATIC_COMMANDS: CommandDef[] = [
     category: 'Edit',
     // ⌘G is the browser's find-again shortcut — preventDefault stops it
     // from leaking through, same reasoning as every other clipboard/undo
-    // command above.
+    // command above. alwaysClaimsChord: even when disabled (no groupable
+    // selection), the chord must still be suppressed — otherwise the
+    // browser's own Find fires (codex review, #155).
     chord: { key: 'g', meta: true, shift: false },
     preventDefault: true,
+    alwaysClaimsChord: true,
     run: (ctx) => {
       const roots = maximalSelectedRoots(ctx.doc.layers, ctx.selectedIds);
       if (!isGroupableRootSelection(ctx.doc.layers, roots)) return;
@@ -318,9 +349,12 @@ const STATIC_COMMANDS: CommandDef[] = [
     label: 'Ungroup',
     category: 'Edit',
     // Shift uppercases the reported key ('G'), hence the case-insensitive
-    // chord match in matchesChord/normalizedKeys.
+    // chord match in matchesChord/normalizedKeys. ⌘⇧G shadows the browser's
+    // find-previous shortcut, so it needs the same alwaysClaimsChord
+    // suppression as ⌘G above.
     chord: { key: 'g', meta: true, shift: true },
     preventDefault: true,
+    alwaysClaimsChord: true,
     run: (ctx) => {
       // Looked up in the TREE, not ctx.flatLayers — a flat-projection lookup
       // never resolves a group id (groups aren't leaves), which made the
@@ -546,22 +580,27 @@ export function findMatchingCommand(
   for (const cmd of commands) {
     if (cmd.displayOnly || !cmd.chord) continue;
     if (!matchesChord(cmd.chord, e)) continue;
-    if (!cmd.isEnabled(ctx)) continue;
+    // A disabled command still matches (claims the chord) when it owns a
+    // browser-native shortcut it must always suppress — see
+    // alwaysClaimsChord's doc comment. run() stays gated on isEnabled below,
+    // in dispatchCommand.
+    if (!cmd.isEnabled(ctx) && !cmd.alwaysClaimsChord) continue;
     return cmd;
   }
   return null;
 }
 
-// Editor.tsx's fallback keydown entry point: finds the first enabled,
+// Editor.tsx's fallback keydown entry point: finds the first matching,
 // non-display-only command whose chord matches `e`, preventDefault()s it if
-// flagged, runs it, and returns it (or null if nothing matched) so the
-// caller knows whether to keep falling through its own bespoke handling
-// (nudge — see Editor.tsx).
+// flagged, runs it ONLY if actually enabled (a disabled alwaysClaimsChord
+// match still claims/preventDefaults the chord but must not execute), and
+// returns it (or null if nothing matched) so the caller knows whether to
+// keep falling through its own bespoke handling (nudge — see Editor.tsx).
 export function dispatchCommand(e: ToolKeyEvent, ctx: CommandContext): CommandDef | null {
   const match = findMatchingCommand(allCommands(), e, ctx);
   if (match) {
     if (match.preventDefault) e.preventDefault();
-    match.run(ctx);
+    if (match.isEnabled(ctx)) match.run(ctx);
   }
   return match;
 }
