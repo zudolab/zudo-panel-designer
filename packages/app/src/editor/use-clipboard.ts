@@ -16,8 +16,8 @@
 // simply ignored rather than crashing the paste).
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { cloneLayersWithFreshIds, mintId, parsePanelConfig, type Layer } from '@zpd/core';
-import { importImageFile } from './import-image';
 import { isEditableTarget } from './is-editable-target';
+import { routeImportFile } from './svg-import/route-import-file';
 import type { ToolContext } from './types';
 
 const ENVELOPE_APP = 'zpd';
@@ -187,15 +187,33 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     const onPaste = (e: ClipboardEvent) => {
       if (isEditableTarget(e.target)) return;
 
-      // Priority 1: an image file on the OS clipboard.
+      // Priority 1: an image (or SVG) file on the OS clipboard. A file item's
+      // `type` is usually enough (e.g. "image/svg+xml"), but some sources
+      // paste an SVG with a generic/empty type — the file's own name is the
+      // fallback signal, same as classifyImportFile's own MIME-or-extension
+      // check (#138). Routed through routeImportFile (#141) so a real SVG
+      // opens the import dialog instead of always importing as a raster
+      // layer — the exact same dispatch drop and the picker use.
       const items = e.clipboardData?.items;
-      const imageItem = items
-        ? Array.from(items).find((item) => item.kind === 'file' && item.type.startsWith('image/'))
-        : undefined;
-      const imageFile = imageItem?.getAsFile();
+      const fileItems = items
+        ? Array.from(items)
+            .filter((item) => item.kind === 'file')
+            .map((item) => item.getAsFile())
+            .filter((f): f is File => f !== null)
+        : [];
+      const imageFile = fileItems.find(
+        (f) =>
+          f.type.startsWith('image/') ||
+          f.name.toLowerCase().endsWith('.svg') ||
+          // Neither signal present at all -- most likely an anonymous
+          // clipboard blob (e.g. an SVG copied without a filename or a
+          // recognized MIME type). Let classifyImportFile's content
+          // root-sniff decide rather than silently dropping it.
+          (f.type === '' && f.name === ''),
+      );
       if (imageFile) {
         e.preventDefault();
-        importImageFile(imageFile, ctx).catch((err) => console.error('clipboard-paste:', err));
+        routeImportFile(imageFile, ctx).catch((err) => console.error('clipboard-paste:', err));
         return;
       }
 

@@ -15,9 +15,19 @@ import {
 } from '@zpd/core';
 import { useClipboard } from './use-clipboard';
 import { importImageFile } from './import-image';
+import { classifyImportFile } from './svg-import/classify-file';
 import type { ToolContext } from './types';
 
 vi.mock('./import-image', () => ({ importImageFile: vi.fn(() => Promise.resolve()) }));
+// jsdom (as pinned in this repo) implements FileReader but not the
+// Blob/File read methods (arrayBuffer()/text()) that classifyImportFile
+// uses for its magic-byte/root-sniff checks -- see classify-file.test.ts's
+// own header comment. Mocked here (default: 'raster', matching every
+// existing image-paste test's plain PNG fixture) so routeImportFile's
+// dispatch can be exercised without hitting that jsdom gap; classifyImportFile's
+// own sniffing logic has its own real-environment tests
+// (svg-import/classify-file.test.ts).
+vi.mock('./svg-import/classify-file', () => ({ classifyImportFile: vi.fn() }));
 
 const shapeLayer: ShapeLayer = {
   id: 'shape-1',
@@ -117,6 +127,30 @@ function dispatchPaste(
   return event;
 }
 
+// jsdom's File has no text() at all (see the classify-file mock comment
+// above) -- routeImportFile's svg branch calls file.text() directly, so it
+// is stubbed per-instance here, independent of jsdom's Blob prototype.
+function svgFile(text: string, name: string, type = 'image/svg+xml'): File {
+  const file = new File([text], name, { type });
+  Object.defineProperty(file, 'text', { value: vi.fn().mockResolvedValue(text) });
+  return file;
+}
+
+function dispatchSvgPaste(target: EventTarget, file: File): ClipboardEvent {
+  // A real DataTransferItem exposes no filename — only getAsFile().name does
+  // — so the item's `type` here mirrors what an actual browser paste would
+  // report for the file, same as dispatchPaste's imageFile shape above.
+  const event = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent;
+  const items = [{ kind: 'file', type: file.type, getAsFile: () => file }];
+  const clipboardData = {
+    items: items as unknown as DataTransferItemList,
+    getData: () => '',
+  };
+  Object.defineProperty(event, 'clipboardData', { value: clipboardData, configurable: true });
+  target.dispatchEvent(event);
+  return event;
+}
+
 function dispatchKeydown(target: EventTarget, init: KeyboardEventInit): KeyboardEvent {
   const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
   target.dispatchEvent(event);
@@ -126,6 +160,10 @@ function dispatchKeydown(target: EventTarget, init: KeyboardEventInit): Keyboard
 beforeEach(() => {
   vi.mocked(importImageFile).mockClear();
   vi.mocked(importImageFile).mockResolvedValue(undefined);
+  // Default: every pre-existing image-paste test pastes a plain PNG fixture
+  // and expects the raster path; the #141 svg tests below override this.
+  vi.mocked(classifyImportFile).mockReset();
+  vi.mocked(classifyImportFile).mockResolvedValue('raster');
 });
 
 afterEach(() => {
@@ -506,6 +544,102 @@ describe('useClipboard — paste priority: image > envelope > internal', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     expect(ctx.doc.layers).toHaveLength(3); // pattern + original + clone
+  });
+});
+
+describe('useClipboard — pasting an SVG file (#141)', () => {
+  it('routes a pasted SVG file to the svg-import dialog instead of importing it as a raster layer', async () => {
+    vi.mocked(classifyImportFile).mockResolvedValue('svg');
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+    const file = svgFile('<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'icon.svg');
+
+    let event!: ClipboardEvent;
+    act(() => {
+      event = dispatchSvgPaste(window, file);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(ctx.openDialog).toHaveBeenCalledWith('svg-import', {
+      fileName: 'icon.svg',
+      svgText: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    });
+    expect(importImageFile).not.toHaveBeenCalled();
+    expect(ctx.commit).not.toHaveBeenCalled();
+  });
+
+  it('falls back to "clipboard.svg" when the pasted file has no name', async () => {
+    vi.mocked(classifyImportFile).mockResolvedValue('svg');
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+    const file = svgFile('<svg xmlns="http://www.w3.org/2000/svg"></svg>', '');
+
+    act(() => {
+      dispatchSvgPaste(window, file);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(ctx.openDialog).toHaveBeenCalledWith(
+      'svg-import',
+      expect.objectContaining({ fileName: 'clipboard.svg' }),
+    );
+  });
+
+  it('routes a .svg-named file with a generic MIME type by its extension', async () => {
+    vi.mocked(classifyImportFile).mockResolvedValue('svg');
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+    // A generic/empty MIME type proves the .svg-name fallback in
+    // use-clipboard.ts's file-item predicate, independent of classification
+    // (mocked above) which only takes over once the item is already found.
+    const file = svgFile('<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'icon.svg', '');
+
+    act(() => {
+      dispatchSvgPaste(window, file);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(ctx.openDialog).toHaveBeenCalledWith('svg-import', {
+      fileName: 'icon.svg',
+      svgText: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    });
+  });
+
+  it('routes an anonymous clipboard blob (no MIME type, no name) through the classifier instead of dropping it', async () => {
+    // Neither the type-based nor the name-based signal fires here -- this is
+    // exactly the gap a real SVG copy without either identifying field would
+    // fall into; the file-item predicate has a dedicated fallback for it.
+    vi.mocked(classifyImportFile).mockResolvedValue('svg');
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+    const file = svgFile('<svg xmlns="http://www.w3.org/2000/svg"></svg>', '', '');
+
+    act(() => {
+      dispatchSvgPaste(window, file);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(ctx.openDialog).toHaveBeenCalledWith('svg-import', {
+      fileName: 'clipboard.svg',
+      svgText: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    });
   });
 });
 

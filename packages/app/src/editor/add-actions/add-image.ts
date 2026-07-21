@@ -1,10 +1,10 @@
-// Adds a design-time reference image (raster) via a transient file picker. The
-// Editor's asset-loading effect is what actually decodes/caches the <img> from
-// the layer's src, so this handler only needs to append the layer — done by
-// the shared importImageFile() (see ../import-image.ts), which also backs the
-// clipboard-paste and drop-import subs.
+// Adds a design-time reference image via a transient file picker. Routed
+// through the shared routeImportFile() (#141, see ../svg-import/
+// route-import-file.ts) — same classify-then-dispatch path as the
+// clipboard-paste and drop-import subs: a raster image appends a layer
+// directly (via ../import-image.ts), a real SVG opens the import dialog.
 import { registerAddAction } from '../registry/add-actions';
-import { importImageFile } from '../import-image';
+import { routeImportFile } from '../svg-import/route-import-file';
 
 registerAddAction({
   id: 'add-image',
@@ -13,14 +13,15 @@ registerAddAction({
   run(ctx) {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'image/*';
+    input.accept = 'image/*,.svg,image/svg+xml';
     input.addEventListener('change', () => {
       const file = input.files?.[0];
-      // importImageFile rejects on an unreadable/undecodable file — catch
-      // here so a corrupt/mislabeled image logs instead of surfacing as an
-      // unhandled promise rejection (the pre-extraction handler had no error
-      // path either, so this stays a no-op layer-wise, just observable).
-      if (file) importImageFile(file, ctx).catch((err) => console.error('add-image:', err));
+      // routeImportFile rejects only when the raster import itself fails
+      // (unreadable/undecodable file) — catch here so a corrupt/mislabeled
+      // image logs instead of surfacing as an unhandled promise rejection
+      // (the pre-extraction handler had no error path either, so this stays
+      // a no-op layer-wise, just observable).
+      if (file) routeImportFile(file, ctx).catch((err) => console.error('add-image:', err));
     });
     input.click();
   },
