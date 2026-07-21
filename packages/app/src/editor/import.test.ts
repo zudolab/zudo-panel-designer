@@ -66,6 +66,10 @@ describe('isImportableImageFile', () => {
   it('rejects a JSON file', () => {
     expect(isImportableImageFile(jsonFile({}))).toBe(false);
   });
+
+  it('accepts a file with no extension and no MIME type, deferring to classifyImportFile\'s content sniff (#143)', () => {
+    expect(isImportableImageFile(new File([''], 'clipboard-blob', { type: '' }))).toBe(true);
+  });
 });
 
 describe('importDroppedFile — dispatch by type', () => {

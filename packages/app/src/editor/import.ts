@@ -13,7 +13,18 @@ import { routeImportFile } from './svg-import/route-import-file';
 import type { ToolContext } from './types';
 
 export function isImportableImageFile(file: File): boolean {
-  return file.type.startsWith('image/') || file.name.toLowerCase().endsWith('.svg');
+  return (
+    file.type.startsWith('image/') ||
+    file.name.toLowerCase().endsWith('.svg') ||
+    // No image/* MIME AND no recognized extension (e.g. a filesystem file
+    // with no suffix) -- rather than reject outright, let classifyImportFile's
+    // own content root-sniff (#138) have the final say. Mirrors the same
+    // "anonymous blob" allowance use-clipboard.ts already makes for
+    // clipboard-pasted files (#141, #143): a genuinely unsupported file still
+    // ends up at routeImportFile's identical "Unsupported file" toast, just
+    // one classify() hop later.
+    file.type === ''
+  );
 }
 
 function isJsonFile(file: File): boolean {
