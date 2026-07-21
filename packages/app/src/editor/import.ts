@@ -7,17 +7,33 @@
 // and, only after the user confirms, replaces the whole document.
 import { tryParsePanelConfig } from '@zpd/core';
 import { confirmDialog } from './components/confirm-dialog';
-import { importImageFile } from './import-image';
 import { replaceDoc } from './replace-doc';
 import { toastError, toastSuccess } from './registry/toasts';
+import { routeImportFile } from './svg-import/route-import-file';
 import type { ToolContext } from './types';
-
-export function isImportableImageFile(file: File): boolean {
-  return file.type.startsWith('image/') || file.name.toLowerCase().endsWith('.svg');
-}
 
 function isJsonFile(file: File): boolean {
   return file.type === 'application/json' || file.name.toLowerCase().endsWith('.json');
+}
+
+export function isImportableImageFile(file: File): boolean {
+  return (
+    file.type.startsWith('image/') ||
+    file.name.toLowerCase().endsWith('.svg') ||
+    // No image/* MIME AND no recognized extension (e.g. a filesystem file
+    // with no suffix) -- rather than reject outright, let classifyImportFile's
+    // own content root-sniff (#138) have the final say. Mirrors the same
+    // "anonymous blob" allowance use-clipboard.ts already makes for
+    // clipboard-pasted files (#141, #143): a genuinely unsupported file still
+    // ends up at routeImportFile's identical "Unsupported file" toast, just
+    // one classify() hop later. Excludes .json: some platforms report an
+    // empty MIME for it too, and isImportableImageFile is checked BEFORE
+    // isJsonFile in importDroppedFile below -- without this exclusion, such
+    // a file would be misrouted to the image path and rejected as
+    // "Unsupported file" instead of reaching the panel-JSON import flow
+    // (caught by codex review during #143's integration pass).
+    (file.type === '' && !isJsonFile(file))
+  );
 }
 
 function errorMessage(err: unknown): string {
@@ -84,11 +100,13 @@ export function pickImportJsonFile(ctx: ToolContext): void {
 }
 
 // Entry point for a dropped (or picked) file of unknown kind: image/SVG ->
-// add as a layer; .json -> the parse-confirm-replace path above; anything
-// else -> an error toast so an unsupported drop isn't a silent no-op.
+// routeImportFile() (#141) classifies it and either adds a raster layer or
+// opens the SVG import dialog; .json -> the parse-confirm-replace path
+// above; anything else -> an error toast so an unsupported drop isn't a
+// silent no-op.
 export function importDroppedFile(file: File, ctx: ToolContext): Promise<void> {
   if (isImportableImageFile(file)) {
-    return importImageFile(file, ctx).catch((err) => {
+    return routeImportFile(file, ctx).catch((err) => {
       toastError('Could not import image', { description: errorMessage(err) });
     });
   }

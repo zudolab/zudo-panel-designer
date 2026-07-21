@@ -1,0 +1,46 @@
+// Diagnostic plumbing shared by the SVG IR extractor (#139).
+//
+// Fatals are thrown rather than returned: extraction is a deep recursive walk
+// (element -> style -> paint -> path data), and threading a result union
+// through every level would bury the actual logic. extractShapes() catches at
+// the top and turns the throw into a diagnostic, so nothing escapes the
+// analyzer as an exception.
+import type { SvgImportDiagnostic } from './types';
+
+export function fatal(code: string, message: string): SvgImportDiagnostic {
+  return { level: 'fatal', code, message };
+}
+
+export function warning(code: string, message: string): SvgImportDiagnostic {
+  return { level: 'warning', code, message };
+}
+
+export class SvgFatalError extends Error {
+  readonly diagnostic: SvgImportDiagnostic;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'SvgFatalError';
+    this.diagnostic = fatal(code, message);
+  }
+}
+
+export function throwFatal(code: string, message: string): never {
+  throw new SvgFatalError(code, message);
+}
+
+// Warnings are deduplicated by code+message: a 300-shape document at
+// opacity="0.5" should tell the user "opacity is ignored" once, not 300
+// times. Messages therefore stay element-kind-level, not per-instance.
+export class DiagnosticSink {
+  private readonly seen = new Set<string>();
+
+  constructor(private readonly target: SvgImportDiagnostic[]) {}
+
+  warn(code: string, message: string): void {
+    const key = `${code}\u0000${message}`;
+    if (this.seen.has(key)) return;
+    this.seen.add(key);
+    this.target.push(warning(code, message));
+  }
+}

@@ -1,18 +1,19 @@
 // Dispatch-logic tests for the shared drop/Import-JSON code path (#75).
-// Dependencies (importImageFile, replaceDoc, confirmDialog, toasts) are
+// Dependencies (routeImportFile, replaceDoc, confirmDialog, toasts) are
 // mocked so this file proves ONLY the routing/validation/confirm-gating
-// decisions in import.ts — importImageFile and replaceDoc already have their
-// own behavioral tests (import-image.test.ts, replace-doc.test.ts).
+// decisions in import.ts — routeImportFile's own classify-then-dispatch
+// logic has its own behavioral tests (svg-import/route-import-file.test.ts)
+// and replaceDoc has its own (replace-doc.test.ts).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PANEL_CONFIG_VERSION, serializePanelConfig, type DocState, type Pt } from '@zpd/core';
 import { confirmDialog } from './components/confirm-dialog';
-import { importImageFile } from './import-image';
 import { importDroppedFile, importJsonFile, isImportableImageFile } from './import';
 import { replaceDoc } from './replace-doc';
 import { toastError, toastSuccess } from './registry/toasts';
+import { routeImportFile } from './svg-import/route-import-file';
 import type { ToolContext } from './types';
 
-vi.mock('./import-image', () => ({ importImageFile: vi.fn() }));
+vi.mock('./svg-import/route-import-file', () => ({ routeImportFile: vi.fn() }));
 vi.mock('./replace-doc', () => ({ replaceDoc: vi.fn() }));
 vi.mock('./components/confirm-dialog', () => ({ confirmDialog: vi.fn() }));
 vi.mock('./registry/toasts', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
@@ -65,25 +66,33 @@ describe('isImportableImageFile', () => {
   it('rejects a JSON file', () => {
     expect(isImportableImageFile(jsonFile({}))).toBe(false);
   });
+
+  it('accepts a file with no extension and no MIME type, deferring to classifyImportFile\'s content sniff (#143)', () => {
+    expect(isImportableImageFile(new File([''], 'clipboard-blob', { type: '' }))).toBe(true);
+  });
+
+  it('still rejects a .json file even with an empty MIME type (some platforms report no MIME for .json) -- codex-caught regression', () => {
+    expect(isImportableImageFile(new File(['{}'], 'panel.json', { type: '' }))).toBe(false);
+  });
 });
 
 describe('importDroppedFile — dispatch by type', () => {
-  it('routes an image file to importImageFile', async () => {
+  it('routes an image file to routeImportFile', async () => {
     const ctx = stubCtx();
     const file = new File([''], 'photo.png', { type: 'image/png' });
-    vi.mocked(importImageFile).mockResolvedValue(undefined);
+    vi.mocked(routeImportFile).mockResolvedValue(undefined);
 
     await importDroppedFile(file, ctx);
 
-    expect(importImageFile).toHaveBeenCalledWith(file, ctx);
+    expect(routeImportFile).toHaveBeenCalledWith(file, ctx);
     expect(confirmDialog).not.toHaveBeenCalled();
     expect(replaceDoc).not.toHaveBeenCalled();
   });
 
-  it('toasts an error (and leaves the doc untouched) when importImageFile rejects', async () => {
+  it('toasts an error (and leaves the doc untouched) when routeImportFile rejects', async () => {
     const ctx = stubCtx();
     const file = new File([''], 'broken.png', { type: 'image/png' });
-    vi.mocked(importImageFile).mockRejectedValue(new Error('could not decode image'));
+    vi.mocked(routeImportFile).mockRejectedValue(new Error('could not decode image'));
 
     await importDroppedFile(file, ctx);
 
@@ -106,6 +115,19 @@ describe('importDroppedFile — dispatch by type', () => {
     expect(toastSuccess).toHaveBeenCalledWith('Panel imported');
   });
 
+  it('routes a .json file with an empty MIME type into the JSON import path, not the image path (codex-caught regression)', async () => {
+    const ctx = stubCtx();
+    const doc: DocState = { panelHp: 6, guides: [], layers: [] };
+    const file = new File([JSON.stringify(serializePanelConfig(doc))], 'panel.json', { type: '' });
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+
+    await importDroppedFile(file, ctx);
+
+    expect(routeImportFile).not.toHaveBeenCalled();
+    expect(replaceDoc).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).toHaveBeenCalledWith('Panel imported');
+  });
+
   it('toasts "unsupported file" for a file that is neither image nor JSON', async () => {
     const ctx = stubCtx();
     const file = new File([''], 'notes.txt', { type: 'text/plain' });
@@ -113,7 +135,7 @@ describe('importDroppedFile — dispatch by type', () => {
     await importDroppedFile(file, ctx);
 
     expect(toastError).toHaveBeenCalledWith('Unsupported file', expect.any(Object));
-    expect(importImageFile).not.toHaveBeenCalled();
+    expect(routeImportFile).not.toHaveBeenCalled();
     expect(replaceDoc).not.toHaveBeenCalled();
   });
 });
