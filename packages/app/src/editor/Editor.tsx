@@ -401,6 +401,10 @@ export function Editor() {
       showOutsidePanel,
       guides: showGuides ? doc.guides : [],
       guideDraft: showGuides ? guideDrag.draft : null,
+      // Live multi-rotate gesture chrome (#152): the streaming tool owns the
+      // frozen bounds/pivot + live delta; the chrome pass draws them instead
+      // of re-deriving (pulsating) live AABBs.
+      multiRotate: activeTool?.multiRotateChrome?.(ctx) ?? null,
       renderDraft: activeTool?.renderDraft ? (d) => activeTool.renderDraft?.(d, ctx) : undefined,
       requestRepaint: ctx.requestRepaint,
     });
@@ -560,6 +564,11 @@ export function Editor() {
   const onPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     getTool(effectiveToolId)?.onPointerUp?.(toPointer(e), ctx);
   };
+  // pointercancel (#152): the browser revoked the pointer (OS gesture, touch
+  // interruption). Tools that opt in treat it exactly as pointerup.
+  const onPointerCancel = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    getTool(effectiveToolId)?.onPointerCancel?.(toPointer(e), ctx);
+  };
   const onPointerLeave = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     getTool(effectiveToolId)?.onPointerLeave?.(toPointer(e), ctx);
   };
@@ -608,6 +617,7 @@ export function Editor() {
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
+            onPointerCancel={onPointerCancel}
             onPointerLeave={onPointerLeave}
             onDoubleClick={onDoubleClick}
           />

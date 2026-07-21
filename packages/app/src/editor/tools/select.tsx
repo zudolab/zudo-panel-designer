@@ -37,11 +37,19 @@ import {
   expandSelectionToLeafIds,
   promoteMarqueeSelection,
   resolveSelectionLeaves,
+  resolveSelectionOverlayMode,
   selectionOwnerId,
   toggleLeafSelection,
   togglePromotedSelection,
   topmostAncestorIdForLeaf,
 } from '../selection-resolve';
+import {
+  bakeMultiRotate,
+  captureMultiRotateSession,
+  snapRotateDelta,
+  unwrapRotateDelta,
+  type MultiRotateSession,
+} from '../multi-rotate';
 import {
   canRotate,
   cornerHandleRects,
@@ -49,12 +57,19 @@ import {
   layerBbox,
   layerRotation,
   multiResizeBbox,
+  multiRotateBbox,
+  multiRotateKnobScreenPos,
   resizeHandleRects,
   rotateHandleScreenPos,
 } from '../renderer';
 import { registerTool } from '../registry/tools';
 import { getTextGeometry, reconcileTextGeometry } from '../text-geometry';
-import type { DraftRenderContext, ToolContext, ToolPointerEvent } from '../types';
+import type {
+  DraftRenderContext,
+  MultiRotateChrome,
+  ToolContext,
+  ToolPointerEvent,
+} from '../types';
 
 const SNAP_MM = 0.1;
 const MIN_RESIZE_MM = 0.5;
@@ -222,6 +237,19 @@ type Drag =
       centerMm: Pt; // bbox center at pointerdown — the rotation pivot
       startPointerDeg: number; // pointer angle about the center at pointerdown
       startRotation: number; // layer rotation at pointerdown
+    }
+  | {
+      kind: 'multi-rotate';
+      // The frozen capture (#152): rotatable leaf set, start snapshots,
+      // canonical layerBbox centers, combined start bounds, pivot — all
+      // measured at pointerdown and never re-derived mid-gesture.
+      session: MultiRotateSession;
+      startPointerDeg: number; // pointer angle about the frozen pivot
+      // Last APPLIED delta — the unwrap anchor for the next tick (each tick
+      // picks the mod-360 representative of the raw offset closest to this,
+      // so the signed delta accumulates continuously past ±180°), and what
+      // the chrome/badge reads.
+      deltaDeg: number;
     }
   | { kind: 'anchor'; layerId: string; index: number }
   | { kind: 'handle'; layerId: string; index: number; which: 'hin' | 'hout' };
@@ -530,6 +558,36 @@ function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolea
   return false;
 }
 
+// Multi/group rotate grab (#152): the knob above the combined bbox starts a
+// batch rotate about the frozen pivot. Shares its whole eligibility with the
+// chrome pass — combined overlay mode (the chrome's combined branch) AND
+// multiRotateBbox (the renderer's shared gate), so exactly the knob that is
+// drawn is grabbable. The knob rides the FULL combined bbox (what the chrome
+// outlines); the gesture's pivot/bounds come from the rotatable leaves only
+// (captureMultiRotateSession) — a selected pattern must not displace them.
+function tryGrabMultiRotateHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
+  const tree = ctx.doc.layers;
+  if (resolveSelectionOverlayMode(tree, ctx.selectedIds) !== 'combined') return false;
+  const layers = ctx.flatLayers;
+  const ids = resolveSelectionLeaves(tree, ctx.selectedIds, layers).editableLeafIds;
+  const bbox = multiRotateBbox(layers, ids);
+  if (!bbox) return false;
+  // deltaDeg 0: a grab always happens with no gesture active, but going
+  // through the shared position helper keeps draw and hit-test on the same
+  // offset/radius constants (#152 — drift = visible-but-unclickable).
+  const knob = multiRotateKnobScreenPos(bbox, rectCenter(bbox), 0, ctx.camera);
+  if (Math.hypot(knob.x - e.screen.x, knob.y - e.screen.y) > ROTATE_GRAB_PX) return false;
+  const session = captureMultiRotateSession(tree, ctx.selectedIds, layers);
+  if (!session) return false;
+  drag = {
+    kind: 'multi-rotate',
+    session,
+    startPointerDeg: pointerDeg(e.mm, session.pivot),
+    deltaDeg: 0,
+  };
+  return true;
+}
+
 registerTool({
   id: 'select',
   label: 'Select',
@@ -546,7 +604,9 @@ registerTool({
     'handles to reshape a path, and drag the round handle above a shape or text layer to rotate it ' +
     'about its center (Shift snaps to 45° steps). With several layers selected, drag a corner of ' +
     'the combined box to scale them all uniformly about the opposite corner — hold Alt to scale ' +
-    'about the center instead (patterns are unaffected). A pattern square selects on click only ' +
+    'about the center instead (patterns are unaffected) — or drag the round handle above the ' +
+    'combined box to rotate them together about its center (Shift snaps to 45° steps; patterns ' +
+    'keep their angle). A pattern square selects on click only ' +
     'where no other layer is hit; dragging an unselected pattern draws a marquee instead, and a ' +
     'selected pattern drags like any layer (size it from the Properties panel). Arrow keys nudge ' +
     'the selection (Shift = ×10); Delete/Backspace removes it. Shortcut: V.',
@@ -567,8 +627,10 @@ registerTool({
     if (grabbable && tryGrabNode(grabbable, e, ctx)) return;
     if (grabbable && tryGrabRotateHandle(grabbable, e, ctx)) return;
     if (grabbable && tryGrabResizeHandle(grabbable, e, ctx)) return;
-    // >1 selected: the combined bbox's corner handles win over a fresh
-    // hit-test, same precedence as the single-selection handles above (#52).
+    // Combined selection: the rotate knob wins over the corner handles
+    // (rotate ABOVE resize, matching the single-selection grab order), and
+    // both win over a fresh hit-test (#52/#152).
+    if (tryGrabMultiRotateHandle(e, ctx)) return;
     if (tryGrabMultiResizeHandle(e, ctx)) return;
 
     const hit = topmostHit(ctx, e.mm);
@@ -583,7 +645,9 @@ registerTool({
     // "Selected" is the EXPANDED sense (#151): a pattern inside a selected
     // group is a selection member and must drag the group, not arm a marquee.
     const unselectedPatternHit =
-      hit && hit.type === 'pattern' && !expandSelectionToLeafIds(tree, ctx.selectedIds).includes(hit.id)
+      hit &&
+      hit.type === 'pattern' &&
+      !expandSelectionToLeafIds(tree, ctx.selectedIds).includes(hit.id)
         ? hit
         : null;
     if (hit && !unselectedPatternHit) {
@@ -887,6 +951,26 @@ registerTool({
         updateLayer(ctx, drag.layerId, { rotation: next }, false);
         break;
       }
+      case 'multi-rotate': {
+        // Raw offset unwrapped across the atan2 ±180° branch cut against the
+        // last applied delta, then Shift-snapped (45° increments from gesture
+        // start — DELTA snap, the single-rotate keeps its own #51 snap) or
+        // rounded to 0.1°. No grid/guide snapping during a rotate gesture.
+        const raw = pointerDeg(e.mm, drag.session.pivot) - drag.startPointerDeg;
+        const delta = snapRotateDelta(unwrapRotateDelta(raw, drag.deltaDeg), e.shiftKey);
+        // Lazy history: a drag that never leaves delta 0 writes no entry.
+        if (!gestureOpen && delta === 0) break;
+        ensureGesture(ctx);
+        drag.deltaDeg = delta;
+        // ONE streamed replace per tick, re-baked ENTIRELY from the frozen
+        // start snapshots (never cumulatively from live state — compounding
+        // rounding would drift the orbit). Pointerup adds no trailing commit.
+        ctx.replace({
+          ...ctx.doc,
+          layers: bakeMultiRotate(ctx.doc.layers, drag.session, delta),
+        });
+        break;
+      }
       case 'anchor': {
         const anchorLayerId = drag.layerId;
         const layer = ctx.flatLayers.find((l) => l.id === anchorLayerId);
@@ -932,37 +1016,13 @@ registerTool({
       }
     }
   },
-  onPointerUp(_e: ToolPointerEvent, ctx: ToolContext) {
-    if (marquee?.active) ctx.requestRepaint(); // erase the rubber-band
-    // Pattern click rule (#97): a press on an unselected pattern that never
-    // materialized a marquee is a CLICK — (toggle-)select the pattern now,
-    // mirroring the modifier vocabulary of the direct-hit path above.
-    if (marquee && !marquee.active && marquee.clickSelectId !== null) {
-      const id = marquee.clickSelectId;
-      const tree = ctx.doc.layers;
-      // Same group-aware modifier vocabulary as the direct-hit path (#151):
-      // Meta targets the raw pattern leaf, Shift toggles the promoted id, a
-      // plain click selects the promoted id (identity when ungrouped).
-      if (marquee.meta) {
-        ctx.selectIds(toggleLeafSelection(tree, ctx.selectedIds, id));
-      } else if (marquee.additive) {
-        ctx.selectIds(togglePromotedSelection(tree, ctx.selectedIds, id));
-      } else {
-        ctx.select(topmostAncestorIdForLeaf(tree, id));
-      }
-    }
-    // A grab on a multi-selection member that never crossed the threshold is
-    // a plain CLICK — collapse the selection to that layer (standard tool
-    // behavior; without this a multi-selection could never be narrowed by
-    // clicking one of its members).
-    if (drag?.kind === 'move' && !drag.crossed && drag.collapseTo !== null) {
-      ctx.select(drag.collapseTo);
-    }
-    marquee = null;
-    drag = null;
-    gestureOpen = false;
-    downScreen = null;
-  },
+  onPointerUp: endPointerSession,
+  // pointercancel is pointerup, exactly (#152): the streamed replaces already
+  // hold the last applied change and closing the drag adds no trailing
+  // commit, so a revoked pointer (OS gesture, capture loss) simply ends the
+  // gesture where it stood — undo covers the rest. There is deliberately no
+  // mid-drag ESC cancel (parity with the reference implementation).
+  onPointerCancel: endPointerSession,
   onPointerLeave(_e: ToolPointerEvent, ctx: ToolContext) {
     // No further pointermove will arrive to clear the hover outline — a
     // hovered layer would otherwise keep its chrome after the cursor leaves
@@ -972,6 +1032,15 @@ registerTool({
       hoveredId = null;
       ctx.requestRepaint();
     }
+  },
+  // Non-null exactly while a multi-rotate stream is live (gesture opened):
+  // before the first non-zero tick the doc is untouched, so the normal
+  // chrome — which equals the frozen chrome at delta 0 — keeps drawing and
+  // a zero-change drag never flickers.
+  multiRotateChrome(): MultiRotateChrome | null {
+    return drag?.kind === 'multi-rotate' && gestureOpen
+      ? { bounds: drag.session.bounds, pivot: drag.session.pivot, deltaDeg: drag.deltaDeg }
+      : null;
   },
   onDeactivate() {
     marquee = null;
@@ -1013,3 +1082,35 @@ registerTool({
     }
   },
 });
+
+function endPointerSession(_e: ToolPointerEvent, ctx: ToolContext) {
+  if (marquee?.active) ctx.requestRepaint(); // erase the rubber-band
+  // Pattern click rule (#97): a press on an unselected pattern that never
+  // materialized a marquee is a CLICK — (toggle-)select the pattern now,
+  // mirroring the modifier vocabulary of the direct-hit path above.
+  if (marquee && !marquee.active && marquee.clickSelectId !== null) {
+    const id = marquee.clickSelectId;
+    const tree = ctx.doc.layers;
+    // Same group-aware modifier vocabulary as the direct-hit path (#151):
+    // Meta targets the raw pattern leaf, Shift toggles the promoted id, a
+    // plain click selects the promoted id (identity when ungrouped).
+    if (marquee.meta) {
+      ctx.selectIds(toggleLeafSelection(tree, ctx.selectedIds, id));
+    } else if (marquee.additive) {
+      ctx.selectIds(togglePromotedSelection(tree, ctx.selectedIds, id));
+    } else {
+      ctx.select(topmostAncestorIdForLeaf(tree, id));
+    }
+  }
+  // A grab on a multi-selection member that never crossed the threshold is
+  // a plain CLICK — collapse the selection to that layer (standard tool
+  // behavior; without this a multi-selection could never be narrowed by
+  // clicking one of its members).
+  if (drag?.kind === 'move' && !drag.crossed && drag.collapseTo !== null) {
+    ctx.select(drag.collapseTo);
+  }
+  marquee = null;
+  drag = null;
+  gestureOpen = false;
+  downScreen = null;
+}

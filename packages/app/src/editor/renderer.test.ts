@@ -24,8 +24,11 @@ import {
   cornerHandleRects,
   layerBbox,
   layerRotation,
+  formatRotateDeltaBadge,
   measureTextBbox,
   multiResizeBbox,
+  multiRotateBbox,
+  multiRotateKnobScreenPos,
   reconcileImageCache,
   renderScene,
   resizeHandleRects,
@@ -323,6 +326,90 @@ describe('multiResizeBbox (#52 eligibility gate)', () => {
       width: 50,
       height: 50,
     });
+  });
+});
+
+describe('multiRotateBbox (#152 eligibility gate)', () => {
+  it('returns the combined bbox when at least one selected leaf is rotatable', () => {
+    const layers: Layer[] = [shape('a', 0, 0), shape('b', 40, 30)];
+    expect(multiRotateBbox(layers, ['a', 'b'])).toEqual({ x: 0, y: 0, width: 50, height: 40 });
+  });
+
+  it('is null for a pattern-only selection — nothing in it can rotate', () => {
+    const layers: Layer[] = [pattern('g1'), pattern('g2')];
+    expect(multiRotateBbox(layers, ['g1', 'g2'])).toBeNull();
+  });
+
+  it('a pattern plus a shape qualifies, and the PATTERN still joins the knob bbox union', () => {
+    // The knob rides the full combined chrome bbox; only the gesture's
+    // pivot/bounds (captureMultiRotateSession) exclude the pattern.
+    const layers: Layer[] = [pattern('g1'), shape('a', 10, 10)];
+    expect(multiRotateBbox(layers, ['g1', 'a'])).toEqual({ x: 0, y: 0, width: 50, height: 50 });
+  });
+
+  it('is null when the only rotatable member is hidden', () => {
+    const layers: Layer[] = [shape('a', 0, 0, { hidden: true }), pattern('g1')];
+    expect(multiRotateBbox(layers, ['a', 'g1'])).toEqual(null);
+  });
+
+  it('unlike multiResizeBbox, a SINGLE leaf qualifies (one-child group case)', () => {
+    // Combined overlay mode is the caller's precondition; a one-child group
+    // resolves to one leaf and still rotates (#152).
+    const layers: Layer[] = [shape('a', 0, 0)];
+    expect(multiRotateBbox(layers, ['a'])).toEqual({ x: 0, y: 0, width: 10, height: 10 });
+  });
+
+  it('paths are rotatable (they bake via point geometry, no rotation field needed)', () => {
+    const path: Layer = {
+      id: 'p1',
+      name: 'p1',
+      type: 'path',
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+      ],
+      closed: false,
+      fill: null,
+      stroke: 1,
+      strokeWidth: 1,
+    };
+    expect(multiRotateBbox([path, pattern('g1')], ['p1', 'g1'])).not.toBeNull();
+  });
+});
+
+describe('multiRotateKnobScreenPos (#152 — shared draw/hit-test geometry)', () => {
+  const bounds: Rect = { x: 10, y: 10, width: 20, height: 10 }; // top-mid (20, 10)
+
+  it('delta 0 is an exact pass-through of the single-rotate handle position', () => {
+    expect(multiRotateKnobScreenPos(bounds, { x: 20, y: 15 }, 0, IDENTITY)).toEqual(
+      rotateHandleScreenPos(bounds, 0, IDENTITY),
+    );
+  });
+
+  it('orbits the knob about the pivot by the delta (90° cw puts it right of the pivot)', () => {
+    const pivot = { x: 20, y: 15 };
+    const knob = multiRotateKnobScreenPos(bounds, pivot, 90, IDENTITY);
+    // base knob: (20, 10 - ROTATE_HANDLE_OFFSET_PX) = (20, -10), 25px above
+    // the pivot; 90° cw about (20, 15) in y-down screen space → (45, 15).
+    expect(knob.x).toBeCloseTo(45);
+    expect(knob.y).toBeCloseTo(15);
+  });
+});
+
+describe('formatRotateDeltaBadge (#152 — signed delta label)', () => {
+  it('formats positive, negative and zero deltas', () => {
+    expect(formatRotateDeltaBadge(37.5)).toBe('+37.5°');
+    expect(formatRotateDeltaBadge(-45)).toBe('-45.0°');
+    expect(formatRotateDeltaBadge(0)).toBe('+0.0°');
+  });
+
+  it('folds -0 so a counter-clockwise jitter never flashes "-0.0°"', () => {
+    expect(formatRotateDeltaBadge(-0)).toBe('+0.0°');
+  });
+
+  it('stays signed past ±180° (unwrapped deltas accumulate)', () => {
+    expect(formatRotateDeltaBadge(270)).toBe('+270.0°');
+    expect(formatRotateDeltaBadge(-190.5)).toBe('-190.5°');
   });
 });
 
