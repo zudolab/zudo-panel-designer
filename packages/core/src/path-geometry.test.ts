@@ -6,6 +6,8 @@ import {
   movePathAnchor,
   movePathHandle,
   pathBbox,
+  rotatePathLayer,
+  rotatePoints,
   translatePathLayer,
   translatePoints,
   type PathPointLike,
@@ -98,6 +100,54 @@ describe('translatePoints / translatePathLayer', () => {
       points: [{ x: 2, y: 3 }],
       extraSubpaths: [[{ x: 3, y: 4 }]],
     });
+  });
+});
+
+// 90deg clockwise (y-down) about the origin lands exactly on an axis, but
+// Math.cos(Math.PI / 2) is ~6.1e-17 rather than an exact 0, so the "vanishing"
+// coordinate comes back as a tiny nonzero float — assert with toBeCloseTo
+// rather than toEqual on the whole point.
+function expectPt(pt: { x: number; y: number }, x: number, y: number): void {
+  expect(pt.x).toBeCloseTo(x);
+  expect(pt.y).toBeCloseTo(y);
+}
+
+describe('rotatePoints / rotatePathLayer', () => {
+  it('rotates anchors and handles about the center (90deg clockwise, y-down)', () => {
+    const points: PathPointLike[] = [{ x: 10, y: 0, hin: { x: 5, y: 0 }, hout: { x: 20, y: 0 } }];
+    const rotated = rotatePoints(points, { x: 0, y: 0 }, 90);
+    expectPt(rotated[0], 0, 10);
+    expectPt(rotated[0].hin!, 0, 5);
+    expectPt(rotated[0].hout!, 0, 20);
+  });
+
+  it('omits hin/hout on points that have none', () => {
+    const rotated = rotatePoints([{ x: 10, y: 0 }], { x: 0, y: 0 }, 90);
+    expect(rotated[0]).not.toHaveProperty('hin');
+    expect(rotated[0]).not.toHaveProperty('hout');
+  });
+
+  it('rotates extraSubpaths too, and omits the key when absent', () => {
+    const layer = { points: [{ x: 10, y: 0 }], closed: true };
+    const noExtras = rotatePathLayer(layer, { x: 0, y: 0 }, 90);
+    expect(noExtras).not.toHaveProperty('extraSubpaths');
+    expectPt(noExtras.points[0], 0, 10);
+
+    const withExtras = {
+      points: [{ x: 10, y: 0 }],
+      extraSubpaths: [[{ x: 0, y: 10 }]],
+      closed: true,
+    };
+    const rotated = rotatePathLayer(withExtras, { x: 0, y: 0 }, 90);
+    expectPt(rotated.points[0], 0, 10);
+    expectPt(rotated.extraSubpaths![0][0], -10, 0);
+  });
+
+  it('does not mutate the input points', () => {
+    const points: PathPointLike[] = [{ x: 10, y: 0, hin: { x: 5, y: 0 } }];
+    const before = structuredClone(points);
+    rotatePoints(points, { x: 0, y: 0 }, 90);
+    expect(points).toEqual(before);
   });
 });
 
