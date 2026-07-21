@@ -331,12 +331,15 @@ describe('parseSvgDocument -- quotas', () => {
   });
 
   it('rejects a tree with more than 5,000 elements', () => {
-    // Parsing a 5,000+ element document with jsdom's DOMParser is the slow
-    // part (not the walk itself, which short-circuits at the quota) --
-    // a longer timeout keeps this from flaking under CI/dev-machine load.
-    const inner = '<rect x="0" y="0" width="1" height="1"/>'.repeat(5001);
+    // Parsing a 5,000+ element document is the slow part (not the walk
+    // itself, which short-circuits at the quota) -- attribute-free <rect/>
+    // siblings avoid both the extra text jsdom's DOMParser has to tokenize
+    // and the attribute-map work checkAttributes would otherwise do on each
+    // of the first 5,000 elements, without changing what boundary this
+    // proves (element count, same as production's MAX_ELEMENTS).
+    const inner = '<rect/>'.repeat(5001);
     expectFatal(svg(inner, 'width="10" height="10"'), 'quota-exceeded');
-  }, 15000);
+  }, 10000);
 
   it('accepts a tree within both quotas', () => {
     const inner = '<rect x="0" y="0" width="1" height="1"/>'.repeat(100);
