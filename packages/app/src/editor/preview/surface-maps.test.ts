@@ -5,6 +5,7 @@ import {
   PANEL_THICKNESS_MM,
   panelWidthMm,
   type DocState,
+  type LayerNode,
   type ShapeLayer,
   type TextLayer,
 } from '@zpd/core';
@@ -642,5 +643,54 @@ describe('fixture sanity', () => {
     const layers = representativeSurfaceMapDoc().layers.slice(0, 3) as ShapeLayer[];
     expect(layers.map((layer) => layer.color)).toEqual([1, 0, 2]);
     expect(layers.every((layer) => layer.shape === 'rect' && !layer.rotation)).toBe(true);
+  });
+});
+
+// #150 regression fixture: the flat projection at the surface-map read
+// boundary must make a grouped doc export EXACTLY what the equivalent flat
+// doc exports — the 3D manufacturing output may not know groups exist.
+describe('flat projection parity (#150)', () => {
+  it('a grouped doc generates byte-identical surface maps to its flat-equivalent doc', () => {
+    const rect = (id: string, x: number): ShapeLayer => ({
+      id,
+      name: id,
+      type: 'shape',
+      shape: 'rect',
+      x,
+      y: 10,
+      width: 12,
+      height: 8,
+      color: 2,
+    });
+    const leaves = [rect('s1', 4), rect('s2', 20), rect('s3', 36)];
+    const flatDoc: DocState = { panelHp: 12, guides: [], layers: [...leaves] };
+    const groupedLayers: LayerNode[] = [
+      leaves[0],
+      {
+        kind: 'group',
+        id: 'g1',
+        name: 'G1',
+        children: [
+          leaves[1],
+          { kind: 'group', id: 'g2', name: 'G2', children: [leaves[2]] },
+        ],
+      },
+    ];
+    const groupedDoc: DocState = { panelHp: 12, guides: [], layers: groupedLayers };
+
+    const run = (doc: DocState) => {
+      const recording = recordingCanvasFactory();
+      const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+      generator.generate({
+        doc,
+        ticket: ticket(1),
+        preferredPixelsPerMm: 2,
+        maximumTextureSizePx: 512,
+      });
+      generator.close();
+      return recording.canvases.map((canvas) => normalizedCalls(canvas));
+    };
+
+    expect(JSON.stringify(run(groupedDoc))).toBe(JSON.stringify(run(flatDoc)));
   });
 });

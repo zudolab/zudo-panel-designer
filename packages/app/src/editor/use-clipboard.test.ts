@@ -18,6 +18,7 @@ import { useClipboard } from './use-clipboard';
 import { importImageFile } from './import-image';
 import { classifyImportFile, sniffedRasterMimeType } from './svg-import/classify-file';
 import type { ToolContext } from './types';
+import { projectFlatLayers } from './flat-projection';
 
 vi.mock('./import-image', () => ({ importImageFile: vi.fn(() => Promise.resolve()) }));
 // jsdom (as pinned in this repo) implements FileReader but not the
@@ -78,6 +79,9 @@ function createCtx(doc: DocState, selectedIds: readonly string[] = []) {
     },
     get selectedLayer() {
       return flattenLayerNodes(currentDoc.layers).find((l) => l.id === ctx.selectedId) ?? null;
+    },
+    get flatLayers() {
+      return projectFlatLayers(currentDoc.layers);
     },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },

@@ -3,15 +3,15 @@
 // layer-ops so ordering + immutability semantics live in one place.
 import { useRef, useState, type KeyboardEvent } from 'react';
 import {
-  flattenLayerNodes,
+  deleteNodeById,
   PALETTE,
-  removeLayer,
-  renameLayer,
+  renameById,
   reorderLayer,
-  toggleLayerHidden,
+  toggleHiddenById,
   type ColorIndex,
   type Layer,
 } from '@zpd/core';
+import { projectFlatLayers } from '../flat-projection';
 import { nextListSelection } from '../selection';
 import type { ToolContext } from '../types';
 
@@ -35,10 +35,10 @@ export interface LayerListProps {
 }
 
 export function LayerList({ ctx, selectedIds }: LayerListProps) {
-  // Flat top-level list for now — tree rendering (collapse/nest) is #153.
-  // Flattening a group-free doc is the identity (layer-nodes.ts), so this is
+  // Flat leaf list for now — tree rendering (collapse/nest) is a later sub.
+  // Projecting a group-free doc is the identity (layer-nodes.ts), so this is
   // behavior-preserving until real groups exist.
-  const layers = flattenLayerNodes(ctx.doc.layers);
+  const layers = ctx.flatLayers;
   const visibleLayers = [...layers].reverse();
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
@@ -72,13 +72,21 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     const from = layers.findIndex((l) => l.id === id);
     // reorderLayer returns the SAME array when the move is a no-op (already at
     // the top/bottom of the stack) — don't write a phantom undo entry for that.
-    const next = reorderLayer(layers, from, from + dir);
-    if (next !== layers) ctx.commit({ ...ctx.doc, layers: next });
+    //
+    // DELIBERATE flatten-write shim (#150): reordering the FLAT leaf list and
+    // writing it back discards group structure for a grouped doc. Reordering
+    // across a tree is only meaningful once the list RENDERS the tree — the
+    // tree-UI sub owns converting this; groups aren't creatable until then.
+    const next = reorderLayer([...layers], from, from + dir);
+    if (next.length !== layers.length || next.some((l, i) => l !== layers[i])) {
+      ctx.commit({ ...ctx.doc, layers: next });
+    }
   };
   const remove = (id: string) => {
     const renderedIndex = visibleLayers.findIndex((layer) => layer.id === id);
-    const nextLayers = removeLayer(layers, id);
-    const nextVisibleLayers = [...nextLayers].reverse();
+    // Recursive delete (#150): removes the leaf wherever it sits in the tree.
+    const nextLayers = deleteNodeById(ctx.doc.layers, id);
+    const nextVisibleLayers = [...projectFlatLayers(nextLayers)].reverse();
     const nextFocusId =
       renderedIndex < 0
         ? currentFocusId
@@ -92,7 +100,8 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     if (selectedIds.includes(id)) ctx.selectIds(selectedIds.filter((x) => x !== id));
   };
   const toggle = (id: string) => {
-    ctx.commit({ ...ctx.doc, layers: toggleLayerHidden(layers, id) });
+    // Recursive toggle (#150): flips the node's OWN hidden flag at any depth.
+    ctx.commit({ ...ctx.doc, layers: toggleHiddenById(ctx.doc.layers, id) });
   };
   const startRename = (layer: Layer) => {
     setRenamingId(layer.id);
@@ -104,7 +113,8 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
   const commitRename = (id: string) => {
     // An empty name is a valid stored value — the row display already falls
     // back to layer.type (see the span below), same as the initial data.
-    ctx.commit({ ...ctx.doc, layers: renameLayer(layers, id, draftName.trim()) });
+    // Recursive rename (#150): renames the node at any depth in the tree.
+    ctx.commit({ ...ctx.doc, layers: renameById(ctx.doc.layers, id, draftName.trim()) });
     setRenamingId(null);
   };
 

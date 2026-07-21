@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { ShapeLayer } from '@zpd/core';
 import type { ToolContext } from '../types';
+import { projectFlatLayers } from '../flat-projection';
 import { LayerList } from './layer-list';
 
 afterEach(cleanup);
@@ -30,6 +31,9 @@ function stubCtx() {
     select,
     selectIds,
   } as unknown as ToolContext;
+  Object.defineProperty(ctx, 'flatLayers', {
+    get: () => projectFlatLayers(ctx.doc.layers),
+  });
   return { ctx, commit, select, selectIds };
 }
 
@@ -101,6 +105,9 @@ function multiCtx(selectedIds: readonly string[]) {
   const ctx = {
     get doc() {
       return doc;
+    },
+    get flatLayers() {
+      return projectFlatLayers(doc.layers);
     },
     selectedIds,
     commit,
@@ -288,7 +295,11 @@ describe('LayerList keyboard access', () => {
     onlyButton.focus();
     fireEvent.click(within(onlyButton.closest('li')!).getByTitle('Delete'));
     const [nextDoc] = commit.mock.calls[0];
-    currentCtx = { ...ctx, doc: nextDoc } as ToolContext;
+    currentCtx = {
+      ...ctx,
+      doc: nextDoc,
+      flatLayers: projectFlatLayers(nextDoc.layers),
+    } as ToolContext;
     rerender(<LayerList ctx={currentCtx} selectedIds={[]} />);
 
     expect(screen.queryAllByRole('listitem')).toHaveLength(0);

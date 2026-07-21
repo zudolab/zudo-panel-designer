@@ -1,5 +1,4 @@
 import {
-  flattenLayerNodes,
   PALETTE,
   PANEL_HEIGHT_MM,
   PANEL_THICKNESS_MM,
@@ -8,6 +7,7 @@ import {
   type DocState,
   type Layer,
 } from '@zpd/core';
+import { projectFlatLayers } from '../flat-projection';
 import { ensureFontAttempt, type FontInitialResult, type FontLoadAttempt } from '../fonts';
 import { paintLayer, type LayerPaintOptions } from '../renderer';
 import { reconcileTextGeometry } from '../text-geometry';
@@ -218,8 +218,11 @@ export function createPreviewSurfaceMapGenerator(
 
       // Reconcile the canonical text geometry without replacing the editor's
       // repaint callback. Preview readiness is observed independently below.
-      // Flatten the tree once at this read boundary (layer-groups #146).
-      const layers = flattenLayerNodes(input.doc.layers);
+      // The shared flat projection (#150), not an ad-hoc flatten: for the
+      // editor's live doc this is the SAME array the canvas paints, so the
+      // reconcile here never bumps text geometry's array-identity-keyed
+      // document incarnation.
+      const layers = projectFlatLayers(input.doc.layers);
       reconcileTextGeometry(layers);
       const generationFontAttempts = new Set<FontLoadAttempt>();
       for (const layer of layers) {

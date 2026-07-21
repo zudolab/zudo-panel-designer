@@ -9,14 +9,16 @@
 // the Playwright suite, which runs against a production `vite build` +
 // `vite preview` (see playwright.config.ts) where DEV is false.
 import {
-  flattenLayerNodes,
+  isGroupNode,
   serializePanelConfig,
   type DocState,
   type HistoryState,
   type Layer,
+  type LayerNode,
   type PanelConfig,
 } from '@zpd/core';
 import type { Camera } from './camera';
+import { projectFlatLayers } from './flat-projection';
 import {
   fingerprintPreviewSurfaceMap,
   getPreviewDebugSummary,
@@ -36,10 +38,19 @@ export interface ZpdTestLayerSummary {
   hidden: boolean;
 }
 
+// The tree view (#150): the e2e contract for group structure. `hidden` here
+// is the node's OWN flag (raw tree state) — the folded ancestor-hidden view
+// is what getLayers() exposes via the flat projection.
+export type ZpdTestLayerTreeNode =
+  | ({ kind: 'layer' } & ZpdTestLayerSummary)
+  | { kind: 'group'; id: string; name: string; hidden: boolean; children: ZpdTestLayerTreeNode[] };
+
 export interface ZpdTestBridge {
   getDoc(): DocState;
   getHistory(): HistoryState<DocState>;
   getLayers(): ZpdTestLayerSummary[];
+  // Read-only structural view of doc.layers — see ZpdTestLayerTreeNode.
+  getLayerTree(): ZpdTestLayerTreeNode[];
   getLayerCount(): number;
   getPanelHp(): number;
   // getSelectedId stays (existing specs read it): non-null only when exactly
@@ -79,19 +90,36 @@ export interface TestBridgeSource {
   getCamera(): Camera | null;
 }
 
+function summarizeTree(nodes: LayerNode[]): ZpdTestLayerTreeNode[] {
+  return nodes.map((node) =>
+    isGroupNode(node)
+      ? {
+          kind: 'group' as const,
+          id: node.id,
+          name: node.name,
+          hidden: !!node.hidden,
+          children: summarizeTree(node.children),
+        }
+      : { kind: 'layer' as const, id: node.id, type: node.type, name: node.name, hidden: !!node.hidden },
+  );
+}
+
 export function installTestBridge(source: TestBridgeSource): void {
   if (typeof window === 'undefined' || !isTestContext()) return;
   window.__zpdTest = {
     getDoc: () => source.getDoc(),
     getHistory: () => source.getHistory(),
     getLayers: () =>
-      flattenLayerNodes(source.getDoc().layers).map((l) => ({
+      projectFlatLayers(source.getDoc().layers).map((l) => ({
         id: l.id,
         type: l.type,
         name: l.name,
         hidden: !!l.hidden,
       })),
-    getLayerCount: () => source.getDoc().layers.length,
+    getLayerTree: () => summarizeTree(source.getDoc().layers),
+    // LEAF count (matches getLayers().length) — a group node is structure,
+    // not a countable layer.
+    getLayerCount: () => projectFlatLayers(source.getDoc().layers).length,
     getPanelHp: () => source.getDoc().panelHp,
     getSelectedId: () => source.getSelectedId(),
     getSelectedIds: () => [...source.getSelectedIds()],

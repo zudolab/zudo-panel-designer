@@ -28,6 +28,7 @@ import {
 import { normalizeSelectedIds } from '../selection';
 import type { DraftRenderContext, PanelDims, ToolContext, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
+import { projectFlatLayers } from '../flat-projection';
 import { resetTextGeometryForTests, setTextMeasureForTests } from '../text-geometry';
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
@@ -92,6 +93,9 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
     },
     get selectedLayer() {
       return flattenLayerNodes(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
+    },
+    get flatLayers() {
+      return projectFlatLayers(history.present.layers);
     },
     toMm: (p: Pt) => ({
       x: (p.x - camera.offsetX) / camera.pxPerMm,

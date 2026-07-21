@@ -6,12 +6,13 @@
 // the actual tracing math is covered DOM-free in svg-to-path-layers.test.ts.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { ImageLayer, PathLayer, Pt } from '@zpd/core';
-import { bakeImageRotation } from './trace';
+import type { DocState, GroupNode, ImageLayer, PathLayer, Pt } from '@zpd/core';
+import { bakeImageRotation, insertTracedPaths } from './trace';
 import { DialogHost } from '../components/dialog-host';
 import { closeDialog, getDialog, openDialog } from '../registry/dialogs';
 import type { CommandContext } from '../commands';
 import type { ToolContext } from '../types';
+import { projectFlatLayers } from '../flat-projection';
 
 afterEach(() => {
   closeDialog();
@@ -19,7 +20,7 @@ afterEach(() => {
 });
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
-  return {
+  const ctx = {
     doc: { panelHp: 12, guides: [], layers: [] },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
@@ -42,6 +43,12 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     closeDialog: vi.fn(),
     ...overrides,
   } as unknown as ToolContext;
+  // Live flat view over whatever doc the stub ended up with (non-enumerable
+  // so object spreads never snapshot it).
+  Object.defineProperty(ctx, 'flatLayers', {
+    get: () => projectFlatLayers(ctx.doc.layers),
+  });
+  return ctx;
 }
 
 const IMAGE_LAYER: ImageLayer = {
@@ -223,5 +230,61 @@ describe('trace dialog', () => {
     act(() => openDialog('trace', { layerId }));
 
     expect(screen.getByRole('dialog', { name: 'Convert image to vectors' })).toBeTruthy();
+  });
+});
+
+// #150: the apply step must splice the traced vectors BESIDE the source image
+// within its CURRENT parent — nested images included — instead of the old
+// root-array findIndex/slice, which mangled the root for a nested source.
+describe('insertTracedPaths (#150)', () => {
+  const tracedPath = (id: string): PathLayer => ({
+    id,
+    name: id,
+    type: 'path',
+    points: [],
+    closed: true,
+    fill: 1,
+    stroke: null,
+    strokeWidth: 0,
+  });
+
+  it('hides the source and inserts the traced paths directly above it at the root', () => {
+    const below = { ...IMAGE_LAYER, id: 'below' };
+    const above = { ...IMAGE_LAYER, id: 'above' };
+    const doc: DocState = { panelHp: 12, guides: [], layers: [below, IMAGE_LAYER, above] };
+    const next = insertTracedPaths(doc, IMAGE_LAYER, [tracedPath('p1'), tracedPath('p2')]);
+    expect(next.layers.map((l) => l.id)).toEqual(['below', 'img-1', 'p1', 'p2', 'above']);
+    expect((next.layers[1] as ImageLayer).hidden).toBe(true);
+    // untouched siblings keep identity
+    expect(next.layers[0]).toBe(below);
+    expect(next.layers[4]).toBe(above);
+  });
+
+  it('inserts beside a group-nested image within its parent, leaving the root intact', () => {
+    const sibling = { ...IMAGE_LAYER, id: 'sibling' };
+    const rootLayer = { ...IMAGE_LAYER, id: 'root-layer' };
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: [
+        rootLayer,
+        {
+          kind: 'group',
+          id: 'outer',
+          name: 'outer',
+          children: [
+            { kind: 'group', id: 'inner', name: 'inner', children: [IMAGE_LAYER, sibling] },
+          ],
+        },
+      ],
+    };
+    const next = insertTracedPaths(doc, IMAGE_LAYER, [tracedPath('p1')]);
+    expect(next.layers[0]).toBe(rootLayer);
+    const outer = next.layers[1] as GroupNode;
+    expect(outer.kind).toBe('group');
+    const inner = outer.children[0] as GroupNode;
+    expect(inner.children.map((l) => l.id)).toEqual(['img-1', 'p1', 'sibling']);
+    expect((inner.children[0] as ImageLayer).hidden).toBe(true);
+    expect(inner.children[2]).toBe(sibling);
   });
 });

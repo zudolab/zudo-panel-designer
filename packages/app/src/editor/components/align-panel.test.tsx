@@ -14,6 +14,7 @@ import {
   type ShapeLayer,
 } from '@zpd/core';
 import type { PanelDims, ToolContext } from '../types';
+import { projectFlatLayers } from '../flat-projection';
 import { AlignPanel } from './align-panel';
 
 afterEach(cleanup);
@@ -25,6 +26,9 @@ function makeHarness(initialDoc: DocState) {
   const ctx = {
     get doc() {
       return history.present;
+    },
+    get flatLayers() {
+      return projectFlatLayers(history.present.layers);
     },
     get panel() {
       return PANEL;

@@ -27,6 +27,13 @@ export interface ToolContext {
   // selected.
   readonly selectedId: string | null;
   readonly selectedLayer: Layer | null;
+  // The flat Layer[] projection of doc.layers (#150): DFS leaf order — the
+  // z-order the renderer paints — with ancestor `hidden` folded down. LIVE
+  // like `doc`, and identity-STABLE per committed tree (memoized in
+  // flat-projection.ts): text geometry treats array identity as
+  // document-incarnation state, so read the flat view HERE — never
+  // re-flatten doc.layers ad hoc.
+  readonly flatLayers: readonly Layer[];
 
   // coordinate helpers (screen px relative to the canvas <-> document mm)
   toMm(screen: Pt): Pt;

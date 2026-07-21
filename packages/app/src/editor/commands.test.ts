@@ -27,10 +27,21 @@ import type { ToolContext, ToolKeyEvent } from './types';
 // its actual output via the pure panelConfigJson(); here we only prove the
 // command is wired to call it with ctx.doc.
 vi.mock('./download', () => ({ downloadPanelConfig: vi.fn() }));
+import { projectFlatLayers } from './flat-projection';
+
+// The live flatLayers view, attached AFTER construction so it tracks the
+// ctx's CURRENT doc (stubCommandCtx Object.assigns doc overrides later).
+// non-enumerable: an object spread must not snapshot it as a stale value.
+function withLiveFlatLayers(ctx: ToolContext): ToolContext {
+  Object.defineProperty(ctx, 'flatLayers', {
+    get: () => projectFlatLayers(ctx.doc.layers),
+  });
+  return ctx;
+}
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   const doc: DocState = { panelHp: 12, guides: [], layers: [] };
-  return {
+  const ctx = {
     doc,
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
@@ -55,6 +66,7 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     closeDialog: vi.fn(),
     ...overrides,
   } as unknown as ToolContext;
+  return withLiveFlatLayers(ctx);
 }
 
 function stubCommandCtx(overrides: Partial<CommandContext> = {}): CommandContext {
