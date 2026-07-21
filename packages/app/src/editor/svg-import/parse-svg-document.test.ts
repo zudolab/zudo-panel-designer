@@ -138,7 +138,7 @@ describe('parseSvgDocument -- element allowlist', () => {
 });
 
 describe('parseSvgDocument -- display:none pruning', () => {
-  it('prunes a hidden subtree via the display attribute before the allowlist check, with a warning', () => {
+  it('prunes a hidden subtree via the display attribute before the allowlist check, with a warning, and detaches it from the returned root', () => {
     const text = svg(
       '<g display="none"><script>alert(1)</script></g><path d="M0 0L1 1"/>',
       'width="10" height="10"',
@@ -151,6 +151,9 @@ describe('parseSvgDocument -- display:none pruning', () => {
           (d) => d.level === 'warning' && d.code === 'hidden-content-skipped',
         ),
       ).toBe(true);
+      // the caller is promised a fully-validated tree -- a pruned subtree
+      // (here, a live <script>) must not still be reachable from it
+      expect(result.root.getElementsByTagName('script').length).toBe(0);
     }
   });
 
@@ -161,6 +164,18 @@ describe('parseSvgDocument -- display:none pruning', () => {
     );
     const result = parseSvgDocument(text);
     expect(result.status).toBe('ok');
+  });
+
+  it('prunes display:none written with !important', () => {
+    const text = svg(
+      '<g style="display: none !important"><script>alert(1)</script></g><path d="M0 0L1 1"/>',
+      'width="10" height="10"',
+    );
+    const result = parseSvgDocument(text);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.root.getElementsByTagName('script').length).toBe(0);
+    }
   });
 });
 
@@ -227,6 +242,26 @@ describe('parseSvgDocument -- attribute tiers', () => {
         'width="10" height="10"',
       ),
       'unsupported-attribute',
+    );
+  });
+
+  it('rejects an unsupported style property even hidden behind a leading CSS comment', () => {
+    expectFatal(
+      svg(
+        '<rect style="/*n*/clip-path:circle(50%)" x="0" y="0" width="1" height="1"/>',
+        'width="10" height="10"',
+      ),
+      'unsupported-attribute',
+    );
+  });
+
+  it('rejects a url(...) style value even hidden behind a leading CSS comment', () => {
+    expectFatal(
+      svg(
+        '<rect style="/*n*/fill:url(#grad)" x="0" y="0" width="1" height="1"/>',
+        'width="10" height="10"',
+      ),
+      'unsafe-attribute',
     );
   });
 
@@ -352,6 +387,22 @@ describe('parseSvgDocument -- viewport resolution', () => {
     expect(result.status).toBe('ok');
     if (result.status === 'ok') {
       expect(result.viewport).toEqual({ minX: 0, minY: 0, width: 128, height: 64 });
+    }
+  });
+
+  it('accepts a leading + sign on unitless width/height', () => {
+    const result = parseSvgDocument(svg('<path d="M0 0L1 1"/>', 'width="+128" height="+64"'));
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.viewport).toEqual({ minX: 0, minY: 0, width: 128, height: 64 });
+    }
+  });
+
+  it('accepts a signed exponent on unitless width/height', () => {
+    const result = parseSvgDocument(svg('<path d="M0 0L1 1"/>', 'width="1e+2px" height="6.4e1"'));
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.viewport).toEqual({ minX: 0, minY: 0, width: 100, height: 64 });
     }
   });
 

@@ -96,6 +96,13 @@ const STYLE_UNSUPPORTED_PROP = new RegExp(
   'i',
 );
 
+// A CSS comment before a declaration (e.g. style="/*n*/clip-path:...") would
+// otherwise slip past STYLE_UNSUPPORTED_PROP/URL_VALUE, which anchor on the
+// property name appearing right after ";" or the string start.
+function stripCssComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
 function fatal(code: string, message: string): SvgImportDiagnostic {
   return { level: 'fatal', code, message };
 }
@@ -127,10 +134,12 @@ function preParseReject(text: string): SvgImportDiagnostic | null {
   return null;
 }
 
+const DISPLAY_NONE = /(?:^|;)\s*display\s*:\s*none\s*(?:!important\s*)?(?:;|$)/i;
+
 function isDisplayNone(el: Element): boolean {
   if (el.getAttribute('display') === 'none') return true;
   const style = el.getAttribute('style');
-  return !!style && /(?:^|;)\s*display\s*:\s*none\s*(?:;|$)/i.test(style);
+  return !!style && DISPLAY_NONE.test(stripCssComments(style));
 }
 
 function isInertAttr(name: string): boolean {
@@ -175,10 +184,11 @@ function checkAttributes(
       return fatal('unsupported-attribute', `Attribute "${attr.name}" is not supported.`);
     }
     if (name === 'style') {
-      if (URL_VALUE.test(value)) {
+      const uncommented = stripCssComments(value);
+      if (URL_VALUE.test(uncommented)) {
         return fatal('unsafe-attribute', '"style" must not reference url(...).');
       }
-      if (STYLE_UNSUPPORTED_PROP.test(value)) {
+      if (STYLE_UNSUPPORTED_PROP.test(uncommented)) {
         return fatal('unsupported-attribute', '"style" sets an unsupported property.');
       }
       continue;
@@ -220,6 +230,11 @@ function walkElement(
     diagnostics.push(
       warning('hidden-content-skipped', `Hidden <${el.localName}> subtree was skipped.`),
     );
+    // Detach, not just skip -- the returned root is documented (and relied
+    // on by the extractor, #139) as fully validated. Leaving a pruned
+    // subtree attached would hand the caller unvalidated content (up to and
+    // including a live <script>) alongside an 'ok' status.
+    el.remove();
     return null;
   }
 
@@ -249,7 +264,9 @@ function walkElement(
 // in, pt, pc, em, ex, %, ...) is rejected -- returns 'bad-unit' rather than
 // throwing so the caller can turn it into the right diagnostic code.
 function parseUnitlessOrPx(raw: string): number | 'bad-unit' {
-  const match = raw.trim().match(/^(-?[\d.]+(?:e-?\d+)?)(px)?$/i);
+  // SVG/CSS numbers allow a leading +/- and a signed exponent (e.g. "+100",
+  // "1e+2"), not just a bare "-".
+  const match = raw.trim().match(/^([+-]?[\d.]+(?:e[+-]?\d+)?)(px)?$/i);
   if (!match) return 'bad-unit';
   return Number(match[1]);
 }
