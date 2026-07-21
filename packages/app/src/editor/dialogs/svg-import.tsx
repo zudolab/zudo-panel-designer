@@ -24,6 +24,11 @@ import { analyzeSvg } from '../svg-import/analyze-svg';
 import { buildPathLayers, type BuildPathLayersResult } from '../svg-import/build-path-layers';
 import type { SvgImportDiagnostic } from '../svg-import/types';
 import type { DialogProps } from '../types';
+// The OKLab-distance palette matcher the raster trace pipeline already uses
+// (svg-to-path-layers.ts) — reused here rather than re-derived so a source
+// color gets the SAME nearest-palette suggestion regardless of which import
+// path (trace vs native SVG vector) it came through.
+import { nearestPaletteIndex } from '../nearest-palette-color';
 
 interface SvgImportDialogProps {
   fileName: string;
@@ -53,34 +58,18 @@ function counterIdFactory(): (prefix: string) => string {
   return (prefix: string) => `${prefix}-preview-${(n += 1)}`;
 }
 
-function hexToRgb(hex: string): [number, number, number] {
-  const n = Number.parseInt(hex.slice(1), 16);
-  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
-}
-
-// Seeds a color-mapping row to the closest of the 3 fixed palette colors by
-// plain RGB distance -- there is no perceptual-color dependency worth adding
-// for a one-time seed the user can freely override via the <select>.
-export function nearestPaletteIndex(hex: string, paletteHexes: readonly string[]): ColorIndex {
-  const [r, g, b] = hexToRgb(hex);
-  let bestIndex = 0;
-  let bestDist = Infinity;
-  paletteHexes.forEach((candidate, index) => {
-    const [cr, cg, cb] = hexToRgb(candidate);
-    const dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestIndex = index;
-    }
-  });
-  return bestIndex as ColorIndex;
-}
-
 function seedMappings(sourceColors: string[]): Record<string, ColorIndex> {
   const paletteHexes = PALETTE.map((entry) => entry.hex);
   const mappings: Record<string, ColorIndex> = {};
   for (const hex of sourceColors) {
-    mappings[hex] = nearestPaletteIndex(hex, paletteHexes);
+    // nearestPaletteIndex returns null only when its input or the whole
+    // palette fails to parse (see nearest-palette-color.ts) — sourceColors
+    // is always a resolve-style.ts-normalized #rrggbb hex and PALETTE's own
+    // hexes always parse, so null is not expected to occur in practice here.
+    // Fall back to black (index 0) rather than leave the row unseeded, so a
+    // theoretical parse failure still yields a valid, overridable mapping
+    // instead of failing buildPathLayers' exact-coverage check.
+    mappings[hex] = (nearestPaletteIndex(hex, paletteHexes) ?? 0) as ColorIndex;
   }
   return mappings;
 }

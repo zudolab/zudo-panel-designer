@@ -12,10 +12,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Pt } from '@zpd/core';
 import { PALETTE } from '@zpd/core';
-// Importing the named export also runs the module's top-level
-// registerDialog('svg-import', …) — no separate side-effect-only import
-// needed (unlike trace.test.tsx, which has no named export to pull in).
-import { nearestPaletteIndex } from './svg-import';
+import './svg-import';
+// The real OKLab-distance matcher the dialog seeds mapping rows with — see
+// nearest-palette-color.test.ts for its own coverage; this file only needs
+// to assert the dialog seeds AGAINST it, not re-verify its distance math.
+import { nearestPaletteIndex } from '../nearest-palette-color';
 import { DialogHost } from '../components/dialog-host';
 import { closeDialog, getDialog, openDialog } from '../registry/dialogs';
 import { importImageFile } from '../import-image';
