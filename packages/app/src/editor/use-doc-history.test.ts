@@ -36,3 +36,29 @@ describe('useDocHistory — reset (#69)', () => {
     expect(result.current.doc).toBe(DOC_C); // undo is a no-op, nothing to reach
   });
 });
+
+describe('useDocHistory — abortGesture (#157)', () => {
+  it('cancels an open gesture: pops the pushed entry and restores present, zero residue', () => {
+    const { result } = renderHook(() => useDocHistory(DOC_A));
+
+    act(() => result.current.commit(DOC_B));
+    expect(result.current.canUndo).toBe(true);
+
+    act(() => result.current.beginGesture());
+    act(() => result.current.replace(DOC_C));
+    expect(result.current.doc).toBe(DOC_C);
+
+    act(() => result.current.abortGesture());
+    expect(result.current.doc).toBe(DOC_B); // restored to the pre-gesture baseline
+    expect(result.current.canUndo).toBe(true); // the commit(DOC_B) entry is untouched
+    act(() => result.current.undo());
+    expect(result.current.doc).toBe(DOC_A); // exactly one undo entry remains, not two
+  });
+
+  it('is a no-op with no open gesture', () => {
+    const { result } = renderHook(() => useDocHistory(DOC_A));
+    act(() => result.current.abortGesture());
+    expect(result.current.doc).toBe(DOC_A);
+    expect(result.current.canUndo).toBe(false);
+  });
+});

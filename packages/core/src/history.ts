@@ -42,6 +42,23 @@ export function beginGesture<T>(state: HistoryState<T>): HistoryState<T> {
   return commit(state, state.present);
 }
 
+// Cancels an open gesture (Escape): pops the past entry beginGesture pushed
+// and restores present from it, discarding the whole replace stream — the
+// exact inverse of beginGesture, so the gesture leaves no undo/redo residue.
+// A trailing `replace(state, baseline)` would instead leave that pushed past
+// entry standing as a phantom no-op undo step; this removes it outright.
+// No-op when no gesture is open (past is empty — nothing to pop). Future is
+// left untouched either way; only the one popped past entry changes.
+export function abortGesture<T>(state: HistoryState<T>): HistoryState<T> {
+  if (state.past.length === 0) return state;
+  const baseline = state.past[state.past.length - 1];
+  return {
+    past: state.past.slice(0, -1),
+    present: baseline,
+    future: state.future,
+  };
+}
+
 export function undo<T>(state: HistoryState<T>): HistoryState<T> {
   const prev = state.past[state.past.length - 1];
   if (prev === undefined) return state;

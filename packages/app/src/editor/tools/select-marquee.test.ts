@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { marqueeHitIds, marqueeRect } from './select'; // also registers 'select'
 import { getTool } from '../registry/tools';
 import {
+  abortGesture as coreAbortGesture,
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
@@ -114,6 +115,9 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
     beginGesture: () => {
       beginGestureCalls += 1;
       history = coreBeginGesture(history);
+    },
+    abortGesture: () => {
+      history = coreAbortGesture(history);
     },
     undo: () => {
       history = coreUndo(history);

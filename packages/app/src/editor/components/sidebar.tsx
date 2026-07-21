@@ -10,6 +10,7 @@ import { CollapsibleSection } from './collapsible-section';
 import { HelpPanel } from './help-panel';
 import { InspectorHost } from './inspector-host';
 import { LayerList } from './layer-list';
+import { RotateSelectionPanel } from './rotate-selection-panel';
 
 export interface SidebarProps {
   ctx: ToolContext;
@@ -99,7 +100,13 @@ export function Sidebar({
         </CollapsibleSection>
 
         <CollapsibleSection title={selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}>
-          <InspectorHost ctx={ctx} layer={selectedLayer} selectedIds={selectedIds} />
+          <div className="flex flex-col gap-2">
+            {/* Combined (multi/group) selections only (#157) — renders
+                nothing for a single-leaf or all-non-rotatable selection, so
+                it composes ahead of InspectorHost without an empty gap. */}
+            <RotateSelectionPanel ctx={ctx} selectedIds={selectedIds} />
+            <InspectorHost ctx={ctx} layer={selectedLayer} selectedIds={selectedIds} />
+          </div>
         </CollapsibleSection>
       </div>
 

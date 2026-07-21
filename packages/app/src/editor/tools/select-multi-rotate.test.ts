@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import './select'; // registers 'select' as a side effect
 import { getTool } from '../registry/tools';
 import {
+  abortGesture as coreAbortGesture,
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
@@ -83,6 +84,9 @@ function makeHarness(initialDoc: DocState) {
     beginGesture: () => {
       beginGestureCalls += 1;
       history = coreBeginGesture(history);
+    },
+    abortGesture: () => {
+      history = coreAbortGesture(history);
     },
     undo: () => {
       history = coreUndo(history);
