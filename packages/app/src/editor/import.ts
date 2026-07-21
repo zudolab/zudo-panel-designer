@@ -7,9 +7,9 @@
 // and, only after the user confirms, replaces the whole document.
 import { tryParsePanelConfig } from '@zpd/core';
 import { confirmDialog } from './components/confirm-dialog';
-import { importImageFile } from './import-image';
 import { replaceDoc } from './replace-doc';
 import { toastError, toastSuccess } from './registry/toasts';
+import { routeImportFile } from './svg-import/route-import-file';
 import type { ToolContext } from './types';
 
 export function isImportableImageFile(file: File): boolean {
@@ -84,11 +84,13 @@ export function pickImportJsonFile(ctx: ToolContext): void {
 }
 
 // Entry point for a dropped (or picked) file of unknown kind: image/SVG ->
-// add as a layer; .json -> the parse-confirm-replace path above; anything
-// else -> an error toast so an unsupported drop isn't a silent no-op.
+// routeImportFile() (#141) classifies it and either adds a raster layer or
+// opens the SVG import dialog; .json -> the parse-confirm-replace path
+// above; anything else -> an error toast so an unsupported drop isn't a
+// silent no-op.
 export function importDroppedFile(file: File, ctx: ToolContext): Promise<void> {
   if (isImportableImageFile(file)) {
-    return importImageFile(file, ctx).catch((err) => {
+    return routeImportFile(file, ctx).catch((err) => {
       toastError('Could not import image', { description: errorMessage(err) });
     });
   }
