@@ -6,7 +6,7 @@
 // effect by rendering <App/>).
 import './registry';
 import { describe, expect, it, vi } from 'vitest';
-import type { DocState, Pt, ShapeLayer, TextLayer } from '@zpd/core';
+import { MAX_GROUP_DEPTH, type DocState, type GroupNode, type LayerNode, type Pt, type ShapeLayer, type TextLayer } from '@zpd/core';
 import { downloadPanelConfig } from './download';
 import {
   allCommands,
@@ -97,6 +97,20 @@ function keyEvent(overrides: Partial<ToolKeyEvent> & { key: string }): ToolKeyEv
 
 function rect(id: string, x: number, y: number): ShapeLayer {
   return { id, name: id, type: 'shape', shape: 'rect', x, y, width: 10, height: 10, color: 1 };
+}
+
+function group(id: string, children: LayerNode[]): GroupNode {
+  return { kind: 'group', id, name: id, children };
+}
+
+// Wraps `leaf` in `depth` nested single-child groups, e.g. depth=2 yields
+// group(g1, [group(g0, [leaf])]) — maxSubtreeDepth of the result is `depth`.
+function nestedGroup(depth: number, leaf: LayerNode, idPrefix = 'g'): LayerNode {
+  let node = leaf;
+  for (let i = 0; i < depth; i++) {
+    node = group(`${idPrefix}${i}`, [node]);
+  }
+  return node;
 }
 
 const textLayer: TextLayer = {
@@ -394,6 +408,255 @@ describe('align / distribute commands — real isEnabled gating (issue: "disable
       selectedIds: ['a', 'b'],
     });
     expect(distribute.isEnabled(twoLayerCtx)).toBe(false);
+  });
+});
+
+describe('edit-group (⌘G) — #155', () => {
+  it('has the ⌘G chord (shift excluded) with preventDefault', () => {
+    const cmd = allCommands().find((c) => c.id === 'edit-group')!;
+    expect(cmd.chord).toEqual({ key: 'g', meta: true, shift: false });
+    expect(cmd.preventDefault).toBe(true);
+    expect(cmd.category).toBe('Edit');
+  });
+
+  it('enablement matrix: 0 selected / 1 leaf / 2 leaves / lone group / group+leaf mix', () => {
+    const cmd = allCommands().find((c) => c.id === 'edit-group')!;
+
+    expect(cmd.isEnabled(stubCommandCtx({ selectedIds: [] }))).toBe(false);
+
+    const oneLeaf = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [rect('a', 0, 0)] },
+      selectedIds: ['a'],
+    });
+    expect(cmd.isEnabled(oneLeaf)).toBe(true); // wrapping a single leaf is allowed
+
+    const twoLeaves = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] },
+      selectedIds: ['a', 'b'],
+    });
+    expect(cmd.isEnabled(twoLeaves)).toBe(true);
+
+    const loneGroup = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] },
+      selectedIds: ['G'],
+    });
+    expect(cmd.isEnabled(loneGroup)).toBe(false); // re-wrapping a lone group is disabled
+
+    const groupPlusLeaf = stubCommandCtx({
+      doc: {
+        panelHp: 12,
+        guides: [],
+        layers: [group('G', [rect('a', 0, 0)]), rect('b', 5, 5)],
+      },
+      selectedIds: ['G', 'b'],
+    });
+    expect(cmd.isEnabled(groupPlusLeaf)).toBe(true); // 2 roots — group + leaf
+  });
+
+  it('disabled (and a no-op with NO history entry) when grouping would exceed MAX_GROUP_DEPTH', () => {
+    const cmd = allCommands().find((c) => c.id === 'edit-group')!;
+    // A chain of MAX_GROUP_DEPTH nested single-child groups already sits at
+    // the cap; wrapping it (+ a sibling leaf, so this isn't the lone-group
+    // case) alongside anything else would push depth to MAX_GROUP_DEPTH + 1.
+    const deepGroup = nestedGroup(MAX_GROUP_DEPTH, rect('deep-leaf', 0, 0), 'deep-g') as GroupNode;
+    const ctx = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [deepGroup, rect('sibling', 5, 5)] },
+      selectedIds: [deepGroup.id, 'sibling'],
+    });
+    expect(cmd.isEnabled(ctx)).toBe(false);
+    cmd.run(ctx);
+    expect(ctx.commit).not.toHaveBeenCalled();
+    expect(ctx.selectIds).not.toHaveBeenCalled();
+  });
+
+  it('one root, one level shallower than the cap, still fits — sanity check on the boundary', () => {
+    const cmd = allCommands().find((c) => c.id === 'edit-group')!;
+    const almostDeepGroup = nestedGroup(
+      MAX_GROUP_DEPTH - 1,
+      rect('deep-leaf', 0, 0),
+      'shallow-g',
+    ) as GroupNode;
+    const ctx = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [almostDeepGroup, rect('sibling', 5, 5)] },
+      selectedIds: [almostDeepGroup.id, 'sibling'],
+    });
+    expect(cmd.isEnabled(ctx)).toBe(true);
+  });
+
+  it('run(): ONE commit, and selection becomes the group id RETURNED by groupNodes (not a fabricated one)', () => {
+    const cmd = allCommands().find((c) => c.id === 'edit-group')!;
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: [rect('a', 0, 0), rect('b', 5, 5)],
+    };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['a', 'b'] });
+    cmd.run(ctx);
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
+    expect(committed.layers.length).toBe(1);
+    const newGroup = committed.layers[0] as GroupNode;
+    expect(newGroup.children.map((n) => n.id)).toEqual(['a', 'b']);
+
+    expect(ctx.selectIds).toHaveBeenCalledTimes(1);
+    const selectedAfter = (ctx.selectIds as ReturnType<typeof vi.fn>).mock.calls[0][0] as string[];
+    expect(selectedAfter).toEqual([newGroup.id]);
+    // The selected id must resolve to the group actually inserted — not a
+    // phantom id fabricated by the caller (#148's shipped regression).
+    expect(selectedAfter[0]).toBe(newGroup.id);
+  });
+
+  it('run(): a disabled selection (lone group) is a safe no-op', () => {
+    const cmd = allCommands().find((c) => c.id === 'edit-group')!;
+    const doc: DocState = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
+    cmd.run(ctx);
+    expect(ctx.commit).not.toHaveBeenCalled();
+    expect(ctx.selectIds).not.toHaveBeenCalled();
+  });
+
+  it('dispatchCommand: ⌘G groups the selection with preventDefault', () => {
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: [rect('a', 0, 0), rect('b', 5, 5)],
+    };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['a', 'b'] });
+    const e = keyEvent({ key: 'g', metaKey: true });
+    const match = dispatchCommand(e, ctx);
+    expect(match?.id).toBe('edit-group');
+    expect(e.preventDefault).toHaveBeenCalledTimes(1);
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispatchCommand: ⌘⇧G does NOT match edit-group (shift excludes it)', () => {
+    const doc: DocState = { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['a', 'b'] });
+    const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true, shiftKey: true }), ctx);
+    expect(match?.id).not.toBe('edit-group');
+  });
+});
+
+describe('edit-ungroup (⌘⇧G) — #155', () => {
+  it('has the ⌘⇧G chord (case-insensitive key match) with preventDefault', () => {
+    const cmd = allCommands().find((c) => c.id === 'edit-ungroup')!;
+    expect(cmd.chord).toEqual({ key: 'g', meta: true, shift: true });
+    expect(cmd.preventDefault).toBe(true);
+    expect(cmd.category).toBe('Edit');
+  });
+
+  it('enablement: true iff at least one selected id is a group node', () => {
+    const cmd = allCommands().find((c) => c.id === 'edit-ungroup')!;
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: [group('G', [rect('a', 0, 0)]), rect('b', 5, 5)],
+    };
+    expect(cmd.isEnabled(stubCommandCtx({ doc, selectedIds: [] }))).toBe(false);
+    expect(cmd.isEnabled(stubCommandCtx({ doc, selectedIds: ['b'] }))).toBe(false);
+    expect(cmd.isEnabled(stubCommandCtx({ doc, selectedIds: ['G'] }))).toBe(true);
+    expect(cmd.isEnabled(stubCommandCtx({ doc, selectedIds: ['G', 'b'] }))).toBe(true);
+  });
+
+  it('run(): looks the group up in the TREE (not the flat projection) — a real regression class per #155', () => {
+    // A flat-projection lookup can never resolve a group id (groups aren't
+    // leaves), which made the reference port's ungroup silently do nothing.
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: [group('G', [rect('a', 0, 0), rect('b', 5, 5)])],
+    };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
+    const cmd = allCommands().find((c) => c.id === 'edit-ungroup')!;
+    cmd.run(ctx);
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
+    expect(committed.layers.map((n) => n.id).sort()).toEqual(['a', 'b']);
+    expect(ctx.selectIds).toHaveBeenCalledTimes(1);
+    const selectedAfter = (ctx.selectIds as ReturnType<typeof vi.fn>).mock.calls[0][0] as string[];
+    expect([...selectedAfter].sort()).toEqual(['a', 'b']);
+  });
+
+  it('run(): multiple selected groups fold into ONE commit, selection = every released child', () => {
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: [group('G1', [rect('a', 0, 0)]), group('G2', [rect('b', 5, 5)]), rect('c', 10, 10)],
+    };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['G1', 'G2', 'c'] });
+    const cmd = allCommands().find((c) => c.id === 'edit-ungroup')!;
+    cmd.run(ctx);
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
+    expect(committed.layers.map((n) => n.id).sort()).toEqual(['a', 'b', 'c']);
+    const selectedAfter = (ctx.selectIds as ReturnType<typeof vi.fn>).mock.calls[0][0] as string[];
+    expect([...selectedAfter].sort()).toEqual(['a', 'b']); // "c" was never a group, untouched
+  });
+
+  it('run(): a group nested inside another selected group folds correctly, one commit, no duplicate/stale ids', () => {
+    // G-outer directly contains G-inner; both are selected. The outer
+    // dissolve releases G-inner (still a group at that point); the loop then
+    // re-resolves G-inner in the UPDATED tree and dissolves it too.
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: [group('G-outer', [group('G-inner', [rect('a', 0, 0)]), rect('b', 5, 5)])],
+    };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['G-outer', 'G-inner'] });
+    const cmd = allCommands().find((c) => c.id === 'edit-ungroup')!;
+    cmd.run(ctx);
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
+    expect(committed.layers.map((n) => n.id).sort()).toEqual(['a', 'b']);
+    const selectedAfter = (ctx.selectIds as ReturnType<typeof vi.fn>).mock.calls[0][0] as string[];
+    // Neither intermediate group id lingers, and nothing is duplicated.
+    expect([...selectedAfter].sort()).toEqual(['a', 'b']);
+  });
+
+  it('run(): no group ids in the selection is a safe no-op', () => {
+    const doc: DocState = { panelHp: 12, guides: [], layers: [rect('a', 0, 0)] };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['a'] });
+    const cmd = allCommands().find((c) => c.id === 'edit-ungroup')!;
+    cmd.run(ctx);
+    expect(ctx.commit).not.toHaveBeenCalled();
+    expect(ctx.selectIds).not.toHaveBeenCalled();
+  });
+
+  it('dispatchCommand: ⌘⇧G ungroups with preventDefault; key case (uppercase "G" from Shift) still matches', () => {
+    const doc: DocState = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
+    const e = keyEvent({ key: 'G', metaKey: true, shiftKey: true });
+    const match = dispatchCommand(e, ctx);
+    expect(match?.id).toBe('edit-ungroup');
+    expect(e.preventDefault).toHaveBeenCalledTimes(1);
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispatchCommand: ⌘G (no shift) does NOT match edit-ungroup', () => {
+    const doc: DocState = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
+    const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true }), ctx);
+    expect(match?.id).not.toBe('edit-ungroup');
+  });
+});
+
+describe('Group/Ungroup do not collide with any other dispatchable chord (#155)', () => {
+  it('⌘G is not claimed by any tool-switch or other command besides edit-group', () => {
+    const doc: DocState = { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['a', 'b'] });
+    const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true }), ctx);
+    expect(match?.id).toBe('edit-group');
+  });
+
+  it('⌘⇧G is not claimed by any tool-switch or other command besides edit-ungroup', () => {
+    const doc: DocState = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
+    const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true, shiftKey: true }), ctx);
+    expect(match?.id).toBe('edit-ungroup');
   });
 });
 

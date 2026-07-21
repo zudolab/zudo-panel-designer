@@ -19,9 +19,16 @@
 // commands.test.ts for the parity table.
 import {
   deleteNodeById,
+  findNodeById,
+  groupNodes,
+  isGroupNode,
+  MAX_GROUP_DEPTH,
   maximalSelectedRoots,
+  maxSubtreeDepth,
+  ungroupGroupById,
   type AlignType,
   type DistributeAxis,
+  type LayerNode,
 } from '@zpd/core';
 import { applyAlign, applyDistribute, canAlign, canDistribute, type Reference } from './align-ops';
 import { downloadPanelConfig } from './download';
@@ -99,6 +106,40 @@ export interface CommandDef {
 }
 
 const ALWAYS_ENABLED = () => true;
+
+// --- Group/Ungroup gating (#155) ----------------------------------------
+//
+// `groupNodes` always inserts the new group at the TOP LEVEL, stripping the
+// selected roots from wherever they currently live (see group-ops.ts) — so
+// the resulting subtree's depth is `1 + max(maxSubtreeDepth(root))` for the
+// selected roots, regardless of how deeply nested those roots are today.
+// This is the gate that gives ⌘G its depth-cap enforcement: the pure
+// `groupNodes`/`ungroupGroupById` ops deliberately don't enforce
+// MAX_GROUP_DEPTH themselves (the parse boundary and panel drag-into-group
+// are the other two enforcement points — this command is the third).
+function maxRootDepth(tree: LayerNode[], rootIds: readonly string[]): number {
+  let deepest = 0;
+  for (const id of rootIds) {
+    const found = findNodeById(tree, id);
+    if (!found) continue;
+    const depth = maxSubtreeDepth(found.node);
+    if (depth > deepest) deepest = depth;
+  }
+  return deepest;
+}
+
+// True when the maximal-roots selection is eligible for ⌘G: at least one
+// root, and — when there is exactly one — it must not itself be a group
+// (wrapping a single leaf is fine; re-wrapping a lone group is a no-op the
+// user never wants, so it stays disabled rather than nesting one deeper).
+function isGroupableRootSelection(tree: LayerNode[], rootIds: readonly string[]): boolean {
+  if (rootIds.length === 0) return false;
+  if (rootIds.length === 1) {
+    const found = findNodeById(tree, rootIds[0]!);
+    if (!found || isGroupNode(found.node)) return false;
+  }
+  return 1 + maxRootDepth(tree, rootIds) <= MAX_GROUP_DEPTH;
+}
 
 // --- tool-switch commands: derived from the tool registry ------------------
 //
@@ -244,6 +285,79 @@ const STATIC_COMMANDS: CommandDef[] = [
       ctx.selectIds([]);
     },
     isEnabled: ALWAYS_ENABLED,
+  },
+  {
+    id: 'edit-group',
+    label: 'Group',
+    category: 'Edit',
+    // ⌘G is the browser's find-again shortcut — preventDefault stops it
+    // from leaking through, same reasoning as every other clipboard/undo
+    // command above.
+    chord: { key: 'g', meta: true, shift: false },
+    preventDefault: true,
+    run: (ctx) => {
+      const roots = maximalSelectedRoots(ctx.doc.layers, ctx.selectedIds);
+      if (!isGroupableRootSelection(ctx.doc.layers, roots)) return;
+      const { tree, group } = groupNodes(ctx.doc.layers, ctx.selectedIds, 'Group');
+      // groupNodes mints and returns the group actually inserted into the
+      // tree — selecting anything else (e.g. a locally-fabricated id) would
+      // point at a node that was never inserted (the exact bug #148's
+      // GroupNodesResult contract closes off; see group-ops.ts).
+      if (!group) return;
+      ctx.commit({ ...ctx.doc, layers: tree });
+      ctx.selectIds([group.id]);
+    },
+    isEnabled: (ctx) =>
+      isGroupableRootSelection(
+        ctx.doc.layers,
+        maximalSelectedRoots(ctx.doc.layers, ctx.selectedIds),
+      ),
+  },
+  {
+    id: 'edit-ungroup',
+    label: 'Ungroup',
+    category: 'Edit',
+    // Shift uppercases the reported key ('G'), hence the case-insensitive
+    // chord match in matchesChord/normalizedKeys.
+    chord: { key: 'g', meta: true, shift: true },
+    preventDefault: true,
+    run: (ctx) => {
+      // Looked up in the TREE, not ctx.flatLayers — a flat-projection lookup
+      // never resolves a group id (groups aren't leaves), which made the
+      // reference port's ungroup a silent no-op. See group-ops.ts.
+      const tree = ctx.doc.layers;
+      const groupIds = ctx.selectedIds.filter((id) => {
+        const found = findNodeById(tree, id);
+        return found !== null && isGroupNode(found.node);
+      });
+      if (groupIds.length === 0) return;
+      // Fold every selected group's ungroup into ONE running tree so a
+      // group nested inside another selected group still resolves (each
+      // lookup reads the previous iteration's result) — and so the whole
+      // multi-group op lands as a single commit/history entry, not one per
+      // group.
+      let nextTree = tree;
+      const released: string[] = [];
+      for (const groupId of groupIds) {
+        const found = findNodeById(nextTree, groupId);
+        if (!found || !isGroupNode(found.node)) continue;
+        released.push(...found.node.children.map((child) => child.id));
+        nextTree = ungroupGroupById(nextTree, groupId);
+      }
+      // A group released as another group's "child" above may itself be one
+      // of the groups this op is dissolving (the nested-selected-groups
+      // case) — drop those and dedupe so the final selection is exactly the
+      // real released leaves/groups, not a stale intermediate id.
+      const dissolving = new Set(groupIds);
+      const finalSelection = [...new Set(released.filter((id) => !dissolving.has(id)))];
+      ctx.commit({ ...ctx.doc, layers: nextTree });
+      ctx.selectIds(finalSelection);
+    },
+    isEnabled: (ctx) =>
+      ctx.selectedIds.some((id) => {
+        const found = findNodeById(ctx.doc.layers, id);
+        return found !== null && isGroupNode(found.node);
+      }),
   },
   {
     id: 'edit-deselect',
