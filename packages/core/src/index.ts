@@ -57,5 +57,6 @@ export * from './scale';
 export * from './snap';
 export * from './layer-ops';
 export * from './clone';
+export * from './group-ops';
 export * from './align';
 export * from './history';
