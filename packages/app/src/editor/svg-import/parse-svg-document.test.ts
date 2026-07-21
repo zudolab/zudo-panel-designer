@@ -177,6 +177,47 @@ describe('parseSvgDocument -- display:none pruning', () => {
       expect(result.root.getElementsByTagName('script').length).toBe(0);
     }
   });
+
+  // The cascade decides display, not whichever source mentions "none" first:
+  // an inline declaration beats the presentation attribute. Pruning on the
+  // attribute alone silently deleted shapes the browser renders.
+  it('keeps a subtree whose inline style re-shows it over a display="none" attribute', () => {
+    const text = svg(
+      '<g display="none" style="display:inline"><path d="M0 0L1 1"/></g>',
+      'width="10" height="10"',
+    );
+    const result = parseSvgDocument(text);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.root.getElementsByTagName('path').length).toBe(1);
+      expect(result.diagnostics.some((d) => d.code === 'hidden-content-skipped')).toBe(false);
+    }
+  });
+
+  it('keeps a subtree whose later style declaration overrides an earlier display:none', () => {
+    const text = svg(
+      '<g style="display:none;display:inline"><path d="M0 0L1 1"/></g>',
+      'width="10" height="10"',
+    );
+    const result = parseSvgDocument(text);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.root.getElementsByTagName('path').length).toBe(1);
+      expect(result.diagnostics.some((d) => d.code === 'hidden-content-skipped')).toBe(false);
+    }
+  });
+
+  it('still prunes when a later style declaration re-hides an inline display', () => {
+    const text = svg(
+      '<g display="inline" style="display:inline;display:none"><script>alert(1)</script></g><path d="M0 0L1 1"/>',
+      'width="10" height="10"',
+    );
+    const result = parseSvgDocument(text);
+    expect(result.status).toBe('ok');
+    if (result.status === 'ok') {
+      expect(result.root.getElementsByTagName('script').length).toBe(0);
+    }
+  });
 });
 
 describe('parseSvgDocument -- attribute tiers', () => {

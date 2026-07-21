@@ -148,12 +148,30 @@ function preParseReject(text: string): SvgImportDiagnostic | null {
   return null;
 }
 
-const DISPLAY_NONE = /(?:^|;)\s*display\s*:\s*none\s*(?:!important\s*)?(?:;|$)/i;
+// `display` obeys the same cascade resolve-style.ts applies: the presentation
+// attribute first, then inline `style` declarations, the LAST declaration
+// winning. So <g display="none" style="display:inline"> renders and must not
+// be pruned here, and neither must style="display:none;display:inline".
+function effectiveDisplay(el: Element): string {
+  let display = el.getAttribute('display')?.trim().toLowerCase() ?? '';
+  const style = el.getAttribute('style');
+  if (!style) return display;
+  for (const chunk of stripCssComments(style).split(';')) {
+    const colon = chunk.indexOf(':');
+    if (colon < 0) continue;
+    if (chunk.slice(0, colon).trim().toLowerCase() !== 'display') continue;
+    const value = chunk
+      .slice(colon + 1)
+      .replace(/!\s*important\s*$/i, '')
+      .trim()
+      .toLowerCase();
+    if (value) display = value;
+  }
+  return display;
+}
 
 function isDisplayNone(el: Element): boolean {
-  if (el.getAttribute('display') === 'none') return true;
-  const style = el.getAttribute('style');
-  return !!style && DISPLAY_NONE.test(stripCssComments(style));
+  return effectiveDisplay(el) === 'none';
 }
 
 function isInertAttr(name: string): boolean {
