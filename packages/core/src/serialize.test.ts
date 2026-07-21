@@ -403,6 +403,36 @@ describe('serialize v4 — layer-node tree (layer groups)', () => {
     expect(cursor).toBeUndefined(); // the depth-9 leaf (and its would-be group) is dropped
   });
 
+  it('keeps a leaf directly inside the deepest allowed group (depth MAX_GROUP_DEPTH survives, only further GROUP nesting is capped)', () => {
+    // Build a chain of exactly MAX_GROUP_DEPTH + 1 groups (g-0 at depth 0 ..
+    // g-MAX_GROUP_DEPTH at depth MAX_GROUP_DEPTH — the deepest legal group),
+    // whose innermost child is a plain leaf, not another group.
+    let innermost: LayerNode = {
+      id: 'deep-leaf',
+      name: 'deep',
+      type: 'shape',
+      shape: 'rect',
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+      color: 0,
+    };
+    for (let depth = MAX_GROUP_DEPTH; depth >= 0; depth -= 1) {
+      innermost = { kind: 'group', id: `g-${depth}`, name: `g-${depth}`, children: [innermost] };
+    }
+    const parsed = parsePanelConfig({ layers: [innermost] });
+
+    let cursor: LayerNode | undefined = parsed.layers[0];
+    let depthSeen = 0;
+    while (cursor && 'kind' in cursor && cursor.kind === 'group') {
+      depthSeen += 1;
+      cursor = cursor.children[0];
+    }
+    expect(depthSeen).toBe(MAX_GROUP_DEPTH + 1); // groups at depth 0..MAX_GROUP_DEPTH survive
+    expect(cursor).toMatchObject({ id: 'deep-leaf' }); // the leaf itself is NOT dropped
+  });
+
   it('drops a node with an unrecognized `kind` rather than guessing its shape', () => {
     const parsed = parsePanelConfig({
       layers: [

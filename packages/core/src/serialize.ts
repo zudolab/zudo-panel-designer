@@ -262,14 +262,17 @@ function parseLayer(value: unknown, panel: PanelDimsMm): Layer | null {
 // Recursive node parse: dispatches on the dual discriminator (`kind` for
 // groups, `type` for leaves — see types.ts). Every field defends itself, same
 // policy as parseLayer: unknown `kind` (a `kind` present but not 'group') is
-// dropped, and a subtree at depth > MAX_GROUP_DEPTH is dropped defensively
+// dropped, and a GROUP nested past MAX_GROUP_DEPTH is dropped defensively
 // (the rest of the document survives) rather than throwing or truncating the
-// whole parse.
+// whole parse. The cap applies to GROUP nesting only, not to depth in
+// general: a leaf directly inside the deepest allowed group (depth
+// MAX_GROUP_DEPTH) adds no further group nesting, so it must still parse —
+// otherwise the deepest legal group could never hold any children at all.
 function parseLayerNode(value: unknown, panel: PanelDimsMm, depth: number): LayerNode | null {
   if (!isPlainObject(value)) return null;
-  if (depth > MAX_GROUP_DEPTH) return null;
   if ('kind' in value) {
     if (value.kind !== 'group') return null;
+    if (depth > MAX_GROUP_DEPTH) return null;
     const base = parseBase(value);
     const childrenRaw = Array.isArray(value.children) ? value.children : [];
     const children = childrenRaw
