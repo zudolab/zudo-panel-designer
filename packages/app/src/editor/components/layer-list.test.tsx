@@ -614,8 +614,36 @@ describe('LayerList tree rendering (#153)', () => {
     const { ctx } = nodeTreeCtx(fixtureTree());
     render(<LayerList ctx={ctx} selectedIds={[]} />);
 
-    const groupRow = screen.getByRole('button', { name: 'Select group Group' }).closest('li')!;
-    expect(within(groupRow).queryByTitle('Bring forward')).toBeNull();
-    expect(within(groupRow).queryByTitle('Send backward')).toBeNull();
+    // Scope to the group's own HEADER <div> (a direct child of its <li>),
+    // not the whole <li> subtree — the group's <li> now also nests its
+    // children's <ul> (codex review: valid list markup), and those child
+    // leaf rows (B, C) legitimately DO have their own move buttons.
+    const groupLi = screen.getByRole('button', { name: 'Select group Group' }).closest('li')!;
+    const header = groupLi.querySelector(':scope > div')!;
+    expect(within(header as HTMLElement).queryByTitle('Bring forward')).toBeNull();
+    expect(within(header as HTMLElement).queryByTitle('Send backward')).toBeNull();
+  });
+
+  it('group rename commits a cleared (empty) name, same as leaf rename', () => {
+    const { ctx, commit } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.doubleClick(screen.getByText('Group'));
+    const input = screen.getByDisplayValue('Group');
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    const renamedGroup = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G');
+    expect(renamedGroup).toMatchObject({ name: '' });
+  });
+
+  it('meta-clicking a group strips an already-selected descendant leaf (overlap invariant)', () => {
+    const { ctx, selectIds } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={['b']} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select group Group' }), { metaKey: true });
+    expect(selectIds).toHaveBeenLastCalledWith(['G']);
   });
 });

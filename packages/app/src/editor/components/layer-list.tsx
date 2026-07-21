@@ -4,7 +4,7 @@
 // top-of-stack-first order too. Select / show-hide / rename / delete /
 // group-cascade-delete / ungroup / local reorder all go through @zpd/core
 // tree ops so ordering + immutability semantics live in one place.
-import { Fragment, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
   deleteNodeById,
   findNodeById,
@@ -106,6 +106,19 @@ function locateLocalSlot(
   return index < 0 ? null : { parentId, index };
 }
 
+// Every id (leaf or nested group) strictly BENEATH `id` — empty when `id`
+// is a leaf or not found. Used to enforce the #151 overlap invariant when a
+// GROUP id joins the selection: any already-selected descendant must drop
+// out (see handleRowClick's Meta branch).
+function collectDescendantIds(tree: LayerNode[], id: string): Set<string> {
+  const found = findNodeById(tree, id);
+  const out = new Set<string>();
+  if (found && isGroupNode(found.node)) {
+    walkLayerNodes(found.node.children, (node) => out.add(node.id));
+  }
+  return out;
+}
+
 export function LayerList({ ctx, selectedIds }: LayerListProps) {
   const tree = ctx.doc.layers;
   const flatById = useMemo(() => new Map(ctx.flatLayers.map((l) => [l.id, l])), [ctx.flatLayers]);
@@ -176,13 +189,23 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     anchorRef.current = next.anchorId;
     // Meta list-toggle is the same raw-node escape hatch as a canvas
     // Meta-click (#151): toggling `id` STRIPS any selected ancestor group so
-    // the [group, descendant] overlap never exists in selectedIds. Works
-    // identically whether `id` is a leaf or a group — toggleLeafSelection
-    // only cares about ancestors of the id it's given. (Shift ranges and
-    // plain clicks REPLACE the selection with rows, so they cannot create an
-    // overlap; the list's DnD + tree range-selection rework is #154.)
+    // the [group, descendant] overlap never exists in selectedIds.
+    // toggleLeafSelection only strips ANCESTORS of `id` — sufficient for a
+    // leaf (which has no descendants to worry about), but adding a GROUP id
+    // also needs its selected DESCENDANTS stripped (codex review finding):
+    // e.g. Meta-click leaf B, then Meta-click its parent group G, must not
+    // leave ['b', 'G'] both selected. toggleLeafSelection only appends `id`
+    // on the ADD path (the remove path filters it out), so checking
+    // `stripped.includes(id)` distinguishes add from remove without a
+    // separate branch. (Shift ranges and plain clicks REPLACE the selection
+    // with rows, so they cannot create an overlap; the list's DnD + tree
+    // range-selection rework is #154.)
     if (!e.shiftKey && (e.metaKey || e.ctrlKey)) {
-      ctx.selectIds(toggleLeafSelection(tree, selectedIds, id));
+      const stripped = toggleLeafSelection(tree, selectedIds, id);
+      const next2 = stripped.includes(id)
+        ? stripped.filter((sid) => sid === id || !collectDescendantIds(tree, id).has(sid))
+        : stripped;
+      ctx.selectIds(next2);
     } else {
       ctx.selectIds(next.selectedIds);
     }
@@ -289,8 +312,12 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     if (groupRenameResolvedRef.current) return;
     groupRenameResolvedRef.current = true;
     if (commit) {
+      // An empty name is a valid stored value, same as leaf rename (the row
+      // display already falls back to "Group") — only gate on CHANGED, not
+      // truthy (codex review finding: the truthy check silently discarded a
+      // deliberate clear-to-empty edit that renameById/GroupNode support).
       const trimmed = draftName.trim();
-      if (trimmed && trimmed !== group.name) {
+      if (trimmed !== group.name) {
         ctx.commit({ ...ctx.doc, layers: renameById(tree, group.id, trimmed) });
       }
     }
@@ -444,18 +471,27 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     const collapsed = collapsedGroupIds.has(group.id);
     const isRenaming = renamingId === group.id;
     const name = group.name || 'Group';
+    // The GROUP's own <li> wraps BOTH its header row (a <div>, not another
+    // <li>) and — when expanded — a nested <ul> for its children. A <ul> may
+    // only contain <li> elements; putting the children list as a SIBLING of
+    // this <li> (rather than nested inside it) produced invalid list markup
+    // and broke the group/subgroup DOM relationship for assistive tech
+    // (codex review finding) — nesting it here is what makes the wrapper
+    // margin/border in the children <ul> compound depth for free too.
     return (
       <li
         key={group.id}
         data-depth={depth}
         {...(parentGroupId !== null ? { 'data-group-id': parentGroupId } : {})}
-        // DnD seam (#154): once drag handlers land on this row, gate
-        // `draggable` on `!isRenaming` — a row mid-rename must not start a
-        // drag. Not wired yet; there is no drag behavior to gate today.
-        className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs ${
-          selected ? 'bg-sky-500/20 text-sky-100' : 'text-neutral-300 hover:bg-neutral-800'
-        }`}
       >
+        <div
+          // DnD seam (#154): once drag handlers land on this row, gate
+          // `draggable` on `!isRenaming` — a row mid-rename must not start a
+          // drag. Not wired yet; there is no drag behavior to gate today.
+          className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs ${
+            selected ? 'bg-sky-500/20 text-sky-100' : 'text-neutral-300 hover:bg-neutral-800'
+          }`}
+        >
         <button
           type="button"
           aria-label={collapsed ? `Expand ${name}` : `Collapse ${name}`}
@@ -550,12 +586,26 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
             ✕
           </button>
         </span>
+        </div>
+        {!collapsed && (
+          <ul
+            data-group-id={group.id}
+            className="ml-3 flex flex-col gap-0.5 border-l border-neutral-800 pl-2"
+          >
+            {group.children.length === 0 ? (
+              <li
+                data-depth={depth + 1}
+                data-group-id={group.id}
+                className="px-1.5 py-1 text-xs italic text-neutral-500"
+              >
+                Empty group
+              </li>
+            ) : (
+              renderNodes(group.children, depth + 1, group.id)
+            )}
+          </ul>
+        )}
       </li>
-      // Children container renders as a SIBLING <ul> immediately after this
-      // <li> (see renderNodes) rather than nested inside it — <li> cannot
-      // validly contain another <ul> alongside its own row content here
-      // without extra wrapper markup; a Fragment-per-group in renderNodes
-      // keeps the header <li> and its children <ul> adjacent in the DOM.
     );
   };
 
@@ -563,34 +613,11 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     const out: ReactNode[] = [];
     for (let i = nodes.length - 1; i >= 0; i -= 1) {
       const node = nodes[i];
-      if (isGroupNode(node)) {
-        const collapsed = collapsedGroupIds.has(node.id);
-        out.push(
-          <Fragment key={node.id}>
-            {renderGroupRow(node, depth, parentGroupId)}
-            {!collapsed && (
-              <ul
-                data-group-id={node.id}
-                className="ml-3 flex flex-col gap-0.5 border-l border-neutral-800 pl-2"
-              >
-                {node.children.length === 0 ? (
-                  <li
-                    data-depth={depth + 1}
-                    data-group-id={node.id}
-                    className="px-1.5 py-1 text-xs italic text-neutral-500"
-                  >
-                    Empty group
-                  </li>
-                ) : (
-                  renderNodes(node.children, depth + 1, node.id)
-                )}
-              </ul>
-            )}
-          </Fragment>,
-        );
-      } else {
-        out.push(renderLeafRow(node, depth, parentGroupId));
-      }
+      out.push(
+        isGroupNode(node)
+          ? renderGroupRow(node, depth, parentGroupId)
+          : renderLeafRow(node, depth, parentGroupId),
+      );
     }
     return out;
   };
