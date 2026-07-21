@@ -617,6 +617,30 @@ describe('useClipboard — pasting an SVG file (#141)', () => {
       svgText: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
     });
   });
+
+  it('routes an anonymous clipboard blob (no MIME type, no name) through the classifier instead of dropping it', async () => {
+    // Neither the type-based nor the name-based signal fires here -- this is
+    // exactly the gap a real SVG copy without either identifying field would
+    // fall into; the file-item predicate has a dedicated fallback for it.
+    vi.mocked(classifyImportFile).mockResolvedValue('svg');
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+    const file = svgFile('<svg xmlns="http://www.w3.org/2000/svg"></svg>', '', '');
+
+    act(() => {
+      dispatchSvgPaste(window, file);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(ctx.openDialog).toHaveBeenCalledWith('svg-import', {
+      fileName: 'clipboard.svg',
+      svgText: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    });
+  });
 });
 
 describe('useClipboard — non-envelope text is left untouched', () => {

@@ -202,7 +202,14 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
             .filter((f): f is File => f !== null)
         : [];
       const imageFile = fileItems.find(
-        (f) => f.type.startsWith('image/') || f.name.toLowerCase().endsWith('.svg'),
+        (f) =>
+          f.type.startsWith('image/') ||
+          f.name.toLowerCase().endsWith('.svg') ||
+          // Neither signal present at all -- most likely an anonymous
+          // clipboard blob (e.g. an SVG copied without a filename or a
+          // recognized MIME type). Let classifyImportFile's content
+          // root-sniff decide rather than silently dropping it.
+          (f.type === '' && f.name === ''),
       );
       if (imageFile) {
         e.preventDefault();
