@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 -10 120 120">
+  <path id="donut" fill-rule="evenodd" fill="#ff0000" d="M0 0 L60 0 L60 60 L0 60 Z M20 20 L40 20 L40 40 L20 40 Z"/>
+  <rect id="accent-rect" x="70" y="0" width="30" height="30" fill="#00ff00"/>
+  <circle id="accent-circle" cx="85" cy="60" r="15" fill="#0000ff"/>
+  <path id="accent-stroke" d="M0 80 L40 80 L40 100" fill="none" stroke="#000000" stroke-width="2"/>
+</svg>

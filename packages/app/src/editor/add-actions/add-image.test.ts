@@ -3,17 +3,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pt } from '@zpd/core';
 import './add-image'; // registers 'add-image' as a side effect
 import { allAddActions } from '../registry/add-actions';
-import { classifyImportFile } from '../svg-import/classify-file';
+import { classifyImportFile, sniffedRasterMimeType } from '../svg-import/classify-file';
 import type { ToolContext } from '../types';
 
 // jsdom (as pinned in this repo) implements FileReader but not the
-// Blob/File read methods (arrayBuffer()/text()) that classifyImportFile
-// uses for its magic-byte/root-sniff checks -- see classify-file.test.ts's
-// own header comment. Mocked here so routeImportFile's dispatch can be
-// exercised without hitting that jsdom gap; classifyImportFile's own
-// sniffing logic has its own real-environment tests
+// Blob/File read methods (arrayBuffer()/text()) that classifyImportFile and
+// sniffedRasterMimeType use for their magic-byte/root-sniff checks -- see
+// classify-file.test.ts's own header comment. Mocked here so routeImportFile's
+// dispatch can be exercised without hitting that jsdom gap; both functions'
+// own sniffing logic has its own real-environment tests
 // (svg-import/classify-file.test.ts).
-vi.mock('../svg-import/classify-file', () => ({ classifyImportFile: vi.fn() }));
+vi.mock('../svg-import/classify-file', () => ({
+  classifyImportFile: vi.fn(),
+  sniffedRasterMimeType: vi.fn(),
+}));
 
 function stubFailingImageProbe() {
   class FailingImage {
@@ -31,6 +34,8 @@ beforeEach(() => {
   // the raster path; the #141 svg-routing test overrides this.
   vi.mocked(classifyImportFile).mockReset();
   vi.mocked(classifyImportFile).mockResolvedValue('raster');
+  vi.mocked(sniffedRasterMimeType).mockReset();
+  vi.mocked(sniffedRasterMimeType).mockResolvedValue(null);
 });
 
 afterEach(() => {

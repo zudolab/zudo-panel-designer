@@ -1,7 +1,7 @@
 // Pure byte/name/MIME sniffing, no DOM needed -- runs in the default node
 // test environment (no per-file environment override required).
 import { describe, expect, it } from 'vitest';
-import { classifyImportFile } from './classify-file';
+import { classifyImportFile, sniffedRasterMimeType } from './classify-file';
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const JPEG_MAGIC = [0xff, 0xd8, 0xff, 0xe0];
@@ -112,5 +112,34 @@ describe('classifyImportFile', () => {
     const exact = '<svg xmlns="http://www.w3.org/2000/svg">' + '<!--pad-->'.repeat(0) + '</svg>';
     const f = textFile(exact, 'a.svg', '');
     expect(await classifyImportFile(f)).toBe('svg');
+  });
+});
+
+describe('sniffedRasterMimeType', () => {
+  it('detects PNG regardless of the claimed name/MIME', async () => {
+    const f = file(PNG_MAGIC, 'logo.svg', 'image/svg+xml');
+    expect(await sniffedRasterMimeType(f)).toBe('image/png');
+  });
+
+  it('detects JPEG', async () => {
+    expect(await sniffedRasterMimeType(file(JPEG_MAGIC, 'a', ''))).toBe('image/jpeg');
+  });
+
+  it('detects GIF87a and GIF89a as image/gif', async () => {
+    expect(await sniffedRasterMimeType(file(GIF87A_MAGIC, 'a.gif', ''))).toBe('image/gif');
+    expect(await sniffedRasterMimeType(file(GIF89A_MAGIC, 'a.gif', ''))).toBe('image/gif');
+  });
+
+  it('detects RIFF/WEBP', async () => {
+    expect(await sniffedRasterMimeType(file(riffWebp(), 'a.webp', ''))).toBe('image/webp');
+  });
+
+  it('returns null for real SVG content', async () => {
+    const f = textFile('<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'a.svg', '');
+    expect(await sniffedRasterMimeType(f)).toBeNull();
+  });
+
+  it('returns null for neither-raster-nor-SVG content', async () => {
+    expect(await sniffedRasterMimeType(textFile('hello', 'notes.txt', 'text/plain'))).toBeNull();
   });
 });

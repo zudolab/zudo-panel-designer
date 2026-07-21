@@ -66,6 +66,14 @@ describe('isImportableImageFile', () => {
   it('rejects a JSON file', () => {
     expect(isImportableImageFile(jsonFile({}))).toBe(false);
   });
+
+  it('accepts a file with no extension and no MIME type, deferring to classifyImportFile\'s content sniff (#143)', () => {
+    expect(isImportableImageFile(new File([''], 'clipboard-blob', { type: '' }))).toBe(true);
+  });
+
+  it('still rejects a .json file even with an empty MIME type (some platforms report no MIME for .json) -- codex-caught regression', () => {
+    expect(isImportableImageFile(new File(['{}'], 'panel.json', { type: '' }))).toBe(false);
+  });
 });
 
 describe('importDroppedFile — dispatch by type', () => {
@@ -103,6 +111,19 @@ describe('importDroppedFile — dispatch by type', () => {
 
     await importDroppedFile(file, ctx);
 
+    expect(replaceDoc).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).toHaveBeenCalledWith('Panel imported');
+  });
+
+  it('routes a .json file with an empty MIME type into the JSON import path, not the image path (codex-caught regression)', async () => {
+    const ctx = stubCtx();
+    const doc: DocState = { panelHp: 6, guides: [], layers: [] };
+    const file = new File([JSON.stringify(serializePanelConfig(doc))], 'panel.json', { type: '' });
+    vi.mocked(confirmDialog).mockResolvedValue(true);
+
+    await importDroppedFile(file, ctx);
+
+    expect(routeImportFile).not.toHaveBeenCalled();
     expect(replaceDoc).toHaveBeenCalledTimes(1);
     expect(toastSuccess).toHaveBeenCalledWith('Panel imported');
   });

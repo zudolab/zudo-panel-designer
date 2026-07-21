@@ -5,16 +5,31 @@
 // mocked so this file proves ONLY the routing decisions — classifyImportFile
 // has its own behavioral tests (classify-file.test.ts) and importImageFile
 // has its own (../import-image.test.ts).
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { classifyImportFile } from './classify-file';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { classifyImportFile, sniffedRasterMimeType } from './classify-file';
 import { importImageFile } from '../import-image';
 import { routeImportFile } from './route-import-file';
 import { toastError, toastWarning } from '../registry/toasts';
 import type { ToolContext } from '../types';
 
-vi.mock('./classify-file', () => ({ classifyImportFile: vi.fn() }));
+vi.mock('./classify-file', () => ({
+  classifyImportFile: vi.fn(),
+  // Defaults to "the claimed type was already right" so every existing
+  // routing test below keeps asserting importImageFile was called with the
+  // SAME File instance it started with -- only the dedicated raster-type
+  // correction tests override this.
+  sniffedRasterMimeType: vi.fn().mockResolvedValue(null),
+}));
 vi.mock('../import-image', () => ({ importImageFile: vi.fn() }));
 vi.mock('../registry/toasts', () => ({ toastError: vi.fn(), toastWarning: vi.fn() }));
+
+beforeEach(() => {
+  // clearAllMocks (below) resets call history but not a mockResolvedValue
+  // override -- re-pin the "claimed type was already right" default per test
+  // so the raster-type-correction tests (which override it) can't leak into
+  // whichever test happens to run after them.
+  vi.mocked(sniffedRasterMimeType).mockResolvedValue(null);
+});
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -105,6 +120,41 @@ describe('routeImportFile — raster', () => {
     await expect(routeImportFile(file, ctx)).rejects.toThrow('decode failed');
     // The notice would be misleading if nothing actually got imported.
     expect(toastWarning).not.toHaveBeenCalled();
+  });
+
+  // #143: a File's .type in the browser is name/extension-derived, not
+  // content-sniffed, so a PNG mislabeled "logo.svg" still carries
+  // type: "image/svg+xml" here -- importImageFile's readAsDataURL would bake
+  // that straight into the data URL, and an <img> given that MIME tries to
+  // XML-parse the raster bytes and fails outright (confirmed against a real
+  // browser in svg-import.spec.ts). routeImportFile must correct the type
+  // before handing the file to importImageFile.
+  it('corrects a misleading raster file\'s type before importing', async () => {
+    vi.mocked(classifyImportFile).mockResolvedValue('raster');
+    vi.mocked(sniffedRasterMimeType).mockResolvedValue('image/png');
+    vi.mocked(importImageFile).mockResolvedValue(undefined);
+    const ctx = stubCtx();
+    const file = new File(['\x89PNG'], 'logo.svg', { type: 'image/svg+xml' });
+
+    await routeImportFile(file, ctx);
+
+    expect(importImageFile).toHaveBeenCalledTimes(1);
+    const [importedFile] = vi.mocked(importImageFile).mock.calls[0]!;
+    expect(importedFile).not.toBe(file); // a corrected copy, not the original
+    expect(importedFile.type).toBe('image/png');
+    expect(importedFile.name).toBe('logo.svg');
+  });
+
+  it('imports the original File instance unchanged when its claimed type already matches the sniffed bytes', async () => {
+    vi.mocked(classifyImportFile).mockResolvedValue('raster');
+    vi.mocked(sniffedRasterMimeType).mockResolvedValue('image/png');
+    vi.mocked(importImageFile).mockResolvedValue(undefined);
+    const ctx = stubCtx();
+    const file = new File(['bytes'], 'photo.png', { type: 'image/png' });
+
+    await routeImportFile(file, ctx);
+
+    expect(importImageFile).toHaveBeenCalledWith(file, ctx);
   });
 });
 

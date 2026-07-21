@@ -10,7 +10,7 @@
 // caught here) -- each entry point already has its own failure UX (import.ts
 // toasts, add-image.ts/use-clipboard.ts console.error), and this router
 // would otherwise have to pick one for all three.
-import { classifyImportFile } from './classify-file';
+import { classifyImportFile, sniffedRasterMimeType } from './classify-file';
 import { importImageFile } from '../import-image';
 import { toastError, toastWarning } from '../registry/toasts';
 import type { ToolContext } from '../types';
@@ -20,6 +20,19 @@ function errorMessage(err: unknown): string {
 }
 
 const SVG_EXTENSION = /\.svg$/i;
+
+// A misleading .svg-named/typed file that classify-file.ts's magic bytes
+// already outed as raster (#143): file.type is still whatever the browser
+// inferred from the name, e.g. "image/svg+xml", and importImageFile's
+// readAsDataURL would bake that straight into the data URL -- an <img> given
+// that MIME tries to XML-parse the raster bytes and fails outright. Rebuild
+// the File with the type the magic bytes actually mean before decoding; a
+// no-op (same File instance) when the claimed type already matches.
+async function withCorrectedRasterType(file: File): Promise<File> {
+  const detected = await sniffedRasterMimeType(file);
+  if (!detected || file.type === detected) return file;
+  return new File([file], file.name, { type: detected });
+}
 
 export async function routeImportFile(file: File, ctx: ToolContext): Promise<void> {
   const kind = await classifyImportFile(file);
@@ -40,7 +53,7 @@ export async function routeImportFile(file: File, ctx: ToolContext): Promise<voi
     }
 
     case 'raster': {
-      await importImageFile(file, ctx);
+      await importImageFile(await withCorrectedRasterType(file), ctx);
       // A .svg-named file whose bytes turned out to be raster (classify-file's
       // magic-byte check wins over the misleading extension) -- imported fine,
       // but worth telling the user their file wasn't actually a vector.

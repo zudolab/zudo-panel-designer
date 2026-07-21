@@ -15,19 +15,24 @@ import {
 } from '@zpd/core';
 import { useClipboard } from './use-clipboard';
 import { importImageFile } from './import-image';
-import { classifyImportFile } from './svg-import/classify-file';
+import { classifyImportFile, sniffedRasterMimeType } from './svg-import/classify-file';
 import type { ToolContext } from './types';
 
 vi.mock('./import-image', () => ({ importImageFile: vi.fn(() => Promise.resolve()) }));
 // jsdom (as pinned in this repo) implements FileReader but not the
-// Blob/File read methods (arrayBuffer()/text()) that classifyImportFile
-// uses for its magic-byte/root-sniff checks -- see classify-file.test.ts's
-// own header comment. Mocked here (default: 'raster', matching every
-// existing image-paste test's plain PNG fixture) so routeImportFile's
-// dispatch can be exercised without hitting that jsdom gap; classifyImportFile's
-// own sniffing logic has its own real-environment tests
+// Blob/File read methods (arrayBuffer()/text()) that classifyImportFile and
+// sniffedRasterMimeType use for their magic-byte/root-sniff checks -- see
+// classify-file.test.ts's own header comment. Mocked here (classifyImportFile
+// default: 'raster', matching every existing image-paste test's plain PNG
+// fixture; sniffedRasterMimeType default: null, i.e. "the claimed type was
+// already right", matching every fixture's already-correct image/png type)
+// so routeImportFile's dispatch can be exercised without hitting that jsdom
+// gap; both functions' own sniffing logic has its own real-environment tests
 // (svg-import/classify-file.test.ts).
-vi.mock('./svg-import/classify-file', () => ({ classifyImportFile: vi.fn() }));
+vi.mock('./svg-import/classify-file', () => ({
+  classifyImportFile: vi.fn(),
+  sniffedRasterMimeType: vi.fn(),
+}));
 
 const shapeLayer: ShapeLayer = {
   id: 'shape-1',
@@ -164,6 +169,8 @@ beforeEach(() => {
   // and expects the raster path; the #141 svg tests below override this.
   vi.mocked(classifyImportFile).mockReset();
   vi.mocked(classifyImportFile).mockResolvedValue('raster');
+  vi.mocked(sniffedRasterMimeType).mockReset();
+  vi.mocked(sniffedRasterMimeType).mockResolvedValue(null);
 });
 
 afterEach(() => {
