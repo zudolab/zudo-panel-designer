@@ -104,6 +104,22 @@ describe('svg-import dialog', () => {
     expect(screen.queryByText('Import as image instead')).toBeNull();
   });
 
+  it('color mapping list is height-capped and scrollable, not unbounded (codex finding)', () => {
+    // The extractor allows up to MAX_COLORS-1 source colors — an unbounded
+    // list would grow the modal past shorter viewports and clip the Import
+    // button, since DialogHost's dialog wrapper has no scroll of its own
+    // (see pattern-picker.tsx for the established "cap the list" pattern).
+    // jsdom doesn't lay out real scrollbars, so this asserts the CSS
+    // contract (max-height + overflow-y-auto) rather than pixel overflow.
+    const ctx = stubCtx();
+    const Dialog = getDialog('svg-import')!.component;
+    render(<Dialog props={{ fileName: 'icon.svg', svgText: OK_SVG }} close={vi.fn()} ctx={ctx} />);
+
+    const list = screen.getByTestId('color-mapping-list');
+    expect(list.className).toContain('overflow-y-auto');
+    expect(list.className).toMatch(/max-h-/);
+  });
+
   it('ok state: never mounts SVG markup, only a <canvas> — guards a null 2D context without crashing', () => {
     const ctx = stubCtx();
     const Dialog = getDialog('svg-import')!.component;

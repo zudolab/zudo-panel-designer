@@ -287,7 +287,16 @@ function SvgImportDialog({ props, close, ctx }: DialogProps<SvgImportDialogProps
 
       {vectorAvailable && (
         <div className="flex gap-4">
-          <div className="flex flex-1 flex-col gap-1.5">
+          {/* Capped + scrollable: the extractor allows up to MAX_COLORS-1
+              source colors (extract-shapes.ts), and DialogHost's dialog
+              wrapper has no viewport-relative max-height/scroll of its own
+              (see pattern-picker.tsx for the same "cap the list, not the
+              modal" convention) -- without this, a many-color SVG grows the
+              modal past shorter viewports and clips the Import button. */}
+          <div
+            data-testid="color-mapping-list"
+            className="flex max-h-56 flex-1 flex-col gap-1.5 overflow-y-auto pr-1"
+          >
             {analysis.sourceColors.map((hex) => (
               <div key={hex} className="flex items-center gap-2 text-xs">
                 <span
