@@ -2,9 +2,10 @@
 // reversed DFS at EVERY level (not just top-level), so a group's header
 // interleaves exactly where its z-band sits and nested children keep
 // top-of-stack-first order too. Select / show-hide / rename / delete /
-// group-cascade-delete / ungroup / local reorder all go through @zpd/core
-// tree ops so ordering + immutability semantics live in one place.
-import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+// group-cascade-delete / ungroup / local reorder / drag-and-drop (#154, see
+// layer-list-dnd.ts) all go through @zpd/core tree ops so ordering +
+// immutability semantics live in one place.
+import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import {
   deleteNodeById,
   findNodeById,
@@ -24,6 +25,15 @@ import {
 import { projectFlatLayers } from '../flat-projection';
 import { nextListSelection } from '../selection';
 import { toggleLeafSelection } from '../selection-resolve';
+import {
+  executeDrop,
+  invalidDropReason,
+  resolveDropSlot,
+  resolveTailDropSlot,
+  type DropRejection,
+  type DropSlot,
+  type DropZone,
+} from './layer-list-dnd';
 import type { ToolContext } from '../types';
 
 const TYPE_ICON: Record<Layer['type'], string> = {
@@ -143,18 +153,6 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     return rows;
   }, [tree, collapsedGroupIds, flatById]);
   const visibleRowIds = useMemo(() => visibleRows.map((row) => row.id), [visibleRows]);
-  // Shift-range anchor/membership is computed over the FLAT LEAF order
-  // (ctx.flatLayers), unchanged from pre-#153 — deliberately NOT tree-aware.
-  // A group id never appears in this list, so a range can never capture a
-  // group and one of its own descendants simultaneously (the invariant
-  // #151's selection model requires): shift-clicking two leaves ranges over
-  // the leaves between them (regardless of which groups those leaves sit
-  // in); shift-clicking a GROUP row is not in this list at all, so
-  // nextListSelection's own not-found fallback degrades it to a plain
-  // single-select of that group. True tree-range-selection (spanning group
-  // boundaries in a structure-aware way) is #154's job — this is the "don't
-  // crash, don't violate the invariant" baseline it builds on.
-  const flatLeafIds = useMemo(() => ctx.flatLayers.map((l) => l.id), [ctx.flatLayers]);
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
@@ -171,6 +169,158 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
   // only steers the NEXT click and must never trigger a re-render of its own.
   const anchorRef = useRef<string | null>(null);
 
+  // ─── Drag & drop (#154) ────────────────────────────────────────────────
+  // The dragging root ids live in BOTH a ref (drop/dragover handlers read it
+  // SYNCHRONOUSLY — React 18 batches state updates, so under fast event
+  // sequencing like Playwright's dragTo a state-only mirror is still null
+  // when the drop fires) AND a state twin (only for the row-dimming visual).
+  // The setter below writes both.
+  const draggingIdsRef = useRef<readonly string[] | null>(null);
+  const [draggingIds, setDraggingIdsState] = useState<readonly string[] | null>(null);
+  const setDraggingIds = (ids: readonly string[] | null) => {
+    draggingIdsRef.current = ids;
+    setDraggingIdsState(ids);
+  };
+  // Hover feedback: which row shows a drop affordance, at which zone, and
+  // whether the guards reject it (=> disabled affordance instead).
+  const [dropIndicator, setDropIndicator] = useState<{
+    rowId: string;
+    zone: DropZone;
+    reason: DropRejection | null;
+  } | null>(null);
+
+  const clearDragState = () => {
+    setDraggingIds(null);
+    setDropIndicator(null);
+  };
+
+  // Pointer → zone. Leaves split in half (above/below); group headers keep a
+  // middle 'into' band with slim before/after edges. jsdom reports a 0-height
+  // rect: the 0.5 fallback then lands on 'after' for leaves and 'into' for
+  // headers — geometry-specific zones are exercised via mocked rects.
+  const dropZoneFromEvent = (e: DragEvent<HTMLElement>, kind: 'leaf' | 'group'): DropZone => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const raw = (e.clientY - rect.top) / rect.height;
+    const ratio = Number.isFinite(raw) ? raw : 0.5; // 0-height rect (jsdom) / synthetic event without coords
+    if (kind === 'leaf') return ratio < 0.5 ? 'before' : 'after';
+    if (ratio < 0.25) return 'before';
+    if (ratio > 0.75) return 'after';
+    return 'into';
+  };
+
+  const handleRowDragStart = (e: DragEvent<HTMLElement>, rowId: string) => {
+    e.stopPropagation();
+    // Dragging a selected row carries the WHOLE selection, collapsed to its
+    // maximal roots (a selected group travels as one subtree, never alongside
+    // a selected descendant); dragging an unselected row carries just itself.
+    const ids = selectedIds.includes(rowId) ? maximalSelectedRoots(tree, selectedIds) : [rowId];
+    setDraggingIds(ids.length > 0 ? ids : [rowId]);
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // A non-empty payload keeps Firefox starting the drag; drop-import's
+      // overlay filters on 'Files', so this internal drag never triggers it.
+      e.dataTransfer.setData('text/plain', rowId);
+    }
+  };
+
+  const handleRowDragOver = (e: DragEvent<HTMLElement>, rowId: string, zone: DropZone) => {
+    const dragging = draggingIdsRef.current;
+    if (!dragging) return; // external drag (e.g. a file) — not ours
+    e.stopPropagation();
+    const slot = resolveDropSlot(tree, rowId, zone, dragging, collapsedGroupIds);
+    const reason: DropRejection | null =
+      slot === null ? 'cycle' : invalidDropReason(tree, slot, dragging);
+    if (reason === null) {
+      e.preventDefault(); // required to make this element a legal drop target
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    } else if (e.dataTransfer) {
+      // No preventDefault: the browser refuses the drop and shows the
+      // platform no-drop cursor; the indicator adds the visual/aria half.
+      e.dataTransfer.dropEffect = 'none';
+    }
+    setDropIndicator((prev) =>
+      prev !== null && prev.rowId === rowId && prev.zone === zone && prev.reason === reason
+        ? prev
+        : { rowId, zone, reason },
+    );
+  };
+
+  const handleRowDragLeave = (rowId: string) => {
+    setDropIndicator((prev) => (prev !== null && prev.rowId === rowId ? null : prev));
+  };
+
+  const commitDrop = (slot: DropSlot | null, dragging: readonly string[]) => {
+    if (slot === null) return;
+    // Silent-reject-before-history: BOTH guards re-run here, before any
+    // ctx.commit — a rejected drop must never create an undo entry.
+    if (invalidDropReason(tree, slot, dragging) !== null) return;
+    const nextTree = executeDrop(tree, dragging, slot);
+    // Same-reference = the batch was a no-op (dropped onto its own slot) —
+    // no phantom history entry.
+    if (nextTree === tree) return;
+    // One commit for the whole multi-root batch = ONE history entry.
+    ctx.commit({ ...ctx.doc, layers: nextTree });
+  };
+
+  const handleRowDrop = (e: DragEvent<HTMLElement>, rowId: string, zone: DropZone) => {
+    const dragging = draggingIdsRef.current; // ref, not state — see twin note above
+    clearDragState();
+    if (!dragging) return;
+    e.preventDefault();
+    e.stopPropagation();
+    commitDrop(resolveDropSlot(tree, rowId, zone, dragging, collapsedGroupIds), dragging);
+  };
+
+  // Tail area of a rows <ul> (the space that is the list itself, not any
+  // row): drops land at that container's visual BOTTOM (array index 0). The
+  // guard on target === currentTarget keeps bubbled row events out — row
+  // handlers stopPropagation for internal drags, so only a hover over the
+  // list's own empty runway arrives here as a direct target. This is the
+  // outdent path below an expanded group's subtree (see resolveTailDropSlot).
+  const handleTailDragOver = (e: DragEvent<HTMLElement>, parentId: string | null) => {
+    if (e.target !== e.currentTarget) return;
+    const dragging = draggingIdsRef.current;
+    if (!dragging) return;
+    const slot = resolveTailDropSlot(tree, parentId, dragging);
+    if (slot !== null && invalidDropReason(tree, slot, dragging) === null) {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    } else if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'none';
+    }
+  };
+
+  const handleTailDrop = (e: DragEvent<HTMLElement>, parentId: string | null) => {
+    if (e.target !== e.currentTarget) return;
+    const dragging = draggingIdsRef.current;
+    clearDragState();
+    if (!dragging) return;
+    e.preventDefault();
+    commitDrop(resolveTailDropSlot(tree, parentId, dragging), dragging);
+  };
+
+  // Affordance attributes/classes for the row currently hovered by a drag.
+  // data-drop / data-drop-invalid are the test-visible contract; aria-disabled
+  // is the accessible "this target is rejected" signal the issue asks for.
+  const dropAffordance = (rowId: string) => {
+    const indicator = dropIndicator !== null && dropIndicator.rowId === rowId ? dropIndicator : null;
+    if (indicator === null) return { attrs: {}, className: '' };
+    const invalid = indicator.reason !== null;
+    return {
+      attrs: {
+        'data-drop': indicator.zone,
+        ...(invalid ? { 'data-drop-invalid': 'true', 'aria-disabled': true } : {}),
+      },
+      className: invalid
+        ? ' cursor-no-drop opacity-50'
+        : indicator.zone === 'into'
+          ? ' outline outline-2 -outline-offset-1 outline-sky-400'
+          : indicator.zone === 'before'
+            ? ' shadow-[0_-2px_0_0_#38bdf8]'
+            : ' shadow-[0_2px_0_0_#38bdf8]',
+    };
+  };
+
   const currentFocusId =
     focusedRowId !== null && visibleRowIds.includes(focusedRowId)
       ? focusedRowId
@@ -180,9 +330,16 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     id: string,
     e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
   ) => {
+    // Tree-aware range selection (#154): shift-range anchor/membership walks
+    // the VISIBLE rows (reversed DFS with collapsed subtrees unmounted) —
+    // group rows are real range members now, and a collapsed group
+    // contributes only its own header row (its descendants never enter a
+    // range). An anchor hidden inside a collapsed group is simply absent
+    // from this order, so nextListSelection degrades that shift-click to a
+    // plain single select.
     const next = nextListSelection(
       { selectedIds, anchorId: anchorRef.current },
-      flatLeafIds,
+      visibleRowIds,
       id,
       { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey },
     );
@@ -197,15 +354,20 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     // leave ['b', 'G'] both selected. toggleLeafSelection only appends `id`
     // on the ADD path (the remove path filters it out), so checking
     // `stripped.includes(id)` distinguishes add from remove without a
-    // separate branch. (Shift ranges and plain clicks REPLACE the selection
-    // with rows, so they cannot create an overlap; the list's DnD + tree
-    // range-selection rework is #154.)
+    // separate branch.
     if (!e.shiftKey && (e.metaKey || e.ctrlKey)) {
       const stripped = toggleLeafSelection(tree, selectedIds, id);
       const next2 = stripped.includes(id)
         ? stripped.filter((sid) => sid === id || !collectDescendantIds(tree, id).has(sid))
         : stripped;
       ctx.selectIds(next2);
+    } else if (e.shiftKey) {
+      // A visible-row range can sweep in a group header AND its expanded
+      // descendant rows — maximalSelectedRoots collapses that to just the
+      // group (dropping the covered descendants), so the #151
+      // [group, descendant] overlap invariant holds for every range. Rows
+      // not covered by any ranged group survive as-is, in tree DFS order.
+      ctx.selectIds(maximalSelectedRoots(tree, next.selectedIds));
     } else {
       ctx.selectIds(next.selectedIds);
     }
@@ -363,14 +525,22 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
 
   const renderLeafRow = (layer: Layer, depth: number, parentGroupId: string | null): ReactNode => {
     const selected = selectedIds.includes(layer.id);
+    const affordance = dropAffordance(layer.id);
     return (
       <li
         key={layer.id}
         data-depth={depth}
         {...(parentGroupId !== null ? { 'data-group-id': parentGroupId } : {})}
+        {...affordance.attrs}
+        draggable={renamingId !== layer.id}
+        onDragStart={(e) => handleRowDragStart(e, layer.id)}
+        onDragOver={(e) => handleRowDragOver(e, layer.id, dropZoneFromEvent(e, 'leaf'))}
+        onDragLeave={() => handleRowDragLeave(layer.id)}
+        onDrop={(e) => handleRowDrop(e, layer.id, dropZoneFromEvent(e, 'leaf'))}
+        onDragEnd={clearDragState}
         className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs ${
           selected ? 'bg-sky-500/20 text-sky-100' : 'text-neutral-300 hover:bg-neutral-800'
-        }`}
+        }${draggingIds !== null && draggingIds.includes(layer.id) ? ' opacity-40' : ''}${affordance.className}`}
       >
         <button
           ref={(node) => {
@@ -471,6 +641,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     const collapsed = collapsedGroupIds.has(group.id);
     const isRenaming = renamingId === group.id;
     const name = group.name || 'Group';
+    const affordance = dropAffordance(group.id);
     // The GROUP's own <li> wraps BOTH its header row (a <div>, not another
     // <li>) and — when expanded — a nested <ul> for its children. A <ul> may
     // only contain <li> elements; putting the children list as a SIBLING of
@@ -485,12 +656,21 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
         {...(parentGroupId !== null ? { 'data-group-id': parentGroupId } : {})}
       >
         <div
-          // DnD seam (#154): once drag handlers land on this row, gate
-          // `draggable` on `!isRenaming` — a row mid-rename must not start a
-          // drag. Not wired yet; there is no drag behavior to gate today.
+          // Drag handlers live on the HEADER <div>, not the group's <li> —
+          // the <li> also wraps the nested children <ul>, so li-level
+          // handlers/rects would swallow the children's own drop zones.
+          // `draggable` is gated on !isRenaming (a row mid-rename must not
+          // start a drag — #153's seam note).
+          {...affordance.attrs}
+          draggable={!isRenaming}
+          onDragStart={(e) => handleRowDragStart(e, group.id)}
+          onDragOver={(e) => handleRowDragOver(e, group.id, dropZoneFromEvent(e, 'group'))}
+          onDragLeave={() => handleRowDragLeave(group.id)}
+          onDrop={(e) => handleRowDrop(e, group.id, dropZoneFromEvent(e, 'group'))}
+          onDragEnd={clearDragState}
           className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs ${
             selected ? 'bg-sky-500/20 text-sky-100' : 'text-neutral-300 hover:bg-neutral-800'
-          }`}
+          }${draggingIds !== null && draggingIds.includes(group.id) ? ' opacity-40' : ''}${affordance.className}`}
         >
         <button
           type="button"
@@ -590,12 +770,20 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
         {!collapsed && (
           <ul
             data-group-id={group.id}
+            onDragOver={(e) => handleTailDragOver(e, group.id)}
+            onDrop={(e) => handleTailDrop(e, group.id)}
             className="ml-3 flex flex-col gap-0.5 border-l border-neutral-800 pl-2"
           >
             {group.children.length === 0 ? (
               <li
                 data-depth={depth + 1}
                 data-group-id={group.id}
+                // The placeholder is a drop target too — hovering the empty
+                // body is always an 'into' drop on the enclosing group, so a
+                // user needn't aim at the header to fill an empty group.
+                onDragOver={(e) => handleRowDragOver(e, group.id, 'into')}
+                onDragLeave={() => handleRowDragLeave(group.id)}
+                onDrop={(e) => handleRowDrop(e, group.id, 'into')}
                 className="px-1.5 py-1 text-xs italic text-neutral-500"
               >
                 Empty group
@@ -622,5 +810,17 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     return out;
   };
 
-  return <ul className="flex flex-col gap-0.5">{renderNodes(tree, 0, null)}</ul>;
+  return (
+    <ul
+      onDragOver={(e) => handleTailDragOver(e, null)}
+      onDrop={(e) => handleTailDrop(e, null)}
+      // The pb runway only exists WHILE a drag is live: it gives the root
+      // list a hoverable tail strip below the last row (the drop target for
+      // the whole document's visual bottom) without padding the panel when
+      // idle.
+      className={`flex flex-col gap-0.5${draggingIds !== null ? ' pb-6' : ''}`}
+    >
+      {renderNodes(tree, 0, null)}
+    </ul>
+  );
 }

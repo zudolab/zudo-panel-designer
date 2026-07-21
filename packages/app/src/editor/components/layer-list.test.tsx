@@ -438,25 +438,27 @@ describe('LayerList tree rendering (#153)', () => {
     expect(selectIds).toHaveBeenLastCalledWith(['G']);
   });
 
-  it('shift-click ranges over the flat leaf sequence, never capturing a group id (tree range-selection is #154)', () => {
+  it('shift-click ranges over VISIBLE rows: a range sweeping a group header collapses its covered rows to the group (#154)', () => {
     const { ctx, selectIds } = nodeTreeCtx(fixtureTree());
     render(<LayerList ctx={ctx} selectedIds={[]} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Select layer A' }));
     fireEvent.click(screen.getByRole('button', { name: 'Select layer D' }), { shiftKey: true });
-    // Leaf-only range [a..d] — b and c (G's children) are swept in, but G's
-    // own id never enters the selection, so the [group, descendant]
-    // invariant can't be violated by this baseline behavior.
-    expect(selectIds).toHaveBeenLastCalledWith(['a', 'b', 'c', 'd']);
+    // Visible rows [D, G, C, B, A] — the range covers G's header AND its
+    // child rows; maximalSelectedRoots keeps only G, so the
+    // [group, descendant] invariant holds and the result is DFS-ordered.
+    expect(selectIds).toHaveBeenLastCalledWith(['a', 'G', 'd']);
   });
 
-  it('shift-clicking a group row degrades to a plain single-select of the group', () => {
+  it('shift-clicking a group row ranges up to it as a real range member (#154)', () => {
     const { ctx, selectIds } = nodeTreeCtx(fixtureTree());
     render(<LayerList ctx={ctx} selectedIds={[]} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Select layer A' }));
     fireEvent.click(screen.getByRole('button', { name: 'Select group Group' }), { shiftKey: true });
-    expect(selectIds).toHaveBeenLastCalledWith(['G']);
+    // Range [G..A] over visible rows sweeps G's children too — collapsed to
+    // ['a', 'G'] by the overlap invariant.
+    expect(selectIds).toHaveBeenLastCalledWith(['a', 'G']);
   });
 
   describe('group rename', () => {
