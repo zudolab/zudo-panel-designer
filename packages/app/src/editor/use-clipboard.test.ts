@@ -504,6 +504,24 @@ describe('useClipboard — group-aware copy/cut/paste (v2 envelope, #156)', () =
     expect(ctx.commit).not.toHaveBeenCalled();
   });
 
+  // codex review finding: a fractional version (e.g. 1.5) sat inside the
+  // numeric 1..2 range check but is neither supported schema — it must be
+  // rejected like any other unrecognized version, not silently accepted.
+  it('a non-integer envelope version (1.5) is rejected — returns null, never crashes', () => {
+    const envelopeText = JSON.stringify({
+      app: 'zpd',
+      kind: 'layers',
+      version: 1.5,
+      layers: [shapeLayer],
+    });
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+
+    expect(() => act(() => dispatchPaste(window, { text: envelopeText }))).not.toThrow();
+    expect(ctx.commit).not.toHaveBeenCalled();
+  });
+
   it('cross-tab: the exact string handleCopy writes to the OS clipboard round-trips through parse -> paste in a fresh hook instance, preserving group structure', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });

@@ -109,6 +109,7 @@ function parseEnvelope(text: string): LayerNode[] | null {
     candidate.app !== ENVELOPE_APP ||
     candidate.kind !== ENVELOPE_KIND ||
     typeof candidate.version !== 'number' ||
+    !Number.isInteger(candidate.version) ||
     candidate.version < MIN_SUPPORTED_ENVELOPE_VERSION ||
     candidate.version > ENVELOPE_VERSION ||
     !Array.isArray(candidate.layers)
