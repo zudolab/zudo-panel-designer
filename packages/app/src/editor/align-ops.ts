@@ -15,6 +15,7 @@
 import {
   alignLayers,
   distributeLayers,
+  flattenLayerNodes,
   MIN_ALIGN_SELECTION,
   MIN_DISTRIBUTE_SELECTION,
   normalizeRect,
@@ -73,8 +74,9 @@ function hasGeometry(layer: NonPatternLayer): boolean {
 }
 
 export function eligibleLayers(doc: DocState, selectedIds: readonly string[]): NonPatternLayer[] {
-  reconcileTextGeometry(doc.layers);
-  return doc.layers.filter(
+  const layers = flattenLayerNodes(doc.layers);
+  reconcileTextGeometry(layers);
+  return layers.filter(
     (l): l is NonPatternLayer =>
       selectedIds.includes(l.id) && l.type !== 'pattern' && hasGeometry(l),
   );
@@ -148,7 +150,7 @@ export function applyAlign(
   type: AlignType,
   reference: Reference,
 ): void {
-  reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+  reconcileTextGeometry(flattenLayerNodes(ctx.doc.layers), ctx.requestRepaint);
   const targets = eligibleLayers(ctx.doc, selectedIds);
   applyResults(
     ctx,
@@ -167,7 +169,7 @@ export function applyDistribute(
   axis: DistributeAxis,
   reference: Reference,
 ): void {
-  reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+  reconcileTextGeometry(flattenLayerNodes(ctx.doc.layers), ctx.requestRepaint);
   const targets = eligibleLayers(ctx.doc, selectedIds);
   applyResults(
     ctx,

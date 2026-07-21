@@ -9,6 +9,7 @@ describe('createDefaultDoc', () => {
     expect(doc.panelHp).toBe(12);
     expect(doc.layers).toHaveLength(1);
     const [layer] = doc.layers;
+    if ('kind' in layer) throw new Error('unreachable');
     expect(layer.type).toBe('pattern');
     if (layer.type !== 'pattern') throw new Error('unreachable');
     expect(layer.patternType).toBe('dot-grid');
@@ -17,7 +18,7 @@ describe('createDefaultDoc', () => {
 
   it('gives the default pattern layer explicit cover geometry via the shared helper (#96)', () => {
     const [layer] = createDefaultDoc().layers;
-    if (layer.type !== 'pattern') throw new Error('unreachable');
+    if ('kind' in layer || layer.type !== 'pattern') throw new Error('unreachable');
     expect({ x: layer.x, y: layer.y, size: layer.size }).toEqual(
       patternCoverGeometry({ widthMm: panelWidthMm(12), heightMm: PANEL_HEIGHT_MM }),
     );
@@ -27,7 +28,7 @@ describe('createDefaultDoc', () => {
     const doc = createDefaultDoc(20);
     expect(doc.panelHp).toBe(20);
     const [layer] = doc.layers;
-    if (layer.type !== 'pattern') throw new Error('unreachable');
+    if ('kind' in layer || layer.type !== 'pattern') throw new Error('unreachable');
     expect({ x: layer.x, y: layer.y, size: layer.size }).toEqual(
       patternCoverGeometry({ widthMm: panelWidthMm(20), heightMm: PANEL_HEIGHT_MM }),
     );

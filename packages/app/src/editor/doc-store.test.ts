@@ -157,7 +157,7 @@ describe('readDoc', () => {
     const restored = readDoc();
     expect(restored).not.toBeNull();
     const [layer] = restored!.layers;
-    if (layer.type !== 'pattern') throw new Error('expected a pattern layer');
+    if ('kind' in layer || layer.type !== 'pattern') throw new Error('expected a pattern layer');
     expect({ x: layer.x, y: layer.y, size: layer.size }).toEqual(
       patternCoverGeometry({ widthMm: panelWidthMm(12), heightMm: PANEL_HEIGHT_MM }),
     );

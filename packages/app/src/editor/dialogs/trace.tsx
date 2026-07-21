@@ -7,7 +7,7 @@
 // mode", which never executes embedded scripts, so a hostile trace result
 // (or a hostile source image feeding the tracer) can't run script in the app.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ImageLayer } from '@zpd/core';
+import { flattenLayerNodes, type ImageLayer } from '@zpd/core';
 import { registerDialog } from '../registry/dialogs';
 import { Field } from '../components/inspector-ui';
 import type { DialogProps } from '../types';
@@ -26,7 +26,7 @@ interface TraceDialogProps {
 const TRACE_DIALOG_TITLE_ID = 'trace-dialog-title';
 
 function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
-  const layer = ctx.doc.layers.find(
+  const layer = flattenLayerNodes(ctx.doc.layers).find(
     (l): l is ImageLayer => l.id === props.layerId && l.type === 'image',
   );
 

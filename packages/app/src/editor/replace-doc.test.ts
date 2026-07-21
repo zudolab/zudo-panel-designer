@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DocState, ImageLayer, Pt, TextLayer } from '@zpd/core';
+import { flattenLayerNodes, type DocState, type ImageLayer, type Pt, type TextLayer } from '@zpd/core';
 import { replaceDoc } from './replace-doc';
 import type { ToolContext } from './types';
 import {
@@ -110,7 +110,7 @@ describe('replaceDoc', () => {
       width: 12,
       height: 10,
     }));
-    reconcileTextGeometry(nextDoc.layers);
+    reconcileTextGeometry(flattenLayerNodes(nextDoc.layers));
     expect(getTextGeometry(nextLayer)!.pivot).toEqual({ x: 16, y: 25 });
   });
 });

@@ -6,6 +6,7 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createDefaultDoc,
+  flattenLayerNodes,
   type DocState,
   type Layer,
   type PathLayer,
@@ -76,7 +77,7 @@ function createCtx(doc: DocState, selectedIds: readonly string[] = []) {
       return currentSelectedIds.length === 1 ? currentSelectedIds[0] : null;
     },
     get selectedLayer() {
-      return currentDoc.layers.find((l) => l.id === ctx.selectedId) ?? null;
+      return flattenLayerNodes(currentDoc.layers).find((l) => l.id === ctx.selectedId) ?? null;
     },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
@@ -193,10 +194,11 @@ describe('useClipboard — copy/cut', () => {
     act(() => dispatchPaste(window));
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     expect(ctx.doc.layers).toHaveLength(doc.layers.length + 2);
-    const patternClone = ctx.doc.layers.find(
+    const flatLayers = flattenLayerNodes(ctx.doc.layers);
+    const patternClone = flatLayers.find(
       (l) => l.type === 'pattern' && l.id !== 'layer-default-dot-grid',
     );
-    const original = ctx.doc.layers.find((l) => l.id === 'layer-default-dot-grid');
+    const original = flatLayers.find((l) => l.id === 'layer-default-dot-grid');
     if (patternClone?.type !== 'pattern' || original?.type !== 'pattern') {
       throw new Error('expected a pattern clone and its untouched original');
     }
@@ -249,16 +251,15 @@ describe('useClipboard — copy -> paste round trip (internal clipboard)', () =>
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     expect(ctx.doc.layers).toHaveLength(3); // pattern + original + clone
-    const pasted = ctx.doc.layers.find(
-      (l) => l.id !== 'shape-1' && l.type !== 'pattern',
-    ) as ShapeLayer;
+    const flatLayers = flattenLayerNodes(ctx.doc.layers);
+    const pasted = flatLayers.find((l) => l.id !== 'shape-1' && l.type !== 'pattern') as ShapeLayer;
     expect(pasted).toBeDefined();
     expect(pasted.id).not.toBe(shapeLayer.id);
     expect(pasted.x).toBeCloseTo(shapeLayer.x + 2, 5);
     expect(pasted.y).toBeCloseTo(shapeLayer.y + 2, 5);
     expect(ctx.selectedIds).toEqual([pasted.id]);
     // source untouched
-    const original = ctx.doc.layers.find((l) => l.id === 'shape-1') as ShapeLayer;
+    const original = flatLayers.find((l) => l.id === 'shape-1') as ShapeLayer;
     expect(original).toMatchObject({ x: shapeLayer.x, y: shapeLayer.y });
   });
 
@@ -300,7 +301,7 @@ describe('useClipboard — Cmd/Ctrl+D duplicate', () => {
     act(() => result.current.handleDuplicate());
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     expect(ctx.doc.layers).toHaveLength(2);
-    const [original, clone] = ctx.doc.layers;
+    const [original, clone] = flattenLayerNodes(ctx.doc.layers);
     if (original?.type !== 'pattern' || clone?.type !== 'pattern') {
       throw new Error('expected two pattern layers');
     }
@@ -438,7 +439,7 @@ describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
 
       // Pasted the internal shape snapshot's clone, NOT the stale envelope's text layer.
       expect(ctx.commit).toHaveBeenCalledTimes(1);
-      const pasted = ctx.doc.layers.find(
+      const pasted = flattenLayerNodes(ctx.doc.layers).find(
         (l) => l.id !== 'shape-1' && l.id !== 'text-1' && l.type !== 'pattern',
       );
       expect(pasted?.type).toBe('shape');
@@ -484,7 +485,7 @@ describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
 
       // Write B is still outstanding, so the internal snapshot (textLayer) wins.
       expect(ctx.commit).toHaveBeenCalledTimes(1);
-      const pasted = ctx.doc.layers.find(
+      const pasted = flattenLayerNodes(ctx.doc.layers).find(
         (l) => l.id !== 'shape-1' && l.id !== 'text-1' && l.type !== 'pattern',
       );
       expect(pasted?.type).toBe('text');
@@ -537,7 +538,9 @@ describe('useClipboard — paste priority: image > envelope > internal', () => {
     act(() => dispatchPaste(window, { text: envelopeText }));
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
-    const pasted = ctx.doc.layers.find((l) => l.id !== 'text-1' && l.type !== 'pattern');
+    const pasted = flattenLayerNodes(ctx.doc.layers).find(
+      (l) => l.id !== 'text-1' && l.type !== 'pattern',
+    );
     expect(pasted).toMatchObject({ type: 'shape', x: shapeLayer.x + 2, y: shapeLayer.y + 2 });
   });
 
@@ -693,7 +696,7 @@ describe('useClipboard — pattern layers in envelopes (#97)', () => {
   // Pre-#97 the parser filtered patterns out of envelopes; they now paste
   // like any layer (cross-tab pattern copy is a legitimate flow).
   it('an envelope carrying a pattern layer pastes it with the cascade offset', () => {
-    const patternLayer = baseDoc([]).layers[0];
+    const patternLayer = flattenLayerNodes(baseDoc([]).layers)[0];
     const envelopeText = JSON.stringify({
       app: 'zpd',
       kind: 'layers',
@@ -709,7 +712,7 @@ describe('useClipboard — pattern layers in envelopes (#97)', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     expect(ctx.doc.layers).toHaveLength(2);
-    const pasted = ctx.doc.layers[1];
+    const pasted = flattenLayerNodes(ctx.doc.layers)[1];
     if (pasted.type !== 'pattern' || patternLayer.type !== 'pattern') {
       throw new Error('expected pattern layers');
     }
@@ -736,7 +739,7 @@ describe('useClipboard — envelope layer validation', () => {
 
     expect(() => act(() => dispatchPaste(window, { text: envelopeText }))).not.toThrow();
     expect(ctx.commit).toHaveBeenCalledTimes(1);
-    const pasted = ctx.doc.layers.find((l) => l.type !== 'pattern') as PathLayer;
+    const pasted = flattenLayerNodes(ctx.doc.layers).find((l) => l.type !== 'pattern') as PathLayer;
     expect(pasted).toBeDefined();
     expect(pasted.points).toEqual([]);
     expect(pasted.strokeWidth).toBe(0);

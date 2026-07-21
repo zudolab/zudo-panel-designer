@@ -11,7 +11,7 @@
 // hover-preview/commit session (its own source marks it optional — click to
 // commit is the supported path).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { TextLayer } from '@zpd/core';
+import { flattenLayerNodes, isGroupNode, type TextLayer } from '@zpd/core';
 import { registerDialog } from '../registry/dialogs';
 import { ensureFont, isFontLoaded } from '../fonts';
 import { loadGoogleFont } from '../google-font-loader';
@@ -102,7 +102,7 @@ function FontExplorerDialog({ props, close, ctx }: DialogProps<FontExplorerProps
     (activeCategory === 'japanese' ? JAPANESE_PREVIEW_TEXT : DEFAULT_PREVIEW_TEXT);
 
   const activeFamily = useMemo(() => {
-    const layer = ctx.doc.layers.find((l) => l.id === props.layerId);
+    const layer = flattenLayerNodes(ctx.doc.layers).find((l) => l.id === props.layerId);
     return layer && layer.type === 'text' ? layer.fontFamily : null;
   }, [ctx.doc, props.layerId]);
 
@@ -156,7 +156,7 @@ function FontExplorerDialog({ props, close, ctx }: DialogProps<FontExplorerProps
   const applyFamily = useCallback(
     (family: string) => {
       const layerId = props.layerId;
-      const layer = ctx.doc.layers.find((l) => l.id === layerId);
+      const layer = flattenLayerNodes(ctx.doc.layers).find((l) => l.id === layerId);
       if (!layer || layer.type !== 'text') {
         close();
         return;
@@ -168,7 +168,7 @@ function FontExplorerDialog({ props, close, ctx }: DialogProps<FontExplorerProps
         return;
       }
       const nextLayers = ctx.doc.layers.map((l) =>
-        l.id === layerId && l.type === 'text' ? { ...l, fontFamily: family } : l,
+        !isGroupNode(l) && l.id === layerId && l.type === 'text' ? { ...l, fontFamily: family } : l,
       );
       ctx.commit({ ...ctx.doc, layers: nextLayers });
       // Start the exact-sample request now. Canonical text geometry owns the

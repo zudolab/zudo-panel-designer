@@ -15,7 +15,13 @@
 // (and a payload from an unrelated app, or a future envelope version, is
 // simply ignored rather than crashing the paste).
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { cloneLayersWithFreshIds, mintId, parsePanelConfig, type Layer } from '@zpd/core';
+import {
+  cloneLayersWithFreshIds,
+  flattenLayerNodes,
+  mintId,
+  parsePanelConfig,
+  type Layer,
+} from '@zpd/core';
 import { isEditableTarget } from './is-editable-target';
 import { routeImportFile } from './svg-import/route-import-file';
 import type { ToolContext } from './types';
@@ -53,7 +59,7 @@ export interface UseClipboardReturn {
 // deliberate pattern exception left in the clipboard.
 function copyableSelection(ctx: ToolContext): Layer[] {
   const ids = new Set(ctx.selectedIds);
-  return ctx.doc.layers.filter((l) => ids.has(l.id));
+  return flattenLayerNodes(ctx.doc.layers).filter((l) => ids.has(l.id));
 }
 
 // Parses OS clipboard text as a zpd layers envelope. Returns null for
@@ -84,7 +90,10 @@ function parseEnvelope(text: string): Layer[] | null {
   // (e.g. a 'path' with no `points`) that would later throw in cloneLayer or
   // insert NaN geometry into the document. Pattern layers paste like any
   // other since #97 (they're copyable, so envelopes can carry them).
-  const layers = parsePanelConfig({ layers: candidate.layers }).layers;
+  // The envelope is always written from a flat copyableSelection() snapshot
+  // (see captureToClipboard) — flatten defensively anyway since a hand-edited
+  // or foreign envelope could carry a group node under the same version tag.
+  const layers = flattenLayerNodes(parsePanelConfig({ layers: candidate.layers }).layers);
   return layers.length > 0 ? layers : null;
 }
 
@@ -178,7 +187,11 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     // cover square joining every Cmd/Ctrl+A would make "select everything and
     // move it" drag the background along. Patterns join a selection only by
     // direct click (two-tier hit) or the layer list.
-    ctx.selectIds(ctx.doc.layers.filter((l) => l.type !== 'pattern').map((l) => l.id));
+    ctx.selectIds(
+      flattenLayerNodes(ctx.doc.layers)
+        .filter((l) => l.type !== 'pattern')
+        .map((l) => l.id),
+    );
   }, [ctx]);
 
   // The window `paste` listener — sole owner of Cmd/Ctrl+V (and right-click
