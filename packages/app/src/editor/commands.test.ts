@@ -326,6 +326,26 @@ describe('dispatchCommand — parity table against the pre-refactor Editor.tsx b
     expect(ctx2.commit).toHaveBeenCalledTimes(1);
   });
 
+  // #151: a selection holding a GROUP id cascades the whole subtree, and a
+  // descendant of a selected ancestor pre-collapses (maximal roots) — all in
+  // the ONE commit the flat delete already used.
+  it('Delete cascades a selected group (with a redundant descendant id) in ONE commit', () => {
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: [
+        { kind: 'group', id: 'G', name: 'G', children: [rect('a', 0, 0), rect('b', 5, 5)] },
+        rect('c', 10, 10),
+      ],
+    };
+    const ctx = stubCommandCtx({ doc, selectedIds: ['G', 'a', 'c'] });
+    dispatchCommand(keyEvent({ key: 'Delete' }), ctx);
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
+    expect(committed.layers).toEqual([]); // G's subtree (a, b) cascaded, c deleted
+    expect(ctx.selectIds).toHaveBeenCalledWith([]);
+  });
+
   it('Delete with nothing selected still "matches" but is a safe no-op (mirrors the old internal guard)', () => {
     const ctx = stubCommandCtx({ selectedIds: [] });
     const match = dispatchCommand(keyEvent({ key: 'Delete' }), ctx);

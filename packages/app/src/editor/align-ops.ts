@@ -29,6 +29,7 @@ import {
   type PatternLayer,
 } from '@zpd/core';
 import { projectFlatLayers } from './flat-projection';
+import { resolveSelectionLeaves } from './selection-resolve';
 import { layerBbox, layerRotation } from './renderer';
 import { reconcileTextGeometry } from './text-geometry';
 import type { ToolContext } from './types';
@@ -79,9 +80,15 @@ export function eligibleLayers(doc: DocState, selectedIds: readonly string[]): N
   // array identity as document-incarnation state (#150).
   const layers = projectFlatLayers(doc.layers);
   reconcileTextGeometry(layers);
+  // Group-aware expansion (#151): a selected group id aligns its EDITABLE
+  // descendant leaves (hidden — intrinsic or ancestor-folded — excluded, per
+  // the shared "ops act on expanded editable leaves" rule). Identity for a
+  // group-free, fully visible selection.
+  const editable = new Set(
+    resolveSelectionLeaves(doc.layers, selectedIds, layers).editableLeafIds,
+  );
   return layers.filter(
-    (l): l is NonPatternLayer =>
-      selectedIds.includes(l.id) && l.type !== 'pattern' && hasGeometry(l),
+    (l): l is NonPatternLayer => editable.has(l.id) && l.type !== 'pattern' && hasGeometry(l),
   );
 }
 

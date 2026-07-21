@@ -19,10 +19,12 @@ import {
   cloneLayersWithFreshIds,
   deleteNodeById,
   flattenLayerNodes,
+  maximalSelectedRoots,
   mintId,
   parsePanelConfig,
   type Layer,
 } from '@zpd/core';
+import { expandSelectionToLeafIds, topmostAncestorIdForLeaf } from './selection-resolve';
 import { isEditableTarget } from './is-editable-target';
 import { routeImportFile } from './svg-import/route-import-file';
 import type { ToolContext } from './types';
@@ -54,12 +56,17 @@ export interface UseClipboardReturn {
   handleSelectAll(): void;
 }
 
-// The full directly-selected set — pattern squares included since #97
-// (multiple pattern squares are legitimately useful, so copy/cut/paste/
-// duplicate treat them like any layer). Select-all below is the ONE
-// deliberate pattern exception left in the clipboard.
+// The full selected set EXPANDED to leaves (#151) — a selected group id
+// contributes its descendant leaves (a raw group id matches no flat layer, so
+// the pre-#151 direct filter silently copied nothing for group selections).
+// Pattern squares included since #97 (multiple pattern squares are
+// legitimately useful, so copy/cut/paste/duplicate treat them like any
+// layer); select-all below is the ONE deliberate pattern exception left.
+// The v1 envelope stays FLAT — structure-preserving copy/duplicate of groups
+// (clipboard envelope v2) is #156's; expansion here is the bridge that keeps
+// the leaves round-tripping until then.
 function copyableSelection(ctx: ToolContext): Layer[] {
-  const ids = new Set(ctx.selectedIds);
+  const ids = new Set(expandSelectionToLeafIds(ctx.doc.layers, ctx.selectedIds));
   return ctx.flatLayers.filter((l) => ids.has(l.id));
 }
 
@@ -174,14 +181,19 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     if (layers.length === 0) return;
     captureToClipboard(clipboardRef, outstandingWritesRef, layers);
     // Copy + delete as ONE commit — cut must be a single undo entry.
-    // Recursive delete (#150): each cut leaf is removed wherever it sits in
-    // the tree — a flat root filter would no-op for group-nested leaves.
-    const cutIds = new Set(layers.map((l) => l.id));
+    // Recursive delete via MAXIMAL roots (#150/#151): a selected group id
+    // cascades away with its whole subtree (deleting only the copied leaves
+    // would leave an empty group shell behind), and a descendant of a
+    // selected ancestor drops out rather than double-deleting.
     ctx.commit({
       ...ctx.doc,
-      layers: [...cutIds].reduce((tree, id) => deleteNodeById(tree, id), ctx.doc.layers),
+      layers: maximalSelectedRoots(ctx.doc.layers, ctx.selectedIds).reduce(
+        (tree, id) => deleteNodeById(tree, id),
+        ctx.doc.layers,
+      ),
     });
-    ctx.selectIds(ctx.selectedIds.filter((id) => !cutIds.has(id)));
+    // Every selected id was either cut or a descendant of a cut root.
+    ctx.selectIds([]);
   }, [ctx]);
 
   const handleDuplicate = useCallback(() => {
@@ -192,8 +204,23 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     // Select-all still EXCLUDES patterns on purpose (#97): a background-ish
     // cover square joining every Cmd/Ctrl+A would make "select everything and
     // move it" drag the background along. Patterns join a selection only by
-    // direct click (two-tier hit) or the layer list.
-    ctx.selectIds(ctx.flatLayers.filter((l) => l.type !== 'pattern').map((l) => l.id));
+    // direct click (two-tier hit) or the layer list. Each remaining leaf
+    // PROMOTES to its topmost ancestor group id, deduped (#151 — the same
+    // promotion a full-canvas marquee applies); a pattern-only group never
+    // enters (no non-pattern leaf nominates it), but a mixed group joins
+    // whole — its pattern members ride along, the rigid-group convention.
+    const tree = ctx.doc.layers;
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const layer of ctx.flatLayers) {
+      if (layer.type === 'pattern') continue;
+      const id = topmostAncestorIdForLeaf(tree, layer.id);
+      if (!seen.has(id)) {
+        seen.add(id);
+        ids.push(id);
+      }
+    }
+    ctx.selectIds(ids);
   }, [ctx]);
 
   // The window `paste` listener — sole owner of Cmd/Ctrl+V (and right-click
