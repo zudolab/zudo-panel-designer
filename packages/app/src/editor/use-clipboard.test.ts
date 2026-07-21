@@ -575,6 +575,7 @@ describe('useClipboard — pasting an SVG file (#141)', () => {
     expect(ctx.openDialog).toHaveBeenCalledWith('svg-import', {
       fileName: 'icon.svg',
       svgText: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+      file,
     });
     expect(importImageFile).not.toHaveBeenCalled();
     expect(ctx.commit).not.toHaveBeenCalled();
@@ -622,6 +623,7 @@ describe('useClipboard — pasting an SVG file (#141)', () => {
     expect(ctx.openDialog).toHaveBeenCalledWith('svg-import', {
       fileName: 'icon.svg',
       svgText: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+      file,
     });
   });
 
@@ -646,6 +648,7 @@ describe('useClipboard — pasting an SVG file (#141)', () => {
     expect(ctx.openDialog).toHaveBeenCalledWith('svg-import', {
       fileName: 'clipboard.svg',
       svgText: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+      file,
     });
   });
 });
