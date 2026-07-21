@@ -269,6 +269,37 @@ describe('moveNodeToParent', () => {
     const tree: LayerNode[] = [shape('a')];
     expect(moveNodeToParent(tree, 'a', 'ghost-parent', 0)).toBe(tree);
   });
+
+  it('same-slot no-op: dropping a top-level node at its own post-removal index returns the same reference', () => {
+    const tree: LayerNode[] = [shape('a'), shape('b'), shape('c')];
+    // 'b' is already at post-removal index 1 (removing it from ['a','b','c']
+    // leaves ['a','c'], and index 1 there is exactly where it started).
+    expect(moveNodeToParent(tree, 'b', null, 1)).toBe(tree);
+  });
+
+  it('same-slot no-op: dropping a node at index 0 when it is already first returns the same reference', () => {
+    const tree: LayerNode[] = [shape('a'), shape('b')];
+    expect(moveNodeToParent(tree, 'a', null, 0)).toBe(tree);
+  });
+
+  it('same-slot no-op: an out-of-range index that clamps to the current slot also no-ops', () => {
+    const tree: LayerNode[] = [shape('a'), shape('b')];
+    // Removing 'b' leaves ['a'], so any index >= 1 clamps to 1 — right back
+    // where 'b' already is.
+    expect(moveNodeToParent(tree, 'b', null, 99)).toBe(tree);
+  });
+
+  it('same-slot no-op applies within a group parent too', () => {
+    const tree: LayerNode[] = [group('g1', [shape('a'), shape('b')])];
+    expect(moveNodeToParent(tree, 'b', 'g1', 1)).toBe(tree);
+  });
+
+  it('a genuine same-parent reorder is NOT treated as a no-op', () => {
+    const tree: LayerNode[] = [shape('a'), shape('b'), shape('c')];
+    const next = moveNodeToParent(tree, 'a', null, 1);
+    expect(next).not.toBe(tree);
+    expect(next.map((n) => n.id)).toEqual(['b', 'a', 'c']);
+  });
 });
 
 describe('deleteNodeById', () => {

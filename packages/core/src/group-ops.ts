@@ -174,6 +174,24 @@ function topLevelIndexContaining(tree: LayerNode[], id: string): number {
   return tree.length;
 }
 
+// The direct parent id (null = top level) and sibling index of `id`, or null
+// when not found. Used by moveNodeToParent's same-slot no-op check.
+function locateNode(
+  nodes: LayerNode[],
+  id: string,
+  parentId: string | null = null,
+): { parentId: string | null; index: number } | null {
+  for (let i = 0; i < nodes.length; i += 1) {
+    const node = nodes[i];
+    if (node.id === id) return { parentId, index: i };
+    if (isGroupNode(node)) {
+      const found = locateNode(node.children, id, node.id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 // ─── Structural ops ─────────────────────────────────────────────────────────
 
 export interface GroupNodesResult {
@@ -265,10 +283,24 @@ export function moveNodeToParent(
   if (!found) return tree;
   const { node } = found;
 
+  let parentGroup: GroupNode | null = null;
   if (parentId !== null) {
     if (isGroupNode(node) && findNodeById([node], parentId)) return tree; // cycle guard
     const parentLookup = findNodeById(tree, parentId);
     if (!parentLookup || !isGroupNode(parentLookup.node)) return tree;
+    parentGroup = parentLookup.node;
+  }
+
+  // Dropping a node back into its current parent at its own post-removal
+  // index is a no-op. Short-circuit BEFORE any removal/reinsertion so the
+  // identity-on-no-op contract holds here too (codex review, #148) — without
+  // this, a same-slot move still rebuilds fresh arrays/ancestor objects,
+  // which would cost a spurious history entry / React re-render downstream.
+  const currentLocation = locateNode(tree, nodeId);
+  if (currentLocation && currentLocation.parentId === parentId) {
+    const siblingCount = parentGroup ? parentGroup.children.length : tree.length;
+    const clampedIndex = Math.max(0, Math.min(index, siblingCount - 1));
+    if (clampedIndex === currentLocation.index) return tree;
   }
 
   const stripped = removeNodesByIds(tree, new Set([nodeId]));
@@ -380,7 +412,17 @@ export function updateLeafById(tree: LayerNode[], id: string, updater: (leaf: La
 // when `ids` is empty or none of them match a leaf.
 export function mapLeavesById(tree: LayerNode[], ids: readonly string[], mapper: (leaf: Layer) => Layer): LayerNode[] {
   if (ids.length === 0) return tree;
-  const wanted = new Set(ids);
+  // Built once here, not per recursive call (codex review, #148) — a tree
+  // with many groups would otherwise reconstruct the same Set at every
+  // nesting level, turning this one-pass batch op quadratic in group count.
+  return mapLeavesByIdSet(tree, new Set(ids), mapper);
+}
+
+function mapLeavesByIdSet(
+  tree: LayerNode[],
+  wanted: ReadonlySet<string>,
+  mapper: (leaf: Layer) => Layer,
+): LayerNode[] {
   let touched = false;
   const next: LayerNode[] = [];
   for (const node of tree) {
@@ -390,7 +432,7 @@ export function mapLeavesById(tree: LayerNode[], ids: readonly string[], mapper:
       continue;
     }
     if (isGroupNode(node)) {
-      const children = mapLeavesById(node.children, ids, mapper);
+      const children = mapLeavesByIdSet(node.children, wanted, mapper);
       if (children !== node.children) {
         touched = true;
         next.push({ ...node, children });
