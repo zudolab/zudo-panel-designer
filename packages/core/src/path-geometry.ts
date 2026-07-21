@@ -2,7 +2,7 @@
 // and testable in plain Node (no browser Path2D/canvas at runtime).
 // Mirrors _temp-resource/1-panel-designer-proto/src/path-geometry.ts, which
 // mirrors pgen core path-geometry.
-import type { Pt, Rect } from './bbox';
+import { rotatePoint, type Pt, type Rect } from './bbox';
 
 export interface PathPointLike extends Pt {
   hin?: Pt; // absolute bezier handle coords, mm
@@ -148,6 +148,30 @@ export function translatePathLayer<T extends PathLayerLike>(
     points: translatePoints(layer.points, dx, dy),
     ...(layer.extraSubpaths
       ? { extraSubpaths: layer.extraSubpaths.map((sub) => translatePoints(sub, dx, dy)) }
+      : {}),
+  } as Pick<T, 'points'> & Partial<Pick<T, 'extraSubpaths'>>;
+}
+
+// Path has no rotation field (unlike shape/text/image) — baking a rotation
+// into a path means rotating every anchor AND its hin/hout handles about the
+// pivot, mirroring translatePoints's shape.
+export function rotatePoints(points: PathPointLike[], center: Pt, rotationDeg: number): PathPointLike[] {
+  return points.map((p) => ({
+    ...rotatePoint(p, center, rotationDeg),
+    ...(p.hin ? { hin: rotatePoint(p.hin, center, rotationDeg) } : {}),
+    ...(p.hout ? { hout: rotatePoint(p.hout, center, rotationDeg) } : {}),
+  }));
+}
+
+export function rotatePathLayer<T extends PathLayerLike>(
+  layer: T,
+  center: Pt,
+  rotationDeg: number,
+): Pick<T, 'points'> & Partial<Pick<T, 'extraSubpaths'>> {
+  return {
+    points: rotatePoints(layer.points, center, rotationDeg),
+    ...(layer.extraSubpaths
+      ? { extraSubpaths: layer.extraSubpaths.map((sub) => rotatePoints(sub, center, rotationDeg)) }
       : {}),
   } as Pick<T, 'points'> & Partial<Pick<T, 'extraSubpaths'>>;
 }
