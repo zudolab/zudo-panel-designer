@@ -7,7 +7,14 @@
 // mode", which never executes embedded scripts, so a hostile trace result
 // (or a hostile source image feeding the tracer) can't run script in the app.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { flattenLayerNodes, type ImageLayer } from '@zpd/core';
+import {
+  flattenLayerNodes,
+  rectCenter,
+  rotatePoint,
+  type ImageLayer,
+  type PathLayer,
+  type PathPoint,
+} from '@zpd/core';
 import { registerDialog } from '../registry/dialogs';
 import { Field } from '../components/inspector-ui';
 import type { DialogProps } from '../types';
@@ -18,6 +25,33 @@ import {
   type TraceOptions,
 } from '../trace-pipeline';
 import { svgToPathLayers } from '../svg-to-path-layers';
+
+// svgToPathLayers only knows the source image's UNROTATED bbox (x/y/width/
+// height), so a rotated image would otherwise trace into axis-aligned vectors
+// that visibly disagree with what the user sees on canvas (#147). Bake the
+// image's rotation into the freshly traced points here, about the same bbox
+// center paintLayer rotates the raster around, so the vectors land exactly
+// where the rotated image was.
+export function bakeImageRotation(traced: PathLayer[], layer: ImageLayer): PathLayer[] {
+  const rotation = layer.rotation ?? 0;
+  if (!rotation) return traced;
+  const center = rectCenter({ x: layer.x, y: layer.y, width: layer.width, height: layer.height });
+  const rotatePt = (p: PathPoint): PathPoint => {
+    const p2 = rotatePoint(p, center, rotation);
+    const out: PathPoint = { x: p2.x, y: p2.y };
+    if (p.hin) out.hin = rotatePoint(p.hin, center, rotation);
+    if (p.hout) out.hout = rotatePoint(p.hout, center, rotation);
+    return out;
+  };
+  const rotatePoints = (points: PathPoint[]): PathPoint[] => points.map(rotatePt);
+  return traced.map((pathLayer) => ({
+    ...pathLayer,
+    points: rotatePoints(pathLayer.points),
+    ...(pathLayer.extraSubpaths
+      ? { extraSubpaths: pathLayer.extraSubpaths.map(rotatePoints) }
+      : {}),
+  }));
+}
 
 interface TraceDialogProps {
   layerId: string;
@@ -82,12 +116,15 @@ function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
 
   const apply = () => {
     if (!layer || !svg) return;
-    const traced = svgToPathLayers(svg, {
-      x: layer.x,
-      y: layer.y,
-      width: layer.width,
-      height: layer.height,
-    });
+    const traced = bakeImageRotation(
+      svgToPathLayers(svg, {
+        x: layer.x,
+        y: layer.y,
+        width: layer.width,
+        height: layer.height,
+      }),
+      layer,
+    );
     if (traced.length === 0) return;
     const index = ctx.doc.layers.findIndex((l) => l.id === layer.id);
     const before = ctx.doc.layers.slice(0, index);

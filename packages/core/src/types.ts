@@ -77,6 +77,7 @@ export interface ImageLayer extends LayerBase {
   y: number;
   width: number;
   height: number;
+  rotation?: number; // deg clockwise around bbox center
 }
 
 export type Layer = ShapeLayer | PatternLayer | PathLayer | TextLayer | ImageLayer;
