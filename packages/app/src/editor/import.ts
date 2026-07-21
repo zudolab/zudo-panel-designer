@@ -12,6 +12,10 @@ import { toastError, toastSuccess } from './registry/toasts';
 import { routeImportFile } from './svg-import/route-import-file';
 import type { ToolContext } from './types';
 
+function isJsonFile(file: File): boolean {
+  return file.type === 'application/json' || file.name.toLowerCase().endsWith('.json');
+}
+
 export function isImportableImageFile(file: File): boolean {
   return (
     file.type.startsWith('image/') ||
@@ -22,13 +26,14 @@ export function isImportableImageFile(file: File): boolean {
     // "anonymous blob" allowance use-clipboard.ts already makes for
     // clipboard-pasted files (#141, #143): a genuinely unsupported file still
     // ends up at routeImportFile's identical "Unsupported file" toast, just
-    // one classify() hop later.
-    file.type === ''
+    // one classify() hop later. Excludes .json: some platforms report an
+    // empty MIME for it too, and isImportableImageFile is checked BEFORE
+    // isJsonFile in importDroppedFile below -- without this exclusion, such
+    // a file would be misrouted to the image path and rejected as
+    // "Unsupported file" instead of reaching the panel-JSON import flow
+    // (caught by codex review during #143's integration pass).
+    (file.type === '' && !isJsonFile(file))
   );
-}
-
-function isJsonFile(file: File): boolean {
-  return file.type === 'application/json' || file.name.toLowerCase().endsWith('.json');
 }
 
 function errorMessage(err: unknown): string {
