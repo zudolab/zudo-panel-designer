@@ -35,7 +35,7 @@ export function rectCenter(rect: Rect): Pt {
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
 }
 
-function rotatePoint(pt: Pt, center: Pt, rotationDeg: number): Pt {
+export function rotatePoint(pt: Pt, center: Pt, rotationDeg: number): Pt {
   const rad = (rotationDeg * Math.PI) / 180;
   const dx = pt.x - center.x;
   const dy = pt.y - center.y;

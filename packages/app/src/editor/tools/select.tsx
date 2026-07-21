@@ -367,11 +367,10 @@ function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolCont
   if (selected.type !== 'shape' && selected.type !== 'image') return false;
   const bbox = layerBbox(selected);
   if (!bbox) return false;
-  // Rotated shapes resize too (#51): handles sit at the ROTATED corners and
-  // the drag resolves in the layer's local frame via resizeRotatedRect (#48).
-  // The type gate above is the whole eligibility check (core's isResizable
-  // was deleted in #48); images have no rotation field so they stay axis-
-  // aligned through layerRotation() === 0.
+  // Rotated shapes/images resize too (#51, image joined in #147): handles sit
+  // at the ROTATED corners and the drag resolves in the layer's local frame
+  // via resizeRotatedRect (#48). The type gate above is the whole eligibility
+  // check (core's isResizable was deleted in #48).
   const rotation = layerRotation(selected);
   for (const h of resizeHandleRects(bbox, ctx.camera, rotation)) {
     if (
@@ -395,7 +394,7 @@ function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolCont
 }
 
 function tryGrabRotateHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): boolean {
-  if (!canRotate(selected)) return false; // shape/text only — never invent rotation
+  if (!canRotate(selected)) return false; // shape/text/image only — never invent rotation
   const bbox = layerBbox(selected);
   if (!bbox) return false;
   const rotation = layerRotation(selected);

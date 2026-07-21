@@ -102,14 +102,16 @@ export function layerBbox(layer: Layer): Rect | null {
 }
 
 export function layerRotation(layer: Layer): number {
-  return layer.type === 'shape' || layer.type === 'text' ? (layer.rotation ?? 0) : 0;
+  return layer.type === 'shape' || layer.type === 'text' || layer.type === 'image'
+    ? (layer.rotation ?? 0)
+    : 0;
 }
 
-// Rotate-handle eligibility (#51): exactly the types whose `rotation` field
-// layerRotation reads. path/image/pattern have no rotation in the model — the
-// chrome must not invent one for them.
+// Rotate-handle eligibility (#51, image joined in #147): exactly the types
+// whose `rotation` field layerRotation reads. path/pattern have no rotation in
+// the model — the chrome must not invent one for them.
 export function canRotate(layer: Layer): boolean {
-  return layer.type === 'shape' || layer.type === 'text';
+  return layer.type === 'shape' || layer.type === 'text' || layer.type === 'image';
 }
 
 // Rotate a point about a center, degrees clockwise (same convention as
@@ -731,8 +733,9 @@ function drawSelectionChrome(
     drawHandleSquares(ctx, resizeHandleRects(rawBbox, cam, rotation));
   }
 
-  // Rotate handle (#51): shape/text only — the types layerRotation reads. A
-  // stem connects the rotated top-edge midpoint to a circular knob.
+  // Rotate handle (#51, image joined in #147): shape/text/image — the types
+  // layerRotation reads. A stem connects the rotated top-edge midpoint to a
+  // circular knob.
   if (canRotate(selected) && rawBbox) {
     const topMid = mmToScreen(
       rotateMmPoint(

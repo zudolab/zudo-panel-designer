@@ -21,6 +21,7 @@ import {
   type DocState,
   type Guide,
   type HistoryState,
+  type ImageLayer,
   type Layer,
   type PathLayer,
   type PatternLayer,
@@ -437,6 +438,19 @@ const rectAt = (id: string, x: number, y: number): ShapeLayer => ({
   color: 1,
 });
 
+// Same 20x10 dims as rectAt, so the rotate/resize geometry below reuses the
+// exact same expected numbers as the shape tests (#147: images rotate too).
+const imageAt = (id: string, x: number, y: number): ImageLayer => ({
+  id,
+  name: 'Img',
+  type: 'image',
+  src: 'data:,',
+  x,
+  y,
+  width: 20,
+  height: 10,
+});
+
 const gridPattern = (id: string): PatternLayer => ({
   id,
   name: 'Grid',
@@ -791,27 +805,36 @@ describe('select tool — rotate handle (#51)', () => {
     expect(ctx.selectedIds).toEqual([]); // empty-space click deselected
   });
 
-  it('image layers get NO rotate handle — the grab point is plain empty space', () => {
-    const image: Layer = {
-      id: 'i1',
-      name: 'Img',
-      type: 'image',
-      src: 'data:,',
-      x: 10,
-      y: 10,
-      width: 20,
-      height: 10,
-    };
-    const { ctx, getHistory } = makeHarness({ panelHp: 12, guides: [], layers: [image] });
+  // #147: images joined canRotate/layerRotation, so a selected image now gets
+  // the same rotate handle + drag contract as a shape — same geometry as the
+  // "rotates about the bbox center" shape test above, applied to an image.
+  it('an image gets a rotate handle too; drag updates rotation, one undo entry', () => {
+    const image = imageAt('i1', 10, 10); // bbox center (20, 15)
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [],
+      layers: [image],
+    });
     ctx.select('i1');
 
-    // where a rotate handle WOULD sit for this bbox: (20, -10) — pressing
-    // there must fall through to the empty-space path (deselect + marquee arm)
-    select.onPointerDown?.(ptr({ x: 20, y: -10 }), ctx);
-    select.onPointerUp?.(ptr({ x: 20, y: -10 }), ctx);
+    const handleAt = (layer: ImageLayer): Pt =>
+      rotateHandleScreenPos(
+        { x: layer.x, y: layer.y, width: layer.width, height: layer.height },
+        layer.rotation ?? 0,
+        CAMERA,
+      );
 
-    expect(ctx.selectedIds).toEqual([]);
-    expect(getHistory().past).toHaveLength(0);
+    select.onPointerDown?.(ptr(handleAt(image)), ctx);
+    select.onPointerMove?.(ptr({ x: 30, y: -5 }), ctx);
+    select.onPointerMove?.(ptr({ x: 45, y: 15 }), ctx);
+    select.onPointerUp?.(ptr({ x: 45, y: 15 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(1);
+    expect(getHistory().past).toHaveLength(1);
+    expect((layerById('i1') as ImageLayer).rotation).toBe(90);
+
+    ctx.undo();
+    expect((layerById('i1') as ImageLayer).rotation).toBeUndefined();
   });
 });
 
@@ -840,6 +863,30 @@ describe('select tool — rotated-shape resize (#51, math from #48)', () => {
 
     ctx.undo();
     expect(layerById('s1')).toMatchObject({ x: 10, y: 10, width: 20, height: 10 });
+  });
+
+  // #147: images resize through the same resizeRotatedRect path as shapes —
+  // identical geometry to the shape test above, applied to an image.
+  it('resizes a 90°-rotated image from its ROTATED se handle, one undo entry', () => {
+    const image: ImageLayer = { ...imageAt('i1', 10, 10), rotation: 90 };
+    const { ctx, getHistory, getBeginGestureCalls, layerById } = makeHarness({
+      panelHp: 12,
+      guides: [],
+      layers: [image],
+    });
+    ctx.select('i1');
+
+    select.onPointerDown?.(ptr({ x: 15, y: 25 }), ctx);
+    select.onPointerMove?.(ptr({ x: 15, y: 30 }), ctx);
+    select.onPointerUp?.(ptr({ x: 15, y: 30 }), ctx);
+
+    expect(getBeginGestureCalls()).toBe(1);
+    expect(getHistory().past).toHaveLength(1);
+    const resized = layerById('i1') as ImageLayer;
+    expect(resized).toMatchObject({ x: 7.5, y: 12.5, width: 25, height: 10, rotation: 90 });
+
+    ctx.undo();
+    expect(layerById('i1')).toMatchObject({ x: 10, y: 10, width: 20, height: 10 });
   });
 });
 

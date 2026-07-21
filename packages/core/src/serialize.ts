@@ -251,7 +251,8 @@ function parseLayer(value: unknown, panel: PanelDimsMm): Layer | null {
         width: num(value.width, 0),
         height: num(value.height, 0),
       };
-      return layer;
+      const rotation = optionalNum(value.rotation);
+      return rotation === undefined ? layer : { ...layer, rotation };
     }
     default:
       // Unrecognized layer `type` — drop it rather than guess its shape.

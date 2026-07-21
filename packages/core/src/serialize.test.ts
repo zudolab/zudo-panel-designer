@@ -90,6 +90,7 @@ function fullFixtureDoc(): DocState {
         y: 0,
         width: 20,
         height: 15,
+        rotation: 15,
       },
     ],
     guides: [
@@ -583,6 +584,35 @@ describe('parsePanelConfig — never throws on bad input', () => {
     });
     expect(typeof doc.layers[0].id).toBe('string');
     expect(doc.layers[0].id.length).toBeGreaterThan(0);
+  });
+
+  // Image rotation (#147) is defended exactly like shape/text rotation: a
+  // finite value survives, anything else (non-finite, wrong type, absent) is
+  // dropped rather than defaulted to 0, same as the shape/text fields.
+  it('parses a finite image rotation', () => {
+    const doc = parsePanelConfig({
+      layers: [
+        { type: 'image', src: 'data:,', x: 0, y: 0, width: 10, height: 10, rotation: 33 },
+      ],
+    });
+    expect(doc.layers[0]).toMatchObject({ rotation: 33 });
+  });
+
+  it.each([NaN, Infinity, -Infinity, 'left', null, {}])(
+    'drops a non-finite/non-numeric image rotation (%s) rather than default it to 0',
+    (rotation) => {
+      const doc = parsePanelConfig({
+        layers: [{ type: 'image', src: 'data:,', x: 0, y: 0, width: 10, height: 10, rotation }],
+      });
+      expect(doc.layers[0]).not.toHaveProperty('rotation');
+    },
+  );
+
+  it('an image with no rotation field parses without one (undefined, not 0)', () => {
+    const doc = parsePanelConfig({
+      layers: [{ type: 'image', src: 'data:,', x: 0, y: 0, width: 10, height: 10 }],
+    });
+    expect(doc.layers[0]).not.toHaveProperty('rotation');
   });
 
   it('drops non-numeric entries from pattern params instead of throwing', () => {

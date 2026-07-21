@@ -22,6 +22,9 @@ function ImageInspector({ layer, onChange, ctx }: InspectorProps<ImageLayer>) {
       <Field label="height (mm)">
         <NumberField value={layer.height} onCommit={(v) => onChange({ height: v })} />
       </Field>
+      <Field label="rotation (°)">
+        <NumberField step={1} value={layer.rotation ?? 0} onCommit={(v) => onChange({ rotation: v })} />
+      </Field>
       <ActionButton
         disabled={!traceAvailable}
         title={traceAvailable ? 'Convert to vector' : 'Image tracing coming in a later wave'}

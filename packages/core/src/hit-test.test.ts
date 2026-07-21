@@ -62,10 +62,30 @@ describe('hitTestLayer — rotated rect', () => {
 });
 
 describe('hitTestLayer — image', () => {
-  it('behaves as an axis-aligned rect test (rotation ignored, per ImageLayerLike having none)', () => {
+  it('behaves as an axis-aligned rect test when unrotated', () => {
     const image: ImageLayerLike = { type: 'image', x: 0, y: 0, width: 10, height: 10 };
     expect(hitTestLayer(image, 5, 5)).toBe(true);
     expect(hitTestLayer(image, 20, 20)).toBe(false);
+  });
+
+  // #147: images gained a `rotation` field, and the generic inverse-rotate
+  // path (pointInRotatedRect) already reads it via ImageLayerLike's shared
+  // RectLayerLike shape — same known-corner-geometry proof as the shape case
+  // above, applied to an image.
+  describe('rotated image', () => {
+    // 20x10 image, center (10,5). Rotating 90deg swaps which axis is "long".
+    const image: ImageLayerLike = { type: 'image', x: 0, y: 0, width: 20, height: 10, rotation: 90 };
+    const unrotated: ImageLayerLike = { ...image, rotation: undefined };
+
+    it('hits a point that is only inside once rotation is applied', () => {
+      expect(hitTestLayer(unrotated, 10, 13)).toBe(false); // outside the unrotated 20x10 rect
+      expect(hitTestLayer(image, 10, 13)).toBe(true); // inside once rotated 90deg about center
+    });
+
+    it('excludes a point that was inside before rotation but rotates out of the image', () => {
+      expect(hitTestLayer(unrotated, 18, 5)).toBe(true); // inside the unrotated rect
+      expect(hitTestLayer(image, 18, 5)).toBe(false); // rotated out
+    });
   });
 });
 
