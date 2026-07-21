@@ -22,8 +22,7 @@ export interface BuildPathLayersOptions {
 }
 
 export type BuildPathLayersResult =
-  | { ok: true; layers: PathLayer[] }
-  | { ok: false; fatal: SvgImportDiagnostic };
+  { ok: true; layers: PathLayer[] } | { ok: false; fatal: SvgImportDiagnostic };
 
 function fatal(code: string, message: string): BuildPathLayersResult {
   return { ok: false, fatal: { level: 'fatal', code, message } };
@@ -61,6 +60,22 @@ function projectPoint(
   };
 }
 
+function isFinitePoint(p: { x: number; y: number }): boolean {
+  return Number.isFinite(p.x) && Number.isFinite(p.y);
+}
+
+function isFinitePathPoint(p: PathPoint): boolean {
+  return isFinitePoint(p) && (!p.hin || isFinitePoint(p.hin)) && (!p.hout || isFinitePoint(p.hout));
+}
+
+function isFiniteLayer(layer: PathLayer): boolean {
+  return (
+    Number.isFinite(layer.strokeWidth) &&
+    layer.points.every(isFinitePathPoint) &&
+    (layer.extraSubpaths ?? []).every((subpath) => subpath.every(isFinitePathPoint))
+  );
+}
+
 function projectPathPoint(
   p: PathPoint,
   viewport: SvgViewport,
@@ -90,7 +105,7 @@ export function buildPathLayers(
   if (colorMappingsMismatch(analysis.sourceColors, opts.colorMappings)) {
     return fatal(
       'color-mapping-mismatch',
-      'colorMappings must cover exactly the SVG\'s source colors.',
+      "colorMappings must cover exactly the SVG's source colors.",
     );
   }
 
@@ -104,6 +119,17 @@ export function buildPathLayers(
     (0.8 * opts.panelWidthMm) / viewport.width,
     (0.5 * opts.panelHeightMm) / viewport.height,
   );
+  // A viewBox can pass the parser's `width > 0 && isFinite` gate and still be
+  // denormal (viewBox="0 0 1e-320 1e-320"), which overflows this ratio to
+  // Infinity and projects every coordinate to NaN. Refused here: committing
+  // non-finite coordinates would put the document into a state nothing
+  // downstream (bbox, hit-test, serialization) can recover from.
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return fatal(
+      'non-finite-geometry',
+      'SVG viewport produces an unusable import scale (degenerate viewBox).',
+    );
+  }
   const originX = snapToGrid(0.1 * opts.panelWidthMm);
   const originY = snapToGrid(0.15 * opts.panelHeightMm);
 
@@ -155,6 +181,16 @@ export function buildPathLayers(
     return fatal(
       'too-many-layers',
       `SVG produces ${layers.length} layers, exceeding the ${MAX_LAYERS} import limit.`,
+    );
+  }
+
+  // A sane scale is not enough: extreme-but-finite source coordinates (an
+  // overflowing transform composition, a huge stroke-width) still overflow to
+  // Infinity/NaN once projected. Same refusal as the degenerate scale above.
+  if (!layers.every(isFiniteLayer)) {
+    return fatal(
+      'non-finite-geometry',
+      'SVG projects to non-finite coordinates and cannot be imported.',
     );
   }
 

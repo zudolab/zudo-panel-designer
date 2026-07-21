@@ -120,6 +120,52 @@ describe('buildPathLayers -- refusals', () => {
     if (!result.ok) expect(result.fatal.code).toBe('too-many-layers');
   });
 
+  // parse-svg-document only requires viewBox width/height to be finite and
+  // positive, which a denormal like 1e-320 satisfies -- the fit scale then
+  // overflows to Infinity and every projected coordinate becomes NaN.
+  it('refuses a denormal viewport whose fit scale overflows, instead of projecting NaN', () => {
+    const result = buildPathLayers(
+      analysis({
+        shapes: [closedShape('a', null)],
+        viewport: { minX: 0, minY: 0, width: 1e-320, height: 1e-320 },
+      }),
+      baseOpts(),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.fatal.code).toBe('non-finite-geometry');
+  });
+
+  // A finite scale is not sufficient: here it is ~4.8e301, and projecting a
+  // 1e10 source coordinate (reachable via an overflowing transform
+  // composition) through it still overflows to Infinity.
+  it('refuses geometry that projects to non-finite coordinates', () => {
+    const extreme: IrShape = {
+      name: 'extreme',
+      fillHex: null,
+      strokeHex: null,
+      strokeWidth: 0,
+      contours: [
+        {
+          closed: true,
+          points: [
+            { x: 0, y: 0, hout: { x: 1e10, y: 0 } },
+            { x: 1e10, y: 1e10 },
+            { x: 0, y: 1e10 },
+          ],
+        },
+      ],
+    };
+    const result = buildPathLayers(
+      analysis({
+        shapes: [extreme],
+        viewport: { minX: 0, minY: 0, width: 1e-300, height: 1e-300 },
+      }),
+      baseOpts(),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.fatal.code).toBe('non-finite-geometry');
+  });
+
   it('accepts exactly 300 layers', () => {
     const shapes: IrShape[] = Array.from({ length: 300 }, (_, i) => closedShape(`s${i}`, null));
     const result = buildPathLayers(analysis({ shapes }), baseOpts());
@@ -315,8 +361,22 @@ describe('buildPathLayers -- compound closed shapes', () => {
       strokeHex: null,
       strokeWidth: 0,
       contours: [
-        { closed: true, points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }] },
-        { closed: true, points: [{ x: 2, y: 2 }, { x: 4, y: 2 }, { x: 4, y: 4 }] },
+        {
+          closed: true,
+          points: [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+            { x: 10, y: 10 },
+          ],
+        },
+        {
+          closed: true,
+          points: [
+            { x: 2, y: 2 },
+            { x: 4, y: 2 },
+            { x: 4, y: 4 },
+          ],
+        },
       ],
     };
     const result = buildPathLayers(
@@ -341,8 +401,20 @@ describe('buildPathLayers -- open-stroke contour fan-out', () => {
       strokeHex: '#333333',
       strokeWidth: 1,
       contours: [
-        { closed: false, points: [{ x: 0, y: 0 }, { x: 10, y: 0 }] },
-        { closed: false, points: [{ x: 20, y: 0 }, { x: 30, y: 0 }] },
+        {
+          closed: false,
+          points: [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+          ],
+        },
+        {
+          closed: false,
+          points: [
+            { x: 20, y: 0 },
+            { x: 30, y: 0 },
+          ],
+        },
       ],
     };
     const result = buildPathLayers(
@@ -367,8 +439,7 @@ describe('buildPathLayers -- open-stroke contour fan-out', () => {
 describe('buildPathLayers -- injected id purity/determinism', () => {
   it('produces identical output (including ids) for identical inputs given fresh matching factories', () => {
     const shapes = [closedShape('a', '#111111'), closedShape('b', null)];
-    const opts = (): BuildPathLayersOptions =>
-      baseOpts({ colorMappings: { '#111111': RED } });
+    const opts = (): BuildPathLayersOptions => baseOpts({ colorMappings: { '#111111': RED } });
     const a = analysis({ shapes, sourceColors: ['#111111'] });
     const result1 = buildPathLayers(a, opts());
     const result2 = buildPathLayers(a, opts());
@@ -392,7 +463,15 @@ describe('buildPathLayers -- serialize round trip', () => {
         fillHex: null,
         strokeHex: '#222222',
         strokeWidth: 1,
-        contours: [{ closed: false, points: [{ x: 0, y: 0 }, { x: 5, y: 5 }] }],
+        contours: [
+          {
+            closed: false,
+            points: [
+              { x: 0, y: 0 },
+              { x: 5, y: 5 },
+            ],
+          },
+        ],
       },
     ];
     const result = buildPathLayers(
