@@ -308,19 +308,26 @@ describe('multi-rotate eligibility (#152 shared gate)', () => {
     expect(leafById('g2')).toMatchObject({ x: 60, y: 0 });
   });
 
-  it('pivot and bounds exclude patterns: the knob rides the full combined bbox, the pivot does not', () => {
-    // Pattern square (0,0)-(100,100) dwarfs the 10×10 shape. The knob sits
-    // above the FULL chrome bbox; the gesture pivot is the SHAPE's center.
+  it('knob, pivot and bounds ALL exclude patterns: one bounds pair, no displacement', () => {
+    // Pattern square (0,0)-(100,100) dwarfs the 10×10 shape. Knob, grab,
+    // pivot and frozen bounds all derive from the ROTATABLE leaf only, so
+    // the knob sits above the shape (not the pattern union) and never jumps
+    // off the pointer's ray mid-gesture.
     const layers = [patternAt('g', 0, 0, 100), rectAt('a', 10, 10)];
-    const { ctx, leafById } = makeHarness(doc(layers));
+    const { ctx, leafById, getHistory } = makeHarness(doc(layers));
     ctx.selectIds(['g', 'a']);
 
-    const knob = { x: 50, y: -20 }; // above the (0,0)-(100,100) union
+    // Where the full-union knob WOULD be — must NOT grab (no knob there).
+    select.onPointerDown?.(ptr({ x: 50, y: -20 }), ctx);
+    select.onPointerUp?.(ptr({ x: 50, y: -20 }), ctx);
+    expect(getHistory().past).toHaveLength(0);
+
+    ctx.selectIds(['g', 'a']); // the miss above cleared the selection
+    const knob = { x: 15, y: -10 }; // above the shape-only bounds (10,10)-(20,20)
     select.onPointerDown?.(ptr(knob), ctx);
-    // start angle about the shape-only pivot (15,15): atan2(-35,35) = -45°;
-    // move to +45° → delta +90.
-    select.onPointerMove?.(ptr({ x: 50, y: 50 }), ctx);
-    select.onPointerUp?.(ptr({ x: 50, y: 50 }), ctx);
+    // start angle about the shape pivot (15,15): -90°; due east → delta +90.
+    select.onPointerMove?.(ptr({ x: 40, y: 15 }), ctx);
+    select.onPointerUp?.(ptr({ x: 40, y: 15 }), ctx);
 
     // The shape's center IS the pivot (sole rotatable member), so it rotates
     // in place — its origin must not be displaced toward the pattern's bbox.
@@ -353,9 +360,7 @@ describe('multi-rotate eligibility (#152 shared gate)', () => {
   });
 
   it('a ONE-CHILD group still gets the rotate gesture (combined mode, single leaf)', () => {
-    const { ctx, leafById, getHistory } = makeHarness(
-      doc([group('G', [rectAt('a', 10, 10)])]),
-    );
+    const { ctx, leafById, getHistory } = makeHarness(doc([group('G', [rectAt('a', 10, 10)])]));
     ctx.selectIds(['G']);
 
     // Knob above a's bbox (10,10)-(20,20): (15, -10); pivot (15,15).
@@ -375,9 +380,14 @@ describe('multi-rotate eligibility (#152 shared gate)', () => {
     // a rotate even though the multi-resize gate is also armed.
     const { ctx, leafById } = makeHarness(doc(twoShapes()));
     ctx.selectIds(['a', 'b']);
-    expect(multiRotateKnobScreenPos({ x: 10, y: 10, width: 30, height: 10 }, { x: 25, y: 15 }, 0, CAMERA)).toEqual(
-      KNOB,
-    );
+    expect(
+      multiRotateKnobScreenPos(
+        { x: 10, y: 10, width: 30, height: 10 },
+        { x: 25, y: 15 },
+        0,
+        CAMERA,
+      ),
+    ).toEqual(KNOB);
     select.onPointerDown?.(ptr(KNOB), ctx);
     select.onPointerMove?.(ptr({ x: 65, y: 15 }), ctx);
     select.onPointerUp?.(ptr({ x: 65, y: 15 }), ctx);

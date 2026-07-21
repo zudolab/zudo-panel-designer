@@ -97,6 +97,22 @@ describe('captureMultiRotateSession (#152 frozen capture)', () => {
     expect(captureMultiRotateSession(tree, ['g1', 'g2'], flattenLayerNodes(tree))).toBeNull();
   });
 
+  it('excludes an unbakeable EMPTY path — null when nothing bakeable remains', () => {
+    // Mirrors the multiRotateBbox gate: what draws no knob captures no
+    // session, so a grab can never open a phantom (no-op) undo entry.
+    const emptyPath: PathLayer = { ...path('p0'), points: [] };
+    const tree: LayerNode[] = [emptyPath, pattern('g')];
+    expect(captureMultiRotateSession(tree, ['p0', 'g'], flattenLayerNodes(tree))).toBeNull();
+    const withShape: LayerNode[] = [{ ...path('p0'), points: [] }, shape('a', 10, 10)];
+    const session = captureMultiRotateSession(
+      withShape,
+      ['p0', 'a'],
+      flattenLayerNodes(withShape),
+    )!;
+    expect(session.leafIds).toEqual(['a']);
+    expect(session.bounds).toEqual({ x: 10, y: 10, width: 10, height: 10 });
+  });
+
   it('expands a group id to its rotatable descendant leaves', () => {
     const tree: LayerNode[] = [group('G', [shape('a', 10, 10), shape('b', 30, 10)])];
     const session = captureMultiRotateSession(tree, ['G'], flattenLayerNodes(tree))!;
@@ -134,16 +150,14 @@ describe('bakeMultiRotate (#152 re-bake-from-start)', () => {
     expect(live).toEqual(bakeMultiRotate(tree, session, 30));
   });
 
-  it('delta 0 restores the exact start geometry (a drag back to zero reverts fully)', () => {
-    const session = capture();
-    const forward = bakeMultiRotate(tree, session, 137.2);
-    const back = flattenLayerNodes(bakeMultiRotate(forward, session, 0));
-    const start = flattenLayerNodes(tree);
-    for (let i = 0; i < start.length; i += 1) {
-      expect(back[i]).toMatchObject({ id: start[i].id });
-      expect((back[i] as ShapeLayer).x).toBeCloseTo((start[i] as ShapeLayer).x);
-      expect((back[i] as ShapeLayer).y).toBeCloseTo((start[i] as ShapeLayer).y);
-    }
+  it('delta 0 restores the EXACT captured snapshots — no rotation normalization residue', () => {
+    // The core bake at delta 0 would still fold `rotation: undefined` into 0
+    // and round an inspector-entered 33.34 to 33.3 — an out-and-back drag
+    // must instead land on the byte-exact start document.
+    const t: LayerNode[] = [shape('a', 10, 10), shape('b', 30, 10, { rotation: 33.34 })];
+    const session = captureMultiRotateSession(t, ['a', 'b'], flattenLayerNodes(t))!;
+    const forward = bakeMultiRotate(t, session, 137.2);
+    expect(bakeMultiRotate(forward, session, 0)).toEqual(t);
   });
 
   it('bakes a path by rotating its point geometry (no rotation field invented)', () => {
@@ -165,8 +179,16 @@ describe('bakeMultiRotate (#152 re-bake-from-start)', () => {
   it('a lone group id bakes identically to the equivalent flat multi-selection', () => {
     const flatTree: LayerNode[] = [shape('a', 10, 10), shape('b', 30, 10)];
     const groupedTree: LayerNode[] = [group('G', [shape('a', 10, 10), shape('b', 30, 10)])];
-    const flatSession = captureMultiRotateSession(flatTree, ['a', 'b'], flattenLayerNodes(flatTree))!;
-    const groupSession = captureMultiRotateSession(groupedTree, ['G'], flattenLayerNodes(groupedTree))!;
+    const flatSession = captureMultiRotateSession(
+      flatTree,
+      ['a', 'b'],
+      flattenLayerNodes(flatTree),
+    )!;
+    const groupSession = captureMultiRotateSession(
+      groupedTree,
+      ['G'],
+      flattenLayerNodes(groupedTree),
+    )!;
     expect(flattenLayerNodes(bakeMultiRotate(groupedTree, groupSession, 67.5))).toEqual(
       flattenLayerNodes(bakeMultiRotate(flatTree, flatSession, 67.5)),
     );

@@ -242,12 +242,31 @@ export function multiResizeBbox(
   return scalable ? mergeBboxes(boxes) : null;
 }
 
-// The combined bbox that offers the multi/group ROTATE knob, or null when the
+// Whether the rotate BAKE can change this layer at all (#152): patterns pass
+// through rotateLayersAboutPivot unchanged (core rotate.ts, the multi-scale
+// precedent), and a path with no points anywhere has no geometry to rotate —
+// same reasoning as layerCanScale above, kept separate because the two gates
+// answer different gestures and must stay free to diverge.
+export function layerCanRotateBake(layer: Layer): boolean {
+  if (!rotatableLayer(layer)) return false;
+  if (layer.type === 'path') {
+    return layer.points.length > 0 || (layer.extraSubpaths?.some((s) => s.length > 0) ?? false);
+  }
+  return true;
+}
+
+// The bounds that offer the multi/group ROTATE knob, or null when the
 // selection doesn't qualify (#152). Extends the multiResizeBbox shared-gate
 // pattern: this ONE function gates BOTH the chrome pass and the select tool's
-// knob grab, so what is drawn is exactly what is grabbable. Qualification:
-// ≥1 visible selection bbox AND ≥1 visible ROTATABLE leaf (core rotate.ts —
-// paths bake via point geometry, patterns are excluded like multi-scale).
+// knob grab, so what is drawn is exactly what is grabbable. The union spans
+// the ROTATABLE, bakeable, MEASURABLE leaves only — the same set
+// captureMultiRotateSession freezes — so the idle knob, the grab hit-test,
+// the gesture pivot and the mid-gesture chrome all share ONE bounds/pivot
+// pair. A knob anchored to the full selection union instead would (a) jump
+// to the frozen rotatable-only bounds on the first tick and stop tracking
+// the pointer's ray whenever a selected pattern displaces the union, and
+// (b) promise a gesture that grabs a null session when the only rotatable
+// member is unmeasurable (invalid-size text) or unbakeable (empty path).
 // Unlike multiResizeBbox there is deliberately NO ≥2-boxes requirement: a
 // one-child group is combined overlay mode with a single leaf and still
 // rotates (the caller supplies the combined-mode precondition — the chrome's
@@ -256,12 +275,15 @@ export function multiRotateBbox(
   layers: readonly Layer[],
   selectedIds: readonly string[],
 ): Rect | null {
-  const boxes = selectionBboxes(layers, selectedIds);
-  if (boxes.length === 0) return null;
-  const rotatable = layers.some(
-    (l) => selectedIds.includes(l.id) && !l.hidden && rotatableLayer(l),
-  );
-  return rotatable ? mergeBboxes(boxes) : null;
+  reconcileTextGeometry(layers);
+  const boxes: Rect[] = [];
+  for (const layer of layers) {
+    if (!selectedIds.includes(layer.id) || layer.hidden || !layerCanRotateBake(layer)) continue;
+    const raw = layerBbox(layer);
+    if (!raw) continue;
+    boxes.push(normalizeRect(rotatedRectAABB(raw, layerRotation(layer))));
+  }
+  return boxes.length > 0 ? mergeBboxes(boxes) : null;
 }
 
 // The rotate handle floats a fixed SCREEN distance beyond the top-edge

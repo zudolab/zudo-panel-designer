@@ -248,7 +248,16 @@ describe('canRotate (#51 eligibility, image joined in #147)', () => {
 });
 
 describe('layerRotation — image (#147)', () => {
-  const image: ImageLayer = { id: 'i', name: 'i', type: 'image', src: 'data:,', x: 0, y: 0, width: 10, height: 10 };
+  const image: ImageLayer = {
+    id: 'i',
+    name: 'i',
+    type: 'image',
+    src: 'data:,',
+    x: 0,
+    y: 0,
+    width: 10,
+    height: 10,
+  };
 
   it('reads the rotation field when set', () => {
     expect(layerRotation({ ...image, rotation: 45 })).toBe(45);
@@ -340,11 +349,28 @@ describe('multiRotateBbox (#152 eligibility gate)', () => {
     expect(multiRotateBbox(layers, ['g1', 'g2'])).toBeNull();
   });
 
-  it('a pattern plus a shape qualifies, and the PATTERN still joins the knob bbox union', () => {
-    // The knob rides the full combined chrome bbox; only the gesture's
-    // pivot/bounds (captureMultiRotateSession) exclude the pattern.
+  it('a pattern plus a shape qualifies, and the union spans the ROTATABLE leaf only', () => {
+    // ONE bounds/pivot pair for knob, grab, gesture pivot and mid-gesture
+    // chrome: the pattern must not displace it (it would make the knob jump
+    // off the pointer's ray on the first tick).
     const layers: Layer[] = [pattern('g1'), shape('a', 10, 10)];
-    expect(multiRotateBbox(layers, ['g1', 'a'])).toEqual({ x: 0, y: 0, width: 50, height: 50 });
+    expect(multiRotateBbox(layers, ['g1', 'a'])).toEqual({ x: 10, y: 10, width: 10, height: 10 });
+  });
+
+  it('is null for a pattern plus an EMPTY path — the bake cannot change either', () => {
+    // Same phantom-gesture guard as multiResizeBbox: a knob here would open
+    // an undo entry that changes nothing.
+    const emptyPath: Layer = {
+      id: 'p0',
+      name: 'p0',
+      type: 'path',
+      points: [],
+      closed: false,
+      fill: null,
+      stroke: 1,
+      strokeWidth: 1,
+    };
+    expect(multiRotateBbox([pattern('g1'), emptyPath], ['g1', 'p0'])).toBeNull();
   });
 
   it('is null when the only rotatable member is hidden', () => {

@@ -25,12 +25,14 @@ import {
   type Pt,
   type Rect,
 } from '@zpd/core';
-import { layerBbox, layerRotation } from './renderer';
+import { layerBbox, layerCanRotateBake, layerRotation } from './renderer';
 import { resolveSelectionLeaves } from './selection-resolve';
 
 export interface MultiRotateSession {
-  // Rotatable editable leaf ids (#151's rotatableLeafIds) — patterns and
-  // hidden leaves are already excluded.
+  // Rotatable editable leaf ids (#151's rotatableLeafIds, further filtered to
+  // bakeable + measurable leaves — the multiRotateBbox eligibility, so the
+  // session freezes exactly the set the knob promised). Patterns and hidden
+  // leaves are already excluded.
   leafIds: string[];
   // Each leaf as it was at capture — every bake starts from these.
   startSnapshots: Layer[];
@@ -56,27 +58,27 @@ export function captureMultiRotateSession(
   const { rotatableLeafIds } = resolveSelectionLeaves(tree, selectedIds, flatLayers);
   if (rotatableLeafIds.length === 0) return null;
   const wanted = new Set(rotatableLeafIds);
-  const startSnapshots = flatLayers.filter((l) => wanted.has(l.id));
+  const leafIds: string[] = [];
+  const startSnapshots: Layer[] = [];
   const centersById: Record<string, Pt> = {};
   const boxes: Rect[] = [];
-  for (const layer of startSnapshots) {
+  for (const layer of flatLayers) {
+    // The SAME eligibility as multiRotateBbox (the knob's shared draw/grab
+    // gate): rotatable AND bakeable AND measurable. A leaf the bake cannot
+    // change (empty path) or measure (invalid-size text) must not join the
+    // session — it would open phantom undo entries or displace the frozen
+    // bounds the chrome promised.
+    if (!wanted.has(layer.id) || !layerCanRotateBake(layer)) continue;
     const raw = layerBbox(layer);
-    // A rotatable leaf without measurable bounds (e.g. text with an invalid
-    // size) stays in the set but gets no center — core's batch bake leaves a
-    // center-less layer unchanged rather than guessing.
     if (!raw) continue;
+    leafIds.push(layer.id);
+    startSnapshots.push(layer);
     centersById[layer.id] = rectCenter(raw);
     boxes.push(normalizeRect(rotatedRectAABB(raw, layerRotation(layer))));
   }
-  if (boxes.length === 0) return null;
+  if (leafIds.length === 0) return null;
   const bounds = mergeBboxes(boxes);
-  return {
-    leafIds: rotatableLeafIds,
-    startSnapshots,
-    centersById,
-    bounds,
-    pivot: rectCenter(bounds),
-  };
+  return { leafIds, startSnapshots, centersById, bounds, pivot: rectCenter(bounds) };
 }
 
 // Re-bakes the WHOLE delta onto the frozen start snapshots and lands the
@@ -90,12 +92,19 @@ export function bakeMultiRotate(
   session: MultiRotateSession,
   deltaDeg: number,
 ): LayerNode[] {
-  const rotated = rotateLayersAboutPivot(
-    [...session.startSnapshots],
-    session.centersById,
-    session.pivot,
-    deltaDeg,
-  );
+  // Delta 0 restores the EXACT captured snapshots: running the core bake at 0
+  // would still normalize each rotation (undefined → 0, an inspector-entered
+  // 33.34 → 33.3), so an out-and-back drag would not land on the byte-exact
+  // start document.
+  const rotated =
+    deltaDeg === 0
+      ? session.startSnapshots
+      : rotateLayersAboutPivot(
+          [...session.startSnapshots],
+          session.centersById,
+          session.pivot,
+          deltaDeg,
+        );
   const byId = new Map(rotated.map((l) => [l.id, l]));
   return mapLeavesById(tree, session.leafIds, (l) => byId.get(l.id) ?? l);
 }
