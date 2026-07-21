@@ -110,6 +110,24 @@ describe('extractShapes -- style cascade', () => {
       'unsupported-color',
     );
   });
+
+  it('keeps the inherited color when a descendant sets color="currentColor"', () => {
+    const shape = onlyShape(
+      `<g color="red"><g color="currentColor"><path d="${TRIANGLE_CLOSED}" fill="currentColor"/></g></g>`,
+    );
+    expect(shape.fillHex).toBe('#ff0000');
+  });
+
+  it('reads a style declaration that follows a CSS comment', () => {
+    const shape = onlyShape(`<path d="${TRIANGLE_CLOSED}" style="/* brand */ fill:#ff0000"/>`);
+    expect(shape.fillHex).toBe('#ff0000');
+  });
+
+  it('skips a display:none root <svg>', () => {
+    const result = analyze(`<path d="${TRIANGLE_CLOSED}"/>`, 'viewBox="0 0 10 10" display="none"');
+    expect(result.shapes).toEqual([]);
+    expect(codes(result)).toContain('hidden-content-skipped');
+  });
 });
 
 describe('extractShapes -- source colors', () => {
@@ -120,6 +138,13 @@ describe('extractShapes -- source colors', () => {
         `<path d="${TRIANGLE_CLOSED}" fill="#0000ff"/>`,
     );
     expect(result.sourceColors).toEqual(['#ff0000', '#00ff00', '#0000ff']);
+  });
+
+  it('does not register a color whose stroke is dropped for zero width', () => {
+    const result = analyze(
+      `<path d="${TRIANGLE_CLOSED}" fill="#ff0000" stroke="#00ff00" stroke-width="0"/>`,
+    );
+    expect(result.sourceColors).toEqual(['#ff0000']);
   });
 
   it('is fatal past the color quota', () => {
@@ -324,6 +349,20 @@ describe('extractShapes -- implicit fill closure', () => {
 
     const exact = onlyShape('<path d="M0 0 L10 0 L10 10 L0 0" transform="scale(4)"/>');
     expect(exact.contours[0].points).toHaveLength(3);
+  });
+
+  it('starts a new subpath when a drawing command follows Z', () => {
+    // per SVG, the L after Z opens a new subpath at the closed subpath's
+    // start point -- it must not extend the closed triangle
+    const shape = onlyShape(`<path d="M0 0 L10 0 L10 10 Z L0 10" fill="none" stroke="black"/>`);
+    expect(shape.contours).toHaveLength(2);
+    expect(shape.contours[0]).toMatchObject({ closed: true });
+    expect(shape.contours[0].points).toHaveLength(3);
+    expect(shape.contours[1].closed).toBe(false);
+    expect(shape.contours[1].points.map((p) => [p.x, p.y])).toEqual([
+      [0, 0],
+      [0, 10],
+    ]);
   });
 
   it('keeps the authored open contour for a stroke-only shape', () => {

@@ -194,12 +194,23 @@ function toContours(data: SVGPathData): Contour[] {
   }
   const contours: Contour[] = [];
   let current: Contour | null = null;
+  // Where a drawing command that follows a Z restarts from: per SVG, it opens
+  // a NEW subpath at the closed subpath's initial point rather than extending
+  // the closed one.
+  let restartAt: Pt | null = null;
   for (const cmd of normalized.commands) {
     if (cmd.type === SVGPathData.MOVE_TO) {
       assertFinite(cmd.x, cmd.y);
       current = { points: [{ x: cmd.x, y: cmd.y }], closed: false };
       contours.push(current);
-    } else if (!current) {
+      restartAt = null;
+    } else if (!current && restartAt && cmd.type !== SVGPathData.CLOSE_PATH) {
+      current = { points: [{ x: restartAt.x, y: restartAt.y }], closed: false };
+      contours.push(current);
+      restartAt = null;
+    }
+
+    if (!current || cmd.type === SVGPathData.MOVE_TO) {
       continue;
     } else if (cmd.type === SVGPathData.LINE_TO) {
       assertFinite(cmd.x, cmd.y);
@@ -211,6 +222,8 @@ function toContours(data: SVGPathData): Contour[] {
     } else if (cmd.type === SVGPathData.CLOSE_PATH) {
       current.closed = true;
       current.points = dedupeClosingPoint(current.points);
+      restartAt = { x: current.points[0].x, y: current.points[0].y };
+      current = null;
     }
   }
   return contours.filter((contour) => contour.points.length >= 2);
@@ -292,17 +305,23 @@ function shapeName(el: Element, state: ExtractState): string {
 }
 
 // A resolved, renderable paint: null once the paint is absent (`none`) or
-// disabled (alpha 0).
+// disabled (alpha 0). Reporting and sourceColors registration are deliberately
+// NOT done here -- a paint can still be dropped afterwards (stroke-width 0),
+// and a color no shape ends up using must not reach the palette-mapping UI.
 function paintHex(
-  state: ExtractState,
   value: string,
   style: StyleState,
   opacityValue: string,
   opacityProperty: string,
-): string | null {
+): { hex: string; partial: boolean } | null {
   const paint = resolvePaint(value, style, opacityValue, opacityProperty);
   if (!paint || paint.alpha === 0) return null;
-  if (paint.alpha < 1) {
+  return { hex: paint.hex, partial: paint.alpha < 1 };
+}
+
+// Called once a paint is known to reach an emitted shape.
+function commitPaint(state: ExtractState, paint: { hex: string; partial: boolean }): string {
+  if (paint.partial) {
     state.sink.warn(
       'opacity-ignored',
       'Partially transparent paint was imported as its fully opaque color.',
@@ -367,20 +386,18 @@ function emitShape(el: Element, style: StyleState, matrix: Matrix, state: Extrac
 
   // SVG rule: <line> has no interior, so it is never filled regardless of the
   // cascaded fill.
-  let fillHex =
-    el.localName === 'line'
-      ? null
-      : paintHex(state, style.fill, style, style.fillOpacity, 'fill-opacity');
-  let strokeHex = paintHex(state, style.stroke, style, style.strokeOpacity, 'stroke-opacity');
+  let fill =
+    el.localName === 'line' ? null : paintHex(style.fill, style, style.fillOpacity, 'fill-opacity');
+  let stroke = paintHex(style.stroke, style, style.strokeOpacity, 'stroke-opacity');
   // Only read when a stroke is actually painted: an unused stroke-width (a
   // leftover "0.5mm" on an unstroked shape) must not fail the whole import.
   let sourceStrokeWidth = 0;
-  if (strokeHex) {
+  if (stroke) {
     sourceStrokeWidth = parseLength(style.strokeWidth, `<${el.localName}> "stroke-width"`);
-    if (sourceStrokeWidth <= 0) strokeHex = null;
+    if (sourceStrokeWidth <= 0) stroke = null;
   }
 
-  if (!fillHex && !strokeHex) {
+  if (!fill && !stroke) {
     state.sink.warn(
       'unpainted-shape-skipped',
       `A <${el.localName}> with neither fill nor stroke was skipped.`,
@@ -389,7 +406,7 @@ function emitShape(el: Element, style: StyleState, matrix: Matrix, state: Extrac
   }
 
   let strokeWidth = 0;
-  if (strokeHex) {
+  if (stroke) {
     // zpd carries one scalar stroke width, so only a similarity transform can
     // be baked into a stroked shape -- under a nonuniform scale or a skew the
     // stroke would have to vary along the outline.
@@ -405,8 +422,19 @@ function emitShape(el: Element, style: StyleState, matrix: Matrix, state: Extrac
   }
 
   const strokeContours = toIrContours(contours, matrix);
-  const fillContours = fillHex ? toIrContours(contours.map(closeForFill), matrix) : [];
-  if (fillHex && fillContours.length === 0) fillHex = null;
+  const fillContours = fill ? toIrContours(contours.map(closeForFill), matrix) : [];
+  // Closing a contour can collapse it (its two points coincided), leaving
+  // nothing to fill.
+  if (fill && fillContours.length === 0) fill = null;
+  if (!fill && !stroke) {
+    state.sink.warn('empty-geometry-skipped', `An empty <${el.localName}> was skipped.`);
+    return;
+  }
+
+  // Registered only now that the paints are known to reach an emitted shape;
+  // fill before stroke keeps sourceColors in SVG paint order.
+  const fillHex = fill ? commitPaint(state, fill) : null;
+  const strokeHex = stroke ? commitPaint(state, stroke) : null;
 
   if (fillHex && fillContours.length > 1 && style.fillRule.trim().toLowerCase() !== 'evenodd') {
     // zpd renders paths evenodd. Holes still come out as holes (opposite
@@ -443,6 +471,13 @@ function walk(el: Element, parentStyle: StyleState, parentMatrix: Matrix, state:
   if (!CONTAINERS.has(el.localName) && !SHAPES.has(el.localName)) return;
 
   const style = resolveStyle(el, parentStyle, state.sink);
+  // The safety gate prunes display:none subtrees, but it cannot prune the root
+  // <svg> out of its own document -- detaching it leaves parsed.root pointing
+  // at the hidden tree, so the check has to be repeated here.
+  if (style.display.trim() === 'none') {
+    state.sink.warn('hidden-content-skipped', `Hidden <${el.localName}> subtree was skipped.`);
+    return;
+  }
   // v1 simplification: a hidden subtree is skipped outright, so a descendant
   // cannot re-show itself with visibility="visible".
   if (isHidden(style)) {

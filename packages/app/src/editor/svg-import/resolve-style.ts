@@ -6,6 +6,7 @@
 // -- guessing would silently change the imported artwork's colors).
 import { DiagnosticSink, throwFatal } from './diagnostics';
 import { NAMED_COLORS } from './named-colors';
+import { stripCssComments } from './parse-svg-document';
 
 // Raw (uncomputed) values: `currentColor` has to stay unresolved while it is
 // inherited, because CSS resolves it against the color of the element that
@@ -22,8 +23,11 @@ export interface StyleState {
   strokeLinecap: string;
   strokeLinejoin: string;
   strokeMiterlimit: string;
-  // Not an inherited property: `opacity` applies to a group as a whole, so it
-  // accumulates as a product down the tree instead of being overwritten.
+  // Not inherited: `display` applies to the element that sets it (its subtree
+  // then never renders because the subtree is skipped outright).
+  display: string;
+  // Not an inherited property either: `opacity` applies to a group as a whole,
+  // so it accumulates as a product down the tree instead of being overwritten.
   opacity: number;
 }
 
@@ -41,6 +45,7 @@ export const INITIAL_STYLE: StyleState = {
   strokeLinecap: 'butt',
   strokeLinejoin: 'miter',
   strokeMiterlimit: '4',
+  display: 'inline',
   opacity: 1,
 };
 
@@ -58,14 +63,11 @@ const INHERITED_PROPS: Readonly<Record<string, keyof StyleState>> = {
   'stroke-miterlimit': 'strokeMiterlimit',
 };
 
-// Recognized but not cascaded here: `display:none` subtrees were already
-// pruned by the safety gate (#138), so seeing `display` again is expected and
-// must not produce a "this declaration was ignored" warning.
-const HANDLED_ELSEWHERE = new Set(['display']);
-
 function parseDeclarations(style: string): [string, string][] {
   const declarations: [string, string][] = [];
-  for (const chunk of style.split(';')) {
+  // Comments have to go first, or "/* x */ fill:red" parses as a declaration
+  // for the property "/* x */ fill" and the paint is silently lost.
+  for (const chunk of stripCssComments(style).split(';')) {
     const colon = chunk.indexOf(':');
     if (colon < 0) continue;
     const prop = chunk.slice(0, colon).trim().toLowerCase();
@@ -101,24 +103,36 @@ export function resolveStyle(el: Element, parent: StyleState, sink: DiagnosticSi
   let ownOpacity = 1;
 
   const assign = (prop: string, value: string, fromStyle: boolean): void => {
-    if (value.trim().toLowerCase() === 'inherit') return;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'inherit') return;
     if (prop === 'opacity') {
       ownOpacity = parseOpacity(value, 'opacity');
       return;
     }
+    if (prop === 'display') {
+      state.display = normalized;
+      return;
+    }
+    // `currentColor` on the `color` property itself IS the inherited color,
+    // so keeping the parent's value is what resolves it -- storing the keyword
+    // would later fall back to black under an ancestor that set a real color.
+    if (prop === 'color' && normalized === 'currentcolor') return;
     const key = INHERITED_PROPS[prop];
     if (key) {
-      // Every StyleState key in INHERITED_PROPS is a string field; `opacity`,
-      // the only numeric one, is handled above.
+      // Every StyleState key in INHERITED_PROPS is a string field; the numeric
+      // and non-inherited ones are handled above.
       (state as unknown as Record<string, string>)[key] = value.trim();
       return;
     }
-    if (fromStyle && !HANDLED_ELSEWHERE.has(prop)) {
+    if (fromStyle) {
       sink.warn('style-ignored', `Style declaration "${prop}" is ignored.`);
     }
   };
 
-  for (const prop of [...Object.keys(INHERITED_PROPS), 'opacity']) {
+  // display is not inherited: it starts from its initial value on every
+  // element rather than from the parent's.
+  state.display = 'inline';
+  for (const prop of [...Object.keys(INHERITED_PROPS), 'opacity', 'display']) {
     const value = el.getAttribute(prop);
     if (value !== null) assign(prop, value, false);
   }

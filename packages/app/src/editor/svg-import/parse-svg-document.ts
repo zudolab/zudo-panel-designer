@@ -113,7 +113,7 @@ const STYLE_UNSUPPORTED_PROP = new RegExp(
 // A CSS comment before a declaration (e.g. style="/*n*/clip-path:...") would
 // otherwise slip past STYLE_UNSUPPORTED_PROP/URL_VALUE, which anchor on the
 // property name appearing right after ";" or the string start.
-function stripCssComments(css: string): string {
+export function stripCssComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
