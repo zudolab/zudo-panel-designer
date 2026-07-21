@@ -13,6 +13,7 @@ import {
 } from '@zpd/core';
 import { projectFlatLayers } from '../flat-projection';
 import { nextListSelection } from '../selection';
+import { toggleLeafSelection } from '../selection-resolve';
 import type { ToolContext } from '../types';
 
 const TYPE_ICON: Record<Layer['type'], string> = {
@@ -65,7 +66,17 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
       { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey },
     );
     anchorRef.current = next.anchorId;
-    ctx.selectIds(next.selectedIds);
+    // Meta list-toggle is the same raw-leaf escape hatch as a canvas
+    // Meta-click (#151): adding a leaf STRIPS its selected ancestor group so
+    // the [group, descendant] overlap never exists in selectedIds. Identical
+    // to nextListSelection's own meta result for a group-free selection.
+    // (Shift ranges and plain clicks REPLACE the selection with leaf rows, so
+    // they cannot create an overlap; the list's tree-aware rework is #153/#154.)
+    if (!e.shiftKey && (e.metaKey || e.ctrlKey)) {
+      ctx.selectIds(toggleLeafSelection(ctx.doc.layers, selectedIds, id));
+    } else {
+      ctx.selectIds(next.selectedIds);
+    }
   };
 
   const move = (id: string, dir: 1 | -1) => {

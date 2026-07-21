@@ -33,6 +33,11 @@ import { dispatchCommand, type CommandContext } from './commands';
 import { createDemoDoc } from './demo-doc';
 import { readDoc } from './doc-store';
 import { normalizeSelectedIds } from './selection';
+import {
+  expandSelectionToLeafIds,
+  resolveSelectionLeaves,
+  resolveSelectionOverlayMode,
+} from './selection-resolve';
 import { installTestBridge } from './test-bridge';
 import { isEditableTarget } from './is-editable-target';
 import { useAutosave } from './use-autosave';
@@ -98,9 +103,24 @@ export function Editor() {
     () => ({ widthMm: panelWidthMm(doc.panelHp), heightMm: PANEL_HEIGHT_MM }),
     [doc.panelHp],
   );
+  // Normalized against the TREE (#151): selectedIds may hold group ids, which
+  // a flat projection would wrongly drop as stale.
   const selectedIds = useMemo(
-    () => normalizeSelectedIds(rawSelectedIds, projectFlatLayers(doc.layers)),
+    () => normalizeSelectedIds(rawSelectedIds, doc.layers),
     [rawSelectedIds, doc.layers],
+  );
+  // The flat-leaf view of the selection for the chrome pass (#151): a selected
+  // group id draws per-leaf chrome on its descendants (renderScene consumes
+  // flat leaf ids only; the combined-bbox group chrome is #152's). The overlay
+  // mode rides along so a one-child group — which also expands to exactly one
+  // leaf id — never wears the single-layer handles the tool won't serve.
+  const chromeLeafIds = useMemo(
+    () => expandSelectionToLeafIds(doc.layers, selectedIds),
+    [doc.layers, selectedIds],
+  );
+  const overlayMode = useMemo(
+    () => resolveSelectionOverlayMode(doc.layers, selectedIds),
+    [doc.layers, selectedIds],
   );
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const selectedLayer = useMemo(
@@ -134,8 +154,7 @@ export function Editor() {
   // The normalized live view of the selection — what ctx and the test bridge
   // read. Single-selection views derive from it (non-null iff exactly one).
   const readSelectedIds = useCallback(
-    () =>
-      normalizeSelectedIds(rawSelectedIdsRef.current, projectFlatLayers(docRef.current.layers)),
+    () => normalizeSelectedIds(rawSelectedIdsRef.current, docRef.current.layers),
     [],
   );
   const readSelectedId = useCallback(() => {
@@ -373,7 +392,10 @@ export function Editor() {
     // the array identity stable per committed tree, so text geometry's
     // incarnation tracking sees one incarnation per commit, not per repaint.
     renderScene(canvas, { ...doc, layers: projectFlatLayers(doc.layers) }, panel, camera, {
-      selectedIds,
+      // Expanded to leaf ids (#151): the chrome pass matches flat leaves only,
+      // so a raw group id would draw no selection chrome at all.
+      selectedIds: chromeLeafIds,
+      singleSelection: overlayMode === 'single',
       images: imagesRef.current,
       showNodes: activeToolId === 'select' && selectedLayer?.type === 'path',
       showOutsidePanel,
@@ -414,17 +436,21 @@ export function Editor() {
       // which already moves paths by the raw delta.
       const ids = readSelectedIds();
       if (ids.length === 0) return;
+      // Group-aware expansion (#151): a selected group id nudges its EDITABLE
+      // descendant leaves (hidden — intrinsic or ancestor-folded — excluded),
+      // one shared delta for the whole selection like multi-move.
+      const tree = docRef.current.layers;
+      const { editableLeafIds } = resolveSelectionLeaves(tree, ids, projectFlatLayers(tree));
       // mapLeavesById nudges matching leaves at ANY depth and only leaves —
-      // group nodes never carry x/y (structure + hidden only, see types.ts),
-      // and a selected group id expanding to its members is #151's job.
-      const layers = mapLeavesById(docRef.current.layers, ids, (l) => {
+      // group nodes never carry x/y (structure + hidden only, see types.ts).
+      const layers = mapLeavesById(tree, editableLeafIds, (l) => {
         const patch =
           l.type === 'path' ? translatePathLayer(l, dx, dy) : { x: l.x + dx, y: l.y + dy };
         return { ...l, ...patch } as Layer;
       });
-      // Same tree reference back = no leaf matched (e.g. only group ids
-      // selected) — skip the commit so no phantom undo entry is pushed.
-      if (layers === docRef.current.layers) return;
+      // Same tree reference back = no editable leaf matched (e.g. a fully
+      // hidden selection) — skip the commit so no phantom undo entry is pushed.
+      if (layers === tree) return;
       commit({ ...docRef.current, layers });
     };
 

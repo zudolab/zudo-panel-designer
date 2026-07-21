@@ -5,16 +5,18 @@
 // path node editing all live here; a later wave refines this ONE file without
 // touching the registry.
 import {
-  duplicateLayersAbove,
-  flattenLayerNodes,
+  cloneNodeWithFreshIds,
+  findNodeById,
   hitTestLayer,
+  isGroupNode,
   mapLeavesById,
+  maximalSelectedRoots,
   mergeBboxes,
-  mintId,
   movePathAnchor,
   movePathHandle,
   rectCenter,
   rectsIntersect,
+  replaceNodeWithNodes,
   resizeRotatedRect,
   rotatedRectAABB,
   scaleLayer,
@@ -25,11 +27,21 @@ import {
   updateLeafById,
   type DocState,
   type Layer,
+  type LayerNode,
   type Pt,
   type Rect,
   type ResizeHandle,
   type SnapOptions,
 } from '@zpd/core';
+import {
+  expandSelectionToLeafIds,
+  promoteMarqueeSelection,
+  resolveSelectionLeaves,
+  selectionOwnerId,
+  toggleLeafSelection,
+  togglePromotedSelection,
+  topmostAncestorIdForLeaf,
+} from '../selection-resolve';
 import {
   canRotate,
   cornerHandleRects,
@@ -222,6 +234,9 @@ interface MarqueeState {
   // empty-space click just deselects and never flashes a marquee.
   active: boolean;
   additive: boolean; // shift/meta/ctrl held: union with the down-time selection
+  // Meta/Ctrl (vs Shift) at pointerdown — decides whether a clickSelectId
+  // release targets the raw leaf (meta escape hatch) or the promoted id (#151).
+  meta: boolean;
   baseIds: readonly string[];
   // A press on an UNSELECTED pattern square arms the marquee like empty space
   // (#97's drag rule), but when the gesture never materializes a marquee the
@@ -462,12 +477,35 @@ function groupFactorFloor(targets: readonly MoveTarget[], bbox: Rect): number {
   return Math.min(floor, 1);
 }
 
+// The flat MoveTarget list for a set of resolved leaf ids — `orig` snapshots
+// each leaf's pointerdown geometry from the flat projection.
+function moveTargetsFor(layers: readonly Layer[], leafIds: readonly string[]): MoveTarget[] {
+  const wanted = new Set(leafIds);
+  return layers.filter((l) => wanted.has(l.id)).map((l) => ({ id: l.id, orig: l }));
+}
+
+// Pairs each source leaf id with its clone's fresh id by walking the two
+// structurally-identical subtrees in parallel (cloneNodeWithFreshIds preserves
+// shape, so index i of one maps to index i of the other). Feeds the
+// Alt-duplicate re-target: the drag's flat targets swap to the clone leaves.
+function mapCloneLeafIds(source: LayerNode, clone: LayerNode, into: Map<string, string>): void {
+  if (isGroupNode(source) && isGroupNode(clone)) {
+    for (let i = 0; i < source.children.length; i += 1) {
+      mapCloneLeafIds(source.children[i], clone.children[i], into);
+    }
+  } else if (!isGroupNode(source)) {
+    into.set(source.id, clone.id);
+  }
+}
+
 // Multi-resize grab (#52): corner handles on the combined bbox start a uniform
 // group scale. multiResizeBbox (renderer.ts) is the shared eligibility gate,
-// so exactly the handles the chrome draws are grabbable here.
+// so exactly the handles the chrome draws are grabbable here. The gate and the
+// targets both use the selection's EXPANDED editable leaves (#151) — a raw
+// group id matches no flat layer, and identical ids for a group-free doc.
 function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
-  const ids = ctx.selectedIds;
   const layers = ctx.flatLayers;
+  const ids = resolveSelectionLeaves(ctx.doc.layers, ctx.selectedIds, layers).editableLeafIds;
   const bbox = multiResizeBbox(layers, ids);
   if (!bbox) return false;
   for (const h of cornerHandleRects(bbox, ctx.camera)) {
@@ -535,45 +573,65 @@ registerTool({
 
     const hit = topmostHit(ctx, e.mm);
     const toggleModifier = e.shiftKey || e.metaKey || e.ctrlKey;
+    const tree = ctx.doc.layers;
     // #97's drag rule: a press on a pattern square that is NOT already
     // selected behaves like empty space for DRAG purposes — the panel stays
     // marquee-able even with a cover-sized square under everything — while a
     // CLICK (never crossing the drag threshold) still (toggle-)selects the
     // pattern on release via the marquee's clickSelectId. A SELECTED pattern
     // takes the normal layer path below, so its next drag MOVES it.
+    // "Selected" is the EXPANDED sense (#151): a pattern inside a selected
+    // group is a selection member and must drag the group, not arm a marquee.
     const unselectedPatternHit =
-      hit && hit.type === 'pattern' && !ctx.selectedIds.includes(hit.id) ? hit : null;
+      hit && hit.type === 'pattern' && !expandSelectionToLeafIds(tree, ctx.selectedIds).includes(hit.id)
+        ? hit
+        : null;
     if (hit && !unselectedPatternHit) {
-      if (toggleModifier) {
-        // Modifier vocabulary (#47): Shift = add to / toggle within the
-        // selection; Meta/Ctrl = toggle exactly one layer. Both toggle the
-        // clicked layer's membership and leave the rest untouched; no move
-        // drag starts on a modifier click.
-        const ids = ctx.selectedIds;
-        ctx.selectIds(ids.includes(hit.id) ? ids.filter((id) => id !== hit.id) : [...ids, hit.id]);
+      // Modifier vocabulary (#47, group-aware since #151). Meta/Ctrl WINS
+      // over Shift: it targets the RAW leaf (the group escape hatch), and
+      // adding the leaf strips any selected ancestor so a [group, descendant]
+      // overlap never exists. Plain Shift toggles the PROMOTED (topmost
+      // ancestor) id, preserving existing shift semantics otherwise. No move
+      // drag starts on a modifier click.
+      if (e.metaKey || e.ctrlKey) {
+        ctx.selectIds(toggleLeafSelection(tree, ctx.selectedIds, hit.id));
+        return;
+      }
+      if (e.shiftKey) {
+        ctx.selectIds(togglePromotedSelection(tree, ctx.selectedIds, hit.id));
         return;
       }
       const ids = ctx.selectedIds;
-      if (ids.length > 1 && ids.includes(hit.id)) {
-        // Multi-move (#49): grabbing any member drags the whole selection —
-        // pattern members included since #97 (they carry an x/y/size square
-        // that translates like any other layer's origin).
+      // Plain press on a leaf the selection already covers (directly, or via
+      // a selected ancestor group): drag the WHOLE selection's expanded
+      // editable leaves (#49/#151 — pattern members included since #97). A
+      // pure click instead collapses to the covering id on release.
+      const owner = selectionOwnerId(tree, ids, hit.id);
+      if (owner !== null) {
         drag = {
           kind: 'move',
           startMm: e.mm,
-          targets: ctx.flatLayers
-            .filter((l) => ids.includes(l.id))
-            .map((l) => ({ id: l.id, orig: l })),
+          targets: moveTargetsFor(
+            ctx.flatLayers,
+            resolveSelectionLeaves(tree, ids, ctx.flatLayers).editableLeafIds,
+          ),
           crossed: false,
-          collapseTo: hit.id,
+          collapseTo: ids.length > 1 ? owner : null,
         };
         return;
       }
-      ctx.select(hit.id);
+      // Fresh hit: promote to the TOPMOST ancestor group id (the leaf's own
+      // id when ungrouped — identity for group-free docs) and arm the move
+      // drag over its editable leaves (#151).
+      const promotedId = topmostAncestorIdForLeaf(tree, hit.id);
+      ctx.select(promotedId);
       drag = {
         kind: 'move',
         startMm: e.mm,
-        targets: [{ id: hit.id, orig: hit }],
+        targets: moveTargetsFor(
+          ctx.flatLayers,
+          resolveSelectionLeaves(tree, [promotedId], ctx.flatLayers).editableLeafIds,
+        ),
         crossed: false,
         collapseTo: null,
       };
@@ -591,6 +649,7 @@ registerTool({
       currentMm: e.mm,
       active: false,
       additive: toggleModifier,
+      meta: e.metaKey || e.ctrlKey,
       baseIds: toggleModifier ? ctx.selectedIds : [],
       clickSelectId: unselectedPatternHit?.id ?? null,
     };
@@ -601,12 +660,12 @@ registerTool({
       if (!marquee.active && !pastThreshold(e.screen, marquee.startScreen)) return;
       marquee.active = true;
       marquee.currentMm = e.mm;
-      // Marquee CANDIDATES come from the flat projection (#150) — selection
-      // semantics (promoting a swept nested leaf to its group) are #151's.
+      // Marquee CANDIDATES come from the flat projection (#150); each swept
+      // nested leaf then PROMOTES to its topmost ancestor group id, deduped
+      // and collapsed to maximal roots with the additive base (#151).
       const hits = marqueeHitIds(ctx.flatLayers, marqueeRect(marquee.startMm, marquee.currentMm));
-      const base = marquee.baseIds;
       ctx.selectIds(
-        marquee.additive ? [...base, ...hits.filter((id) => !base.includes(id))] : hits,
+        promoteMarqueeSelection(ctx.doc.layers, hits, marquee.additive ? marquee.baseIds : []),
       );
       ctx.requestRepaint(); // the rubber-band moved even if the selection didn't
       return;
@@ -638,13 +697,12 @@ registerTool({
         // ctx.doc getter reads a ref that only re-syncs after React renders
         // (Editor.tsx), so the second replace would rebuild from the pre-clone
         // layer list and silently drop the clones.
-        // Flatten once: this "move" case both reads (duplicateLayersAbove
-        // below) and writes back a flat Layer[] — identity for a group-free
-        // doc. DELIBERATE flatten-write shim left from #146: for a grouped
-        // doc the write-back would discard group structure. Group-aware
-        // move/duplicate (via the selection resolver + tree primitives) is
-        // #151's job — do not convert this site piecemeal here (#150).
-        let layers = flattenLayerNodes(ctx.doc.layers);
+        // Tree-preserving since #151 (closes #150's deliberate flatten-write
+        // shim): reads stay on the flat drag targets, writes land on the TREE
+        // via mapLeavesById, and Alt-duplicate clones whole SUBTREES per
+        // maximal selected root — a grouped selection duplicates its groups
+        // instead of dissolving them into loose leaves.
+        let tree = ctx.doc.layers;
         if (!drag.crossed) {
           // We're past the client-space threshold gate above, so THIS move is
           // the crossing moment — the one instant Alt is sampled (#49). An
@@ -655,23 +713,31 @@ registerTool({
             // Clone insertion is a real doc change: open the (single) undo
             // entry now even if the snapped move delta is still zero.
             ensureGesture(ctx);
-            const dup = duplicateLayersAbove(
-              layers,
-              drag.targets.map((t) => t.id),
-              (source) => mintId(source.type),
-            );
-            layers = dup.layers;
-            // Re-target the drag to the clones — the originals stay put. The
-            // clone starts at its source's geometry, so keeping `orig` keeps
-            // the delta math unchanged.
+            // Pre-collapse to maximal roots (#151): a selection holding both
+            // a group and one of its own descendants clones the group ONCE.
+            // Each root — a top-level leaf, a group, or a Meta-selected leaf
+            // nested inside an unselected group — is cloned with fresh ids
+            // directly above its source, in its own parent.
+            const leafIdMap = new Map<string, string>();
+            const cloneRootIds: string[] = [];
+            for (const rootId of maximalSelectedRoots(tree, ctx.selectedIds)) {
+              const found = findNodeById(tree, rootId);
+              if (!found) continue;
+              const clone = cloneNodeWithFreshIds(found.node);
+              cloneRootIds.push(clone.id);
+              mapCloneLeafIds(found.node, clone, leafIdMap);
+              tree = replaceNodeWithNodes(tree, rootId, [found.node, clone]);
+            }
+            // Re-target the drag to the clone leaves — the originals stay
+            // put. The clone starts at its source's geometry, so keeping
+            // `orig` keeps the delta math unchanged; the ?? fallback is pure
+            // defense for an id missing from the map.
             drag.targets = drag.targets.map((t) => ({
-              id: dup.idMap.get(t.id) ?? t.id,
+              id: leafIdMap.get(t.id) ?? t.id,
               orig: t.orig,
             }));
-            // Selection follows the clones — every member (patterns included
-            // since #97) is cloned; the ?? fallback is pure defense for an id
-            // missing from the map.
-            ctx.selectIds(ctx.selectedIds.map((id) => dup.idMap.get(id) ?? id));
+            // Selection follows the clone ROOTS (group ids stay group ids).
+            ctx.selectIds(cloneRootIds);
             drag.collapseTo = null;
           }
         }
@@ -733,9 +799,11 @@ registerTool({
             patches.set(id, { x: addMm(orig.x, sdx), y: addMm(orig.y, sdy) });
           }
         }
+        // Recursive write (#150/#151): each patched leaf lands wherever it
+        // sits in `tree` (which already contains this event's Alt-clones).
         ctx.replace({
           ...ctx.doc,
-          layers: layers.map((l) => {
+          layers: mapLeavesById(tree, [...patches.keys()], (l) => {
             const patch = patches.get(l.id);
             return patch ? ({ ...l, ...patch } as Layer) : l;
           }),
@@ -871,11 +939,16 @@ registerTool({
     // mirroring the modifier vocabulary of the direct-hit path above.
     if (marquee && !marquee.active && marquee.clickSelectId !== null) {
       const id = marquee.clickSelectId;
-      if (marquee.additive) {
-        const ids = ctx.selectedIds;
-        ctx.selectIds(ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]);
+      const tree = ctx.doc.layers;
+      // Same group-aware modifier vocabulary as the direct-hit path (#151):
+      // Meta targets the raw pattern leaf, Shift toggles the promoted id, a
+      // plain click selects the promoted id (identity when ungrouped).
+      if (marquee.meta) {
+        ctx.selectIds(toggleLeafSelection(tree, ctx.selectedIds, id));
+      } else if (marquee.additive) {
+        ctx.selectIds(togglePromotedSelection(tree, ctx.selectedIds, id));
       } else {
-        ctx.select(id);
+        ctx.select(topmostAncestorIdForLeaf(tree, id));
       }
     }
     // A grab on a multi-selection member that never crossed the threshold is
@@ -910,8 +983,13 @@ registerTool({
   renderDraft(d: DraftRenderContext, ctx: ToolContext) {
     reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
     // hover chrome — subtle, and skipped for layers already wearing selection
-    // chrome (hoveredId is cleared on pointerdown, so nothing draws mid-drag)
-    if (hoveredId && !ctx.selectedIds.includes(hoveredId)) {
+    // chrome (hoveredId is cleared on pointerdown, so nothing draws mid-drag).
+    // "Selected" is the EXPANDED sense (#151): a leaf inside a selected group
+    // already wears chrome, so hovering it must not double-outline.
+    if (
+      hoveredId &&
+      !expandSelectionToLeafIds(ctx.doc.layers, ctx.selectedIds).includes(hoveredId)
+    ) {
       const layer = ctx.flatLayers.find((l) => l.id === hoveredId);
       const bbox = layer && !layer.hidden ? layerBbox(layer) : null;
       if (layer && bbox) {
