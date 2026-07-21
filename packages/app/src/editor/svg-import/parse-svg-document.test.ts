@@ -293,7 +293,7 @@ describe('parseSvgDocument -- attribute tiers', () => {
 
   it('warns on an unrecognized attribute instead of failing', () => {
     const text = svg(
-      '<rect opacity="0.5" x="0" y="0" width="1" height="1"/>',
+      '<rect pointer-events="none" x="0" y="0" width="1" height="1"/>',
       'width="10" height="10"',
     );
     const result = parseSvgDocument(text);
@@ -304,7 +304,7 @@ describe('parseSvgDocument -- attribute tiers', () => {
           (d) =>
             d.level === 'warning' &&
             d.code === 'attribute-ignored' &&
-            d.message.includes('opacity'),
+            d.message.includes('pointer-events'),
         ),
       ).toBe(true);
     }

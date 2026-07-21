@@ -66,6 +66,20 @@ const CONSUMED_ATTRS = new Set([
   'stroke-width',
   'viewbox',
   'transform',
+  // Style cascade inputs the extractor (#139) honors: paints and opacity
+  // resolve through these, `display`/`visibility` decide whether a subtree is
+  // skipped at all, and the stroke-style trio gets its own, more specific
+  // `stroke-style-ignored` warning there.
+  'color',
+  'opacity',
+  'fill-opacity',
+  'stroke-opacity',
+  'fill-rule',
+  'visibility',
+  'display',
+  'stroke-linecap',
+  'stroke-linejoin',
+  'stroke-miterlimit',
 ]);
 
 // Fatal regardless of value: visually-significant semantics this importer
@@ -99,7 +113,7 @@ const STYLE_UNSUPPORTED_PROP = new RegExp(
 // A CSS comment before a declaration (e.g. style="/*n*/clip-path:...") would
 // otherwise slip past STYLE_UNSUPPORTED_PROP/URL_VALUE, which anchor on the
 // property name appearing right after ";" or the string start.
-function stripCssComments(css: string): string {
+export function stripCssComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
