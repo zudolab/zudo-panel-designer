@@ -45,6 +45,7 @@ import {
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
+  flattenLayerNodes,
   redo as coreRedo,
   replace as coreReplace,
   reset as coreReset,
@@ -68,7 +69,8 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
   let repaintCalls = 0;
 
   // Same derivation the Editor performs (see Editor.tsx / selection.ts).
-  const readSelectedIds = () => normalizeSelectedIds(selectedIds, history.present.layers);
+  const readSelectedIds = () =>
+    normalizeSelectedIds(selectedIds, flattenLayerNodes(history.present.layers));
   const readSelectedId = () => {
     const ids = readSelectedIds();
     return ids.length === 1 ? ids[0] : null;
@@ -91,7 +93,7 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
       return readSelectedId();
     },
     get selectedLayer() {
-      return history.present.layers.find((l) => l.id === readSelectedId()) ?? null;
+      return flattenLayerNodes(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
     },
     toMm: (p: Pt) => p,
     toScreen: (p: Pt) => p,

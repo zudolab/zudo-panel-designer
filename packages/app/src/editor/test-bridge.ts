@@ -9,6 +9,7 @@
 // the Playwright suite, which runs against a production `vite build` +
 // `vite preview` (see playwright.config.ts) where DEV is false.
 import {
+  flattenLayerNodes,
   serializePanelConfig,
   type DocState,
   type HistoryState,
@@ -84,7 +85,7 @@ export function installTestBridge(source: TestBridgeSource): void {
     getDoc: () => source.getDoc(),
     getHistory: () => source.getHistory(),
     getLayers: () =>
-      source.getDoc().layers.map((l) => ({
+      flattenLayerNodes(source.getDoc().layers).map((l) => ({
         id: l.id,
         type: l.type,
         name: l.name,

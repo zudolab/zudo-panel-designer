@@ -3,8 +3,9 @@ import { createDefaultDoc } from './default-doc';
 import { PALETTE } from './palette';
 import { MAX_PANEL_HP, PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
 import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
+import { MAX_GROUP_DEPTH } from './layer-nodes';
 import { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig, tryParsePanelConfig } from './serialize';
-import type { DocState, PatternLayer } from './types';
+import type { DocState, GroupNode, LayerNode, PatternLayer } from './types';
 
 function fullFixtureDoc(): DocState {
   return {
@@ -115,7 +116,7 @@ describe('serializePanelConfig / parsePanelConfig round trip', () => {
   it('emits derived panel size + palette names as advisory output', () => {
     const doc = fullFixtureDoc();
     const config = serializePanelConfig(doc);
-    expect(config.version).toBe(3);
+    expect(config.version).toBe(4);
     expect(config.app).toBe('zpd');
     expect(config.panel).toEqual({
       hp: 12,
@@ -194,7 +195,7 @@ describe('serialize — guides (added in v2)', () => {
 describe('serialize v3 — pattern square geometry migration (#96)', () => {
   function firstPattern(doc: DocState): PatternLayer {
     const [layer] = doc.layers;
-    if (layer.type !== 'pattern') throw new Error('expected a pattern layer');
+    if ('kind' in layer || layer.type !== 'pattern') throw new Error('expected a pattern layer');
     return layer;
   }
 
@@ -202,8 +203,9 @@ describe('serialize v3 — pattern square geometry migration (#96)', () => {
     patternCoverGeometry({ widthMm: panelWidthMm(hp), heightMm: PANEL_HEIGHT_MM });
 
   it('emits version 3', () => {
-    expect(PANEL_CONFIG_VERSION).toBe(3);
-    expect(serializePanelConfig(fullFixtureDoc()).version).toBe(3);
+    // Historical name kept (v3 = pattern square geometry); PANEL_CONFIG_VERSION
+    // has since moved to v4 (layer groups) — see the v4 describe block below.
+    expect(PANEL_CONFIG_VERSION).toBe(4);
   });
 
   it('a v1 config (no geometry fields) migrates every pattern layer to cover geometry', () => {
@@ -328,6 +330,143 @@ describe('serialize v3 — pattern square geometry migration (#96)', () => {
   });
 });
 
+// v4 (#146): the recursive layer-node tree (layer groups).
+describe('serialize v4 — layer-node tree (layer groups)', () => {
+  function docWithGroups(): DocState {
+    const doc = fullFixtureDoc();
+    const [shape1, shape2, ...rest] = doc.layers;
+    const nested: GroupNode = {
+      kind: 'group',
+      id: 'group-inner',
+      name: 'Inner group',
+      children: [shape2],
+    };
+    const outer: GroupNode = {
+      kind: 'group',
+      id: 'group-outer',
+      name: 'Outer group',
+      hidden: true,
+      children: [shape1, nested],
+    };
+    return { ...doc, layers: [outer, ...rest] };
+  }
+
+  it('emits version 4', () => {
+    expect(serializePanelConfig(fullFixtureDoc()).version).toBe(4);
+  });
+
+  it('round-trips a doc with nested groups: ids, names, hidden, and structure preserved', () => {
+    const doc = docWithGroups();
+    const roundTripped = parsePanelConfig(
+      JSON.parse(JSON.stringify(serializePanelConfig(doc))),
+    );
+    expect(roundTripped).toEqual(doc);
+  });
+
+  it('a group-free doc serializes with layers passed through untransformed (only version changes)', () => {
+    const doc = fullFixtureDoc();
+    const config = serializePanelConfig(doc);
+    expect(config.layers).toBe(doc.layers);
+    expect(config.panel).toEqual({ hp: 12, widthMm: panelWidthMm(12), heightMm: PANEL_HEIGHT_MM });
+    expect(config.palette).toEqual(PALETTE.map((entry) => entry.name));
+    expect(config.guides).toEqual(doc.guides);
+  });
+
+  it('a v3 fixture (flat Layer[], no `kind` anywhere) parses as an identity migration', () => {
+    const flatDoc = fullFixtureDoc();
+    const v3Json = { ...serializePanelConfig(flatDoc), version: 3 };
+    const parsed = parsePanelConfig(v3Json);
+    expect(parsed).toEqual(flatDoc);
+  });
+
+  it('a subtree at depth > MAX_GROUP_DEPTH is dropped, the rest of the doc survives', () => {
+    // Build a chain of MAX_GROUP_DEPTH + 2 nested groups so the innermost
+    // leaf sits at depth MAX_GROUP_DEPTH + 1 (one past the cap).
+    let innermost: LayerNode = { id: 'deep-leaf', name: 'deep', type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color: 0 };
+    for (let depth = MAX_GROUP_DEPTH + 1; depth >= 0; depth -= 1) {
+      innermost = { kind: 'group', id: `g-${depth}`, name: `g-${depth}`, children: [innermost] };
+    }
+    const survivor = { id: 'survivor', name: 'survivor', type: 'shape' as const, shape: 'rect' as const, x: 0, y: 0, width: 1, height: 1, color: 0 as const };
+    const parsed = parsePanelConfig({
+      layers: [innermost, survivor],
+    });
+    expect(parsed.layers).toHaveLength(2);
+    expect(parsed.layers[1]).toMatchObject({ id: 'survivor' });
+    // The over-deep chain survives down to the cap, then the next level drops.
+    let cursor: LayerNode | undefined = parsed.layers[0];
+    let depthSeen = 0;
+    while (cursor && 'kind' in cursor && cursor.kind === 'group') {
+      depthSeen += 1;
+      cursor = cursor.children[0];
+    }
+    expect(depthSeen).toBe(MAX_GROUP_DEPTH + 1); // groups at depth 0..MAX_GROUP_DEPTH survive
+    expect(cursor).toBeUndefined(); // the depth-9 leaf (and its would-be group) is dropped
+  });
+
+  it('keeps a leaf directly inside the deepest allowed group (depth MAX_GROUP_DEPTH survives, only further GROUP nesting is capped)', () => {
+    // Build a chain of exactly MAX_GROUP_DEPTH + 1 groups (g-0 at depth 0 ..
+    // g-MAX_GROUP_DEPTH at depth MAX_GROUP_DEPTH — the deepest legal group),
+    // whose innermost child is a plain leaf, not another group.
+    let innermost: LayerNode = {
+      id: 'deep-leaf',
+      name: 'deep',
+      type: 'shape',
+      shape: 'rect',
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+      color: 0,
+    };
+    for (let depth = MAX_GROUP_DEPTH; depth >= 0; depth -= 1) {
+      innermost = { kind: 'group', id: `g-${depth}`, name: `g-${depth}`, children: [innermost] };
+    }
+    const parsed = parsePanelConfig({ layers: [innermost] });
+
+    let cursor: LayerNode | undefined = parsed.layers[0];
+    let depthSeen = 0;
+    while (cursor && 'kind' in cursor && cursor.kind === 'group') {
+      depthSeen += 1;
+      cursor = cursor.children[0];
+    }
+    expect(depthSeen).toBe(MAX_GROUP_DEPTH + 1); // groups at depth 0..MAX_GROUP_DEPTH survive
+    expect(cursor).toMatchObject({ id: 'deep-leaf' }); // the leaf itself is NOT dropped
+  });
+
+  it('drops a node with an unrecognized `kind` rather than guessing its shape', () => {
+    const parsed = parsePanelConfig({
+      layers: [
+        { kind: 'stack', id: 'x', name: 'x', children: [] },
+        { id: 'ok', type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color: 0 },
+      ],
+    });
+    expect(parsed.layers).toHaveLength(1);
+    expect(parsed.layers[0]).toMatchObject({ id: 'ok' });
+  });
+
+  it('drops malformed entries inside a group children array while keeping valid siblings', () => {
+    const parsed = parsePanelConfig({
+      layers: [
+        {
+          kind: 'group',
+          id: 'g1',
+          name: 'g1',
+          children: [null, { type: 'sticker' }, { id: 'kept', type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color: 0 }],
+        },
+      ],
+    });
+    const [group] = parsed.layers;
+    if (!('kind' in group) || group.kind !== 'group') throw new Error('expected a group node');
+    expect(group.children).toHaveLength(1);
+    expect(group.children[0]).toMatchObject({ id: 'kept' });
+  });
+
+  it('tryParsePanelConfig rejects a version above PANEL_CONFIG_VERSION', () => {
+    const result = tryParsePanelConfig({ app: 'zpd', version: PANEL_CONFIG_VERSION + 1, layers: [] });
+    expect(result.ok).toBe(false);
+  });
+});
+
 describe('parsePanelConfig — never throws on bad input', () => {
   const garbageInputs: unknown[] = [null, undefined, 42, 'not json', true, [], [1, 2, 3], () => {}];
 
@@ -404,6 +543,7 @@ describe('parsePanelConfig — never throws on bad input', () => {
     });
     expect(doc.layers).toHaveLength(1);
     const [layer] = doc.layers;
+    if ('kind' in layer) throw new Error('unreachable');
     expect(layer.type).toBe('pattern');
     if (layer.type !== 'pattern') throw new Error('unreachable');
     expect(layer.patternType).toBe('totally-unknown-xyz');
@@ -457,6 +597,7 @@ describe('parsePanelConfig — never throws on bad input', () => {
       ],
     });
     const [layer] = doc.layers;
+    if ('kind' in layer) throw new Error('unreachable');
     expect(layer.type).toBe('pattern');
     if (layer.type !== 'pattern') throw new Error('unreachable');
     expect(layer.params).toEqual({ pitch: 5 });

@@ -6,6 +6,7 @@
 // touching the registry.
 import {
   duplicateLayersAbove,
+  flattenLayerNodes,
   hitTestLayer,
   mergeBboxes,
   mintId,
@@ -323,13 +324,14 @@ export function hitTestCanonicalText(layer: Extract<Layer, { type: 'text' }>, mm
 }
 
 function topmostHit(ctx: ToolContext, mm: Pt): Layer | null {
-  reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+  const layers = flattenLayerNodes(ctx.doc.layers);
+  reconcileTextGeometry(layers, ctx.requestRepaint);
   // Preserve core's two-tier ordering exactly: every non-pattern wins over
   // every pattern, and topmost wins within a tier. Only text substitutes the
   // app's canonical Canvas-metric geometry for core's rough estimate.
   for (const patternTier of [false, true]) {
-    for (let i = ctx.doc.layers.length - 1; i >= 0; i -= 1) {
-      const layer = ctx.doc.layers[i];
+    for (let i = layers.length - 1; i >= 0; i -= 1) {
+      const layer = layers[i];
       if (layer.hidden || (layer.type === 'pattern') !== patternTier) continue;
       const hit =
         layer.type === 'text' ? hitTestCanonicalText(layer, mm) : hitTestLayer(layer, mm.x, mm.y);
@@ -462,7 +464,8 @@ function groupFactorFloor(targets: readonly MoveTarget[], bbox: Rect): number {
 // so exactly the handles the chrome draws are grabbable here.
 function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
   const ids = ctx.selectedIds;
-  const bbox = multiResizeBbox(ctx.doc.layers, ids);
+  const layers = flattenLayerNodes(ctx.doc.layers);
+  const bbox = multiResizeBbox(layers, ids);
   if (!bbox) return false;
   for (const h of cornerHandleRects(bbox, ctx.camera)) {
     if (
@@ -476,7 +479,7 @@ function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolea
         handle: h.id,
         bbox,
         startMm: e.mm,
-        targets: ctx.doc.layers
+        targets: layers
           .filter((l) => ids.includes(l.id) && l.type !== 'pattern')
           .map((l) => ({ id: l.id, orig: l })),
       };
@@ -507,7 +510,7 @@ registerTool({
     'selected pattern drags like any layer (size it from the Properties panel). Arrow keys nudge ' +
     'the selection (Shift = ×10); Delete/Backspace removes it. Shortcut: V.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
-    reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+    reconcileTextGeometry(flattenLayerNodes(ctx.doc.layers), ctx.requestRepaint);
     hoveredId = null; // pointer engaged — hover chrome resumes after release
     // Right (or middle) click PRESERVES the selection: a future context menu
     // must be able to act on the live selection (#47).
@@ -555,7 +558,7 @@ registerTool({
         drag = {
           kind: 'move',
           startMm: e.mm,
-          targets: ctx.doc.layers
+          targets: flattenLayerNodes(ctx.doc.layers)
             .filter((l) => ids.includes(l.id))
             .map((l) => ({ id: l.id, orig: l })),
           crossed: false,
@@ -590,12 +593,15 @@ registerTool({
     };
   },
   onPointerMove(e: ToolPointerEvent, ctx: ToolContext) {
-    reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+    reconcileTextGeometry(flattenLayerNodes(ctx.doc.layers), ctx.requestRepaint);
     if (marquee) {
       if (!marquee.active && !pastThreshold(e.screen, marquee.startScreen)) return;
       marquee.active = true;
       marquee.currentMm = e.mm;
-      const hits = marqueeHitIds(ctx.doc.layers, marqueeRect(marquee.startMm, marquee.currentMm));
+      const hits = marqueeHitIds(
+        flattenLayerNodes(ctx.doc.layers),
+        marqueeRect(marquee.startMm, marquee.currentMm),
+      );
       const base = marquee.baseIds;
       ctx.selectIds(
         marquee.additive ? [...base, ...hits.filter((id) => !base.includes(id))] : hits,
@@ -630,7 +636,10 @@ registerTool({
         // ctx.doc getter reads a ref that only re-syncs after React renders
         // (Editor.tsx), so the second replace would rebuild from the pre-clone
         // layer list and silently drop the clones.
-        let layers = ctx.doc.layers;
+        // Flatten once: this "move" case both reads (duplicateLayersAbove
+        // below) and writes back a flat Layer[] — identity for a group-free
+        // doc, matching the mechanical shim used across this file (#146).
+        let layers = flattenLayerNodes(ctx.doc.layers);
         if (!drag.crossed) {
           // We're past the client-space threshold gate above, so THIS move is
           // the crossing moment — the one instant Alt is sampled (#49). An
@@ -805,7 +814,7 @@ registerTool({
       }
       case 'anchor': {
         const anchorLayerId = drag.layerId;
-        const layer = ctx.doc.layers.find((l) => l.id === anchorLayerId);
+        const layer = flattenLayerNodes(ctx.doc.layers).find((l) => l.id === anchorLayerId);
         if (layer?.type === 'path') {
           const nx = snap(e.mm.x);
           const ny = snap(e.mm.y);
@@ -823,7 +832,7 @@ registerTool({
       }
       case 'handle': {
         const handleLayerId = drag.layerId;
-        const layer = ctx.doc.layers.find((l) => l.id === handleLayerId);
+        const layer = flattenLayerNodes(ctx.doc.layers).find((l) => l.id === handleLayerId);
         if (layer?.type === 'path') {
           const cur = layer.points[drag.index]?.[drag.which];
           if (!gestureOpen && cur && e.mm.x === cur.x && e.mm.y === cur.y) break;
@@ -892,11 +901,11 @@ registerTool({
     downScreen = null;
   },
   renderDraft(d: DraftRenderContext, ctx: ToolContext) {
-    reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+    reconcileTextGeometry(flattenLayerNodes(ctx.doc.layers), ctx.requestRepaint);
     // hover chrome — subtle, and skipped for layers already wearing selection
     // chrome (hoveredId is cleared on pointerdown, so nothing draws mid-drag)
     if (hoveredId && !ctx.selectedIds.includes(hoveredId)) {
-      const layer = ctx.doc.layers.find((l) => l.id === hoveredId);
+      const layer = flattenLayerNodes(ctx.doc.layers).find((l) => l.id === hoveredId);
       const bbox = layer && !layer.hidden ? layerBbox(layer) : null;
       if (layer && bbox) {
         drawHoverOutline(d.ctx, rotatedRectAABB(bbox, layerRotation(layer)), d.camera);

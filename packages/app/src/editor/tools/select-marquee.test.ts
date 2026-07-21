@@ -12,6 +12,7 @@ import {
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
+  flattenLayerNodes,
   redo as coreRedo,
   replace as coreReplace,
   reset as coreReset,
@@ -62,7 +63,8 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
   let beginGestureCalls = 0;
   let repaintCalls = 0;
 
-  const readSelectedIds = () => normalizeSelectedIds(selectedIds, history.present.layers);
+  const readSelectedIds = () =>
+    normalizeSelectedIds(selectedIds, flattenLayerNodes(history.present.layers));
   const readSelectedId = () => {
     const ids = readSelectedIds();
     return ids.length === 1 ? ids[0] : null;
@@ -89,7 +91,7 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
       return readSelectedId();
     },
     get selectedLayer() {
-      return history.present.layers.find((l) => l.id === readSelectedId()) ?? null;
+      return flattenLayerNodes(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
     },
     toMm: (p: Pt) => ({
       x: (p.x - camera.offsetX) / camera.pxPerMm,

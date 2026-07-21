@@ -5,6 +5,7 @@
 // silently re-hardcode 2/3 and drift from core's alignLayers/distributeLayers.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  flattenLayerNodes,
   MIN_ALIGN_SELECTION,
   MIN_DISTRIBUTE_SELECTION,
   type DocState,
@@ -72,7 +73,7 @@ describe('rotated text uses canonical loaded bounds for alignment (#111)', () =>
       requestRepaint: vi.fn(),
     } as unknown as ToolContext;
 
-    reconcileTextGeometry(doc.layers);
+    reconcileTextGeometry(flattenLayerNodes(doc.layers));
     const aligned = layerAlignRect(text);
     expect(aligned.id).toBe(text.id);
     expect(aligned.x).toBeCloseTo(20);

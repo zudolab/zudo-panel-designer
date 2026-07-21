@@ -3,6 +3,7 @@
 // layer-ops so ordering + immutability semantics live in one place.
 import { useRef, useState, type KeyboardEvent } from 'react';
 import {
+  flattenLayerNodes,
   PALETTE,
   removeLayer,
   renameLayer,
@@ -34,7 +35,10 @@ export interface LayerListProps {
 }
 
 export function LayerList({ ctx, selectedIds }: LayerListProps) {
-  const layers = ctx.doc.layers;
+  // Flat top-level list for now — tree rendering (collapse/nest) is #153.
+  // Flattening a group-free doc is the identity (layer-nodes.ts), so this is
+  // behavior-preserving until real groups exist.
+  const layers = flattenLayerNodes(ctx.doc.layers);
   const visibleLayers = [...layers].reverse();
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');

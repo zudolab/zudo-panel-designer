@@ -16,6 +16,8 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import {
+  flattenLayerNodes,
+  isGroupNode,
   PANEL_HEIGHT_MM,
   panelWidthMm,
   translatePathLayer,
@@ -97,12 +99,12 @@ export function Editor() {
     [doc.panelHp],
   );
   const selectedIds = useMemo(
-    () => normalizeSelectedIds(rawSelectedIds, doc.layers),
+    () => normalizeSelectedIds(rawSelectedIds, flattenLayerNodes(doc.layers)),
     [rawSelectedIds, doc.layers],
   );
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const selectedLayer = useMemo(
-    () => doc.layers.find((l) => l.id === selectedId) ?? null,
+    () => flattenLayerNodes(doc.layers).find((l) => l.id === selectedId) ?? null,
     [doc.layers, selectedId],
   );
 
@@ -132,7 +134,8 @@ export function Editor() {
   // The normalized live view of the selection — what ctx and the test bridge
   // read. Single-selection views derive from it (non-null iff exactly one).
   const readSelectedIds = useCallback(
-    () => normalizeSelectedIds(rawSelectedIdsRef.current, docRef.current.layers),
+    () =>
+      normalizeSelectedIds(rawSelectedIdsRef.current, flattenLayerNodes(docRef.current.layers)),
     [],
   );
   const readSelectedId = useCallback(() => {
@@ -178,7 +181,7 @@ export function Editor() {
       },
       get selectedLayer() {
         const id = readSelectedId();
-        return docRef.current.layers.find((l) => l.id === id) ?? null;
+        return flattenLayerNodes(docRef.current.layers).find((l) => l.id === id) ?? null;
       },
       toMm: (screenPt) =>
         cameraRef.current ? unproject(cameraRef.current, screenPt) : { x: 0, y: 0 },
@@ -328,7 +331,7 @@ export function Editor() {
 
   // --- image asset loading -----------------------------------------------
   useEffect(() => {
-    for (const layer of doc.layers) {
+    for (const layer of flattenLayerNodes(doc.layers)) {
       if (layer.type === 'image' && !imagesRef.current.has(layer.id)) {
         const img = new Image();
         img.onload = () => setAssetVersion((v) => v + 1);
@@ -359,7 +362,9 @@ export function Editor() {
     canvas.style.width = `${canvasSize.w}px`;
     canvas.style.height = `${canvasSize.h}px`;
     const activeTool = getTool(activeToolId);
-    renderScene(canvas, doc, panel, camera, {
+    // renderScene (and every flat-consumer below it) reads Layer[] — flatten
+    // the tree at this render boundary (layer-groups #146).
+    renderScene(canvas, { ...doc, layers: flattenLayerNodes(doc.layers) }, panel, camera, {
       selectedIds,
       images: imagesRef.current,
       showNodes: activeToolId === 'select' && selectedLayer?.type === 'path',
@@ -401,8 +406,11 @@ export function Editor() {
       // which already moves paths by the raw delta.
       const ids = new Set(readSelectedIds());
       if (ids.size === 0) return;
+      // Group nodes never carry x/y (structure + hidden only, see types.ts) —
+      // selection targets leaves only, so a matched id on a group is skipped
+      // rather than nudged (group-aware selection is a later sub-issue, #151).
       const layers = docRef.current.layers.map((l) => {
-        if (!ids.has(l.id)) return l;
+        if (!ids.has(l.id) || isGroupNode(l)) return l;
         const patch =
           l.type === 'path' ? translatePathLayer(l, dx, dy) : { x: l.x + dx, y: l.y + dy };
         return { ...l, ...patch } as Layer;

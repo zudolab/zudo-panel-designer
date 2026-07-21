@@ -1,4 +1,5 @@
 import {
+  flattenLayerNodes,
   PALETTE,
   PANEL_HEIGHT_MM,
   PANEL_THICKNESS_MM,
@@ -217,9 +218,11 @@ export function createPreviewSurfaceMapGenerator(
 
       // Reconcile the canonical text geometry without replacing the editor's
       // repaint callback. Preview readiness is observed independently below.
-      reconcileTextGeometry(input.doc.layers);
+      // Flatten the tree once at this read boundary (layer-groups #146).
+      const layers = flattenLayerNodes(input.doc.layers);
+      reconcileTextGeometry(layers);
       const generationFontAttempts = new Set<FontLoadAttempt>();
-      for (const layer of input.doc.layers) {
+      for (const layer of layers) {
         if (
           layer.hidden ||
           layer.type !== 'text' ||
@@ -245,7 +248,7 @@ export function createPreviewSurfaceMapGenerator(
           mapName,
           widthMm,
           heightMm,
-          layers: input.doc.layers,
+          layers,
           signal: input.ticket.signal,
         });
         canvases[mapName] = canvas;

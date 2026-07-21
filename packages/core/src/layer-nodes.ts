@@ -1,0 +1,56 @@
+// The recursive layer tree: GroupNode wraps LayerNode children, leaves stay
+// Layer as before. This module owns the two structural primitives every
+// consumer needs at the flatten boundary — walk (read) and flatten
+// (project to the flat Layer[] the rest of the app already understands).
+import type { GroupNode, Layer, LayerNode } from './types';
+
+// Root nodes are depth 0. The cap is a stack-overflow / degenerate-JSON
+// defense (see serialize.ts's depth-drop) and a plausible ceiling for what a
+// human could build via the panel UI — cheap to relax later if needed.
+export const MAX_GROUP_DEPTH = 8;
+
+export function isGroupNode(node: LayerNode): node is GroupNode {
+  return 'kind' in node && node.kind === 'group';
+}
+
+// DFS, left-to-right, matching flatten's z-order semantics.
+export function walkLayerNodes(
+  nodes: LayerNode[],
+  visitor: (node: LayerNode, depth: number) => void,
+  depth = 0,
+): void {
+  for (const node of nodes) {
+    visitor(node, depth);
+    if (isGroupNode(node)) walkLayerNodes(node.children, visitor, depth + 1);
+  }
+}
+
+function flattenInner(nodes: LayerNode[], ancestorHidden: boolean): Layer[] {
+  const out: Layer[] = [];
+  for (const node of nodes) {
+    const hidden = ancestorHidden || node.hidden === true;
+    if (isGroupNode(node)) {
+      out.push(...flattenInner(node.children, hidden));
+    } else {
+      // Set-only-if-true: never write `hidden: false` onto a leaf. If the
+      // leaf is already hidden (or nothing folds in), return it unchanged —
+      // this is what keeps the identity fast path below cheap.
+      out.push(hidden && !node.hidden ? { ...node, hidden: true } : node);
+    }
+  }
+  return out;
+}
+
+// Pure, non-mutating projection from the tree to the flat Layer[] every
+// existing `switch (layer.type)` consumer expects. DFS left-to-right, so
+// tree reading order IS the z-order (index 0 renders first; a group is a
+// contiguous z-band). `hidden` folds down as OR, set-only-if-true.
+//
+// Identity fast path: a group-free input has no ancestor to fold `hidden`
+// from, so every leaf is already exactly what flatten would produce — return
+// the SAME array reference with the SAME leaf references. This makes a
+// per-render flatten call free (=== equality) for legacy, group-free docs.
+export function flattenLayerNodes(nodes: LayerNode[]): Layer[] {
+  if (nodes.every((node) => !isGroupNode(node))) return nodes as Layer[];
+  return flattenInner(nodes, false);
+}
