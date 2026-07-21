@@ -54,6 +54,23 @@ function firstNonDraggedId(
   return null;
 }
 
+// The slot at the visual BOTTOM of a container's rows (array index 0 of the
+// top level or of a group's children) — the drop target for hovering the
+// list's tail area rather than a row. This is what makes "outdent below an
+// expanded group's subtree" reachable at all: with e.g. top-level [G([a])],
+// every ROW zone around `a` resolves inside G or above it, so without a tail
+// target the top-level slot below G could never be produced by a drag (codex
+// review, #154).
+export function resolveTailDropSlot(
+  tree: LayerNode[],
+  parentId: string | null,
+  draggedIds: readonly string[],
+): DropSlot | null {
+  const siblings = childrenOf(tree, parentId);
+  if (!siblings) return null;
+  return { parentId, anchorId: firstNonDraggedId(siblings, 0, new Set(draggedIds)) };
+}
+
 // Maps a hovered row + zone to a DropSlot, or null when the row/zone cannot
 // host a drop at all (unknown row id, 'into' on a leaf). Zone semantics:
 //   - 'into'  → inside the hovered GROUP, anchored at its first (array-index
@@ -159,5 +176,28 @@ export function executeDrop(
       slot.anchorId === null ? -1 : withoutSelf.findIndex((sibling) => sibling.id === slot.anchorId);
     next = moveNodeToParent(next, id, slot.parentId, anchorIndex < 0 ? withoutSelf.length : anchorIndex);
   }
-  return next;
+  // A multi-root batch can shuffle roots through intermediate positions and
+  // still END where it started (e.g. dropping selected [a, G] right back
+  // above their own run): every step rebuilt arrays, so `next` is a fresh
+  // reference even though nothing changed. Restore the identity-on-no-op
+  // contract structurally (codex review, #154) so the caller's
+  // same-reference check skips the commit — no phantom undo entry.
+  return sameTreeStructure(tree, next) ? tree : next;
+}
+
+// Structural equality by node identity: moves reinsert the SAME node objects
+// and only rebuild the group spines around them, so two trees are equal iff
+// every position holds the identical node reference or an identically-id'd
+// group whose children are recursively equal.
+function sameTreeStructure(a: readonly LayerNode[], b: readonly LayerNode[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const nodeA = a[i];
+    const nodeB = b[i];
+    if (nodeA === nodeB) continue;
+    if (!isGroupNode(nodeA) || !isGroupNode(nodeB) || nodeA.id !== nodeB.id) return false;
+    if (!sameTreeStructure(nodeA.children, nodeB.children)) return false;
+  }
+  return true;
 }

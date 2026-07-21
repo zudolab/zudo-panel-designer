@@ -225,6 +225,36 @@ describe('LayerList DnD — positional drops', () => {
     expect(groupChildren(nextDoc.layers, 'G')).toEqual(['b', 'c']);
   });
 
+  it('drops on the root list tail land at the visual bottom (outdent below an expanded group)', () => {
+    // [G([a])]: without the tail target, no row zone reaches the top-level
+    // slot below G (codex review finding).
+    const { ctx, commit } = treeCtx([group('G', 'Group', [shape('a', 'A')])]);
+    const { container } = render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    const rootList = container.querySelector(':scope > ul') as HTMLElement;
+    fireEvent.dragStart(leafRow('A'));
+    fireEvent.dragOver(rootList);
+    fireEvent.drop(rootList);
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    expect(topIds(nextDoc.layers)).toEqual(['a', 'G']);
+    expect(groupChildren(nextDoc.layers, 'G')).toEqual([]);
+  });
+
+  it('a multi-root drop landing back on its own run commits nothing (no phantom history entry)', () => {
+    const { ctx, commit } = treeCtx(fixtureTree(), ['a', 'G']);
+    render(<LayerList ctx={ctx} selectedIds={['a', 'G']} />);
+
+    // 'after' D (zero-rect fallback) anchors [a, G] right back before d —
+    // structurally unchanged, so the drop must not create an undo entry.
+    fireEvent.dragStart(groupHeader('Group'));
+    fireEvent.dragOver(leafRow('D'));
+    fireEvent.drop(leafRow('D'));
+
+    expect(commit).not.toHaveBeenCalled();
+  });
+
   it('dropping a row onto its own slot commits nothing (no phantom history entry)', () => {
     const { ctx, commit } = treeCtx(fixtureTree());
     render(<LayerList ctx={ctx} selectedIds={[]} />);

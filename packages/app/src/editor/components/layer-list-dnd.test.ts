@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isGroupNode, type GroupNode, type LayerNode, type ShapeLayer } from '@zpd/core';
-import { executeDrop, invalidDropReason, resolveDropSlot } from './layer-list-dnd';
+import { executeDrop, invalidDropReason, resolveDropSlot, resolveTailDropSlot } from './layer-list-dnd';
 
 function shape(id: string): ShapeLayer {
   return { id, name: id.toUpperCase(), type: 'shape', shape: 'rect', x: 0, y: 0, width: 10, height: 10, color: 1 };
@@ -168,5 +168,46 @@ describe('executeDrop', () => {
     const tree = fixture();
     // a is already directly before G.
     expect(executeDrop(tree, ['a'], { parentId: null, anchorId: 'G' })).toBe(tree);
+  });
+
+  it('returns the SAME reference when a multi-root batch lands back in its own positions', () => {
+    // [a, G] dropped right back before d: each individual move rebuilds the
+    // array, but the batch as a whole changes nothing — must not look like a
+    // change to the caller (no phantom history entry).
+    const tree = fixture();
+    expect(executeDrop(tree, ['a', 'G'], { parentId: null, anchorId: 'd' })).toBe(tree);
+  });
+
+  it('a structurally identical no-op inside a group also keeps the reference', () => {
+    const tree = fixture();
+    expect(executeDrop(tree, ['b', 'c'], { parentId: 'G', anchorId: null })).toBe(tree);
+  });
+});
+
+describe('resolveTailDropSlot', () => {
+  it('targets the visual bottom of the top level (array index 0 anchor)', () => {
+    expect(resolveTailDropSlot(fixture(), null, ['d'])).toEqual({ parentId: null, anchorId: 'a' });
+  });
+
+  it("targets the visual bottom of a group's children", () => {
+    expect(resolveTailDropSlot(fixture(), 'G', ['a'])).toEqual({ parentId: 'G', anchorId: 'b' });
+  });
+
+  it('skips dragged siblings when anchoring', () => {
+    expect(resolveTailDropSlot(fixture(), null, ['a'])).toEqual({ parentId: null, anchorId: 'G' });
+  });
+
+  it('makes the below-an-expanded-group outdent slot reachable', () => {
+    // [G([a])]: no row zone can produce the top-level slot below G — the
+    // tail slot is that target.
+    const tree = [group('G', [shape('a')])];
+    const slot = resolveTailDropSlot(tree, null, ['a']);
+    expect(slot).toEqual({ parentId: null, anchorId: 'G' });
+    expect(topIds(executeDrop(tree, ['a'], slot!))).toEqual(['a', 'G']);
+    expect(childIds(executeDrop(tree, ['a'], slot!), 'G')).toEqual([]);
+  });
+
+  it('resolves null for a vanished parent', () => {
+    expect(resolveTailDropSlot(fixture(), 'nope', ['a'])).toBeNull();
   });
 });

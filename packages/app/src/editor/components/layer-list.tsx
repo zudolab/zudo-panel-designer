@@ -29,7 +29,9 @@ import {
   executeDrop,
   invalidDropReason,
   resolveDropSlot,
+  resolveTailDropSlot,
   type DropRejection,
+  type DropSlot,
   type DropZone,
 } from './layer-list-dnd';
 import type { ToolContext } from '../types';
@@ -247,23 +249,54 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     setDropIndicator((prev) => (prev !== null && prev.rowId === rowId ? null : prev));
   };
 
+  const commitDrop = (slot: DropSlot | null, dragging: readonly string[]) => {
+    if (slot === null) return;
+    // Silent-reject-before-history: BOTH guards re-run here, before any
+    // ctx.commit — a rejected drop must never create an undo entry.
+    if (invalidDropReason(tree, slot, dragging) !== null) return;
+    const nextTree = executeDrop(tree, dragging, slot);
+    // Same-reference = the batch was a no-op (dropped onto its own slot) —
+    // no phantom history entry.
+    if (nextTree === tree) return;
+    // One commit for the whole multi-root batch = ONE history entry.
+    ctx.commit({ ...ctx.doc, layers: nextTree });
+  };
+
   const handleRowDrop = (e: DragEvent<HTMLElement>, rowId: string, zone: DropZone) => {
     const dragging = draggingIdsRef.current; // ref, not state — see twin note above
     clearDragState();
     if (!dragging) return;
     e.preventDefault();
     e.stopPropagation();
-    const slot = resolveDropSlot(tree, rowId, zone, dragging, collapsedGroupIds);
-    if (slot === null) return;
-    // Silent-reject-before-history: BOTH guards re-run here, before any
-    // ctx.commit — a rejected drop must never create an undo entry.
-    if (invalidDropReason(tree, slot, dragging) !== null) return;
-    const nextTree = executeDrop(tree, dragging, slot);
-    // Same-reference = every move was a no-op (dropped onto its own slot) —
-    // no phantom history entry.
-    if (nextTree === tree) return;
-    // One commit for the whole multi-root batch = ONE history entry.
-    ctx.commit({ ...ctx.doc, layers: nextTree });
+    commitDrop(resolveDropSlot(tree, rowId, zone, dragging, collapsedGroupIds), dragging);
+  };
+
+  // Tail area of a rows <ul> (the space that is the list itself, not any
+  // row): drops land at that container's visual BOTTOM (array index 0). The
+  // guard on target === currentTarget keeps bubbled row events out — row
+  // handlers stopPropagation for internal drags, so only a hover over the
+  // list's own empty runway arrives here as a direct target. This is the
+  // outdent path below an expanded group's subtree (see resolveTailDropSlot).
+  const handleTailDragOver = (e: DragEvent<HTMLElement>, parentId: string | null) => {
+    if (e.target !== e.currentTarget) return;
+    const dragging = draggingIdsRef.current;
+    if (!dragging) return;
+    const slot = resolveTailDropSlot(tree, parentId, dragging);
+    if (slot !== null && invalidDropReason(tree, slot, dragging) === null) {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    } else if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'none';
+    }
+  };
+
+  const handleTailDrop = (e: DragEvent<HTMLElement>, parentId: string | null) => {
+    if (e.target !== e.currentTarget) return;
+    const dragging = draggingIdsRef.current;
+    clearDragState();
+    if (!dragging) return;
+    e.preventDefault();
+    commitDrop(resolveTailDropSlot(tree, parentId, dragging), dragging);
   };
 
   // Affordance attributes/classes for the row currently hovered by a drag.
@@ -737,6 +770,8 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
         {!collapsed && (
           <ul
             data-group-id={group.id}
+            onDragOver={(e) => handleTailDragOver(e, group.id)}
+            onDrop={(e) => handleTailDrop(e, group.id)}
             className="ml-3 flex flex-col gap-0.5 border-l border-neutral-800 pl-2"
           >
             {group.children.length === 0 ? (
@@ -775,5 +810,17 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     return out;
   };
 
-  return <ul className="flex flex-col gap-0.5">{renderNodes(tree, 0, null)}</ul>;
+  return (
+    <ul
+      onDragOver={(e) => handleTailDragOver(e, null)}
+      onDrop={(e) => handleTailDrop(e, null)}
+      // The pb runway only exists WHILE a drag is live: it gives the root
+      // list a hoverable tail strip below the last row (the drop target for
+      // the whole document's visual bottom) without padding the panel when
+      // idle.
+      className={`flex flex-col gap-0.5${draggingIds !== null ? ' pb-6' : ''}`}
+    >
+      {renderNodes(tree, 0, null)}
+    </ul>
+  );
 }
