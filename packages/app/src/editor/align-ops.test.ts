@@ -18,6 +18,7 @@ import {
   setTextMeasureForTests,
 } from './text-geometry';
 import type { ToolContext } from './types';
+import { projectFlatLayers } from './flat-projection';
 
 afterEach(() => resetTextGeometryForTests());
 
@@ -67,6 +68,9 @@ describe('rotated text uses canonical loaded bounds for alignment (#111)', () =>
     const ctx = {
       get doc() {
         return doc;
+      },
+      get flatLayers() {
+        return projectFlatLayers(doc.layers);
       },
       panel: { widthMm: 100, heightMm: 100 },
       commit,

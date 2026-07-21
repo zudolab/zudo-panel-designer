@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   cloneLayersWithFreshIds,
+  deleteNodeById,
   flattenLayerNodes,
   mintId,
   parsePanelConfig,
@@ -59,7 +60,7 @@ export interface UseClipboardReturn {
 // deliberate pattern exception left in the clipboard.
 function copyableSelection(ctx: ToolContext): Layer[] {
   const ids = new Set(ctx.selectedIds);
-  return flattenLayerNodes(ctx.doc.layers).filter((l) => ids.has(l.id));
+  return ctx.flatLayers.filter((l) => ids.has(l.id));
 }
 
 // Parses OS clipboard text as a zpd layers envelope. Returns null for
@@ -173,8 +174,13 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     if (layers.length === 0) return;
     captureToClipboard(clipboardRef, outstandingWritesRef, layers);
     // Copy + delete as ONE commit — cut must be a single undo entry.
+    // Recursive delete (#150): each cut leaf is removed wherever it sits in
+    // the tree — a flat root filter would no-op for group-nested leaves.
     const cutIds = new Set(layers.map((l) => l.id));
-    ctx.commit({ ...ctx.doc, layers: ctx.doc.layers.filter((l) => !cutIds.has(l.id)) });
+    ctx.commit({
+      ...ctx.doc,
+      layers: [...cutIds].reduce((tree, id) => deleteNodeById(tree, id), ctx.doc.layers),
+    });
     ctx.selectIds(ctx.selectedIds.filter((id) => !cutIds.has(id)));
   }, [ctx]);
 
@@ -187,11 +193,7 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     // cover square joining every Cmd/Ctrl+A would make "select everything and
     // move it" drag the background along. Patterns join a selection only by
     // direct click (two-tier hit) or the layer list.
-    ctx.selectIds(
-      flattenLayerNodes(ctx.doc.layers)
-        .filter((l) => l.type !== 'pattern')
-        .map((l) => l.id),
-    );
+    ctx.selectIds(ctx.flatLayers.filter((l) => l.type !== 'pattern').map((l) => l.id));
   }, [ctx]);
 
   // The window `paste` listener — sole owner of Cmd/Ctrl+V (and right-click

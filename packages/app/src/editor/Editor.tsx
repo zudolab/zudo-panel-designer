@@ -16,14 +16,14 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import {
-  flattenLayerNodes,
-  isGroupNode,
+  mapLeavesById,
   PANEL_HEIGHT_MM,
   panelWidthMm,
   translatePathLayer,
   type DocState,
   type Layer,
 } from '@zpd/core';
+import { projectFlatLayers } from './flat-projection';
 import { fit, project, unproject, zoomAt, type Camera } from './camera';
 import { installBrowserZoomGuard } from './browser-zoom-guard';
 import { reconcileImageCache, renderScene } from './renderer';
@@ -99,12 +99,12 @@ export function Editor() {
     [doc.panelHp],
   );
   const selectedIds = useMemo(
-    () => normalizeSelectedIds(rawSelectedIds, flattenLayerNodes(doc.layers)),
+    () => normalizeSelectedIds(rawSelectedIds, projectFlatLayers(doc.layers)),
     [rawSelectedIds, doc.layers],
   );
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const selectedLayer = useMemo(
-    () => flattenLayerNodes(doc.layers).find((l) => l.id === selectedId) ?? null,
+    () => projectFlatLayers(doc.layers).find((l) => l.id === selectedId) ?? null,
     [doc.layers, selectedId],
   );
 
@@ -135,7 +135,7 @@ export function Editor() {
   // read. Single-selection views derive from it (non-null iff exactly one).
   const readSelectedIds = useCallback(
     () =>
-      normalizeSelectedIds(rawSelectedIdsRef.current, flattenLayerNodes(docRef.current.layers)),
+      normalizeSelectedIds(rawSelectedIdsRef.current, projectFlatLayers(docRef.current.layers)),
     [],
   );
   const readSelectedId = useCallback(() => {
@@ -181,7 +181,10 @@ export function Editor() {
       },
       get selectedLayer() {
         const id = readSelectedId();
-        return flattenLayerNodes(docRef.current.layers).find((l) => l.id === id) ?? null;
+        return projectFlatLayers(docRef.current.layers).find((l) => l.id === id) ?? null;
+      },
+      get flatLayers() {
+        return projectFlatLayers(docRef.current.layers);
       },
       toMm: (screenPt) =>
         cameraRef.current ? unproject(cameraRef.current, screenPt) : { x: 0, y: 0 },
@@ -293,6 +296,9 @@ export function Editor() {
       get selectedLayer() {
         return ctx.selectedLayer;
       },
+      get flatLayers() {
+        return ctx.flatLayers;
+      },
       toMm: ctx.toMm,
       toScreen: ctx.toScreen,
       commit: ctx.commit,
@@ -331,7 +337,7 @@ export function Editor() {
 
   // --- image asset loading -----------------------------------------------
   useEffect(() => {
-    for (const layer of flattenLayerNodes(doc.layers)) {
+    for (const layer of projectFlatLayers(doc.layers)) {
       if (layer.type === 'image' && !imagesRef.current.has(layer.id)) {
         const img = new Image();
         img.onload = () => setAssetVersion((v) => v + 1);
@@ -362,9 +368,11 @@ export function Editor() {
     canvas.style.width = `${canvasSize.w}px`;
     canvas.style.height = `${canvasSize.h}px`;
     const activeTool = getTool(activeToolId);
-    // renderScene (and every flat-consumer below it) reads Layer[] — flatten
-    // the tree at this render boundary (layer-groups #146).
-    renderScene(canvas, { ...doc, layers: flattenLayerNodes(doc.layers) }, panel, camera, {
+    // renderScene (and every flat-consumer below it) reads Layer[] — project
+    // the tree at this render boundary (#146/#150). projectFlatLayers keeps
+    // the array identity stable per committed tree, so text geometry's
+    // incarnation tracking sees one incarnation per commit, not per repaint.
+    renderScene(canvas, { ...doc, layers: projectFlatLayers(doc.layers) }, panel, camera, {
       selectedIds,
       images: imagesRef.current,
       showNodes: activeToolId === 'select' && selectedLayer?.type === 'path',
@@ -404,17 +412,19 @@ export function Editor() {
       // members (allowed via the numeric inspectors) and shear the group. dx/dy
       // are already grid steps (0.1 / 1mm), and this matches translatePathLayer,
       // which already moves paths by the raw delta.
-      const ids = new Set(readSelectedIds());
-      if (ids.size === 0) return;
-      // Group nodes never carry x/y (structure + hidden only, see types.ts) —
-      // selection targets leaves only, so a matched id on a group is skipped
-      // rather than nudged (group-aware selection is a later sub-issue, #151).
-      const layers = docRef.current.layers.map((l) => {
-        if (!ids.has(l.id) || isGroupNode(l)) return l;
+      const ids = readSelectedIds();
+      if (ids.length === 0) return;
+      // mapLeavesById nudges matching leaves at ANY depth and only leaves —
+      // group nodes never carry x/y (structure + hidden only, see types.ts),
+      // and a selected group id expanding to its members is #151's job.
+      const layers = mapLeavesById(docRef.current.layers, ids, (l) => {
         const patch =
           l.type === 'path' ? translatePathLayer(l, dx, dy) : { x: l.x + dx, y: l.y + dy };
         return { ...l, ...patch } as Layer;
       });
+      // Same tree reference back = no leaf matched (e.g. only group ids
+      // selected) — skip the commit so no phantom undo entry is pushed.
+      if (layers === docRef.current.layers) return;
       commit({ ...docRef.current, layers });
     };
 

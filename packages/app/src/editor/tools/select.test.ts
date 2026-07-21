@@ -33,6 +33,7 @@ import { normalizeSelectedIds } from '../selection';
 import { rotateHandleScreenPos } from '../renderer';
 import type { PanelDims, ToolContext, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
+import { projectFlatLayers } from '../flat-projection';
 import { resetTextGeometryForTests, setTextMeasureForTests } from '../text-geometry';
 
 const CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 }; // identity: screen px == mm
@@ -71,6 +72,9 @@ function makeHarness(initialDoc: DocState) {
     },
     get selectedLayer() {
       return flattenLayerNodes(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
+    },
+    get flatLayers() {
+      return projectFlatLayers(history.present.layers);
     },
     toMm: (p: Pt) => p,
     toScreen: (p: Pt) => p,

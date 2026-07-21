@@ -3,7 +3,7 @@
 // inspector is registered for a type it degrades to a clear message rather than
 // crashing — so a half-built wave still runs.
 import { createElement } from 'react';
-import type { DocState, Layer } from '@zpd/core';
+import { updateLeafById, type DocState, type Layer } from '@zpd/core';
 import { getInspector } from '../registry/inspectors';
 import type { ToolContext } from '../types';
 
@@ -37,7 +37,9 @@ export function InspectorHost({ ctx, layer, selectedIds }: InspectorHostProps) {
   const onChange = (patch: Partial<Layer>, options?: { commit?: boolean }) => {
     const next: DocState = {
       ...ctx.doc,
-      layers: ctx.doc.layers.map((l) => (l.id === layer.id ? ({ ...l, ...patch } as Layer) : l)),
+      // Recursive write (#150): the inspected leaf may sit inside a group —
+      // a flat root-array map would silently drop the edit for nested leaves.
+      layers: updateLeafById(ctx.doc.layers, layer.id, (l) => ({ ...l, ...patch }) as Layer),
     };
     if (options?.commit ?? true) ctx.commit(next);
     else ctx.replace(next);

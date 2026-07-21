@@ -58,6 +58,7 @@ import {
 import { normalizeSelectedIds } from '../selection';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
+import { projectFlatLayers } from '../flat-projection';
 
 const CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 }; // identity: screen px == mm
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
@@ -94,6 +95,9 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
     },
     get selectedLayer() {
       return flattenLayerNodes(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
+    },
+    get flatLayers() {
+      return projectFlatLayers(history.present.layers);
     },
     toMm: (p: Pt) => p,
     toScreen: (p: Pt) => p,

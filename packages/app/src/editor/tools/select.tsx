@@ -8,6 +8,7 @@ import {
   duplicateLayersAbove,
   flattenLayerNodes,
   hitTestLayer,
+  mapLeavesById,
   mergeBboxes,
   mintId,
   movePathAnchor,
@@ -21,6 +22,7 @@ import {
   snapScalar,
   snapToGrid,
   translatePathLayer,
+  updateLeafById,
   type DocState,
   type Layer,
   type Pt,
@@ -277,7 +279,9 @@ export function marqueeHitIds(layers: readonly Layer[], rectMm: Rect): string[] 
 function updateLayer(ctx: ToolContext, id: string, patch: Partial<Layer>, commit: boolean): void {
   const next: DocState = {
     ...ctx.doc,
-    layers: ctx.doc.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as Layer) : l)),
+    // Recursive write (#150): patches the leaf wherever it sits in the tree —
+    // a flat root-array map would silently no-op for a leaf nested in a group.
+    layers: updateLeafById(ctx.doc.layers, id, (l) => ({ ...l, ...patch }) as Layer),
   };
   if (commit) ctx.commit(next);
   else ctx.replace(next);
@@ -324,7 +328,7 @@ export function hitTestCanonicalText(layer: Extract<Layer, { type: 'text' }>, mm
 }
 
 function topmostHit(ctx: ToolContext, mm: Pt): Layer | null {
-  const layers = flattenLayerNodes(ctx.doc.layers);
+  const layers = ctx.flatLayers;
   reconcileTextGeometry(layers, ctx.requestRepaint);
   // Preserve core's two-tier ordering exactly: every non-pattern wins over
   // every pattern, and topmost wins within a tier. Only text substitutes the
@@ -463,7 +467,7 @@ function groupFactorFloor(targets: readonly MoveTarget[], bbox: Rect): number {
 // so exactly the handles the chrome draws are grabbable here.
 function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
   const ids = ctx.selectedIds;
-  const layers = flattenLayerNodes(ctx.doc.layers);
+  const layers = ctx.flatLayers;
   const bbox = multiResizeBbox(layers, ids);
   if (!bbox) return false;
   for (const h of cornerHandleRects(bbox, ctx.camera)) {
@@ -509,7 +513,7 @@ registerTool({
     'selected pattern drags like any layer (size it from the Properties panel). Arrow keys nudge ' +
     'the selection (Shift = ×10); Delete/Backspace removes it. Shortcut: V.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
-    reconcileTextGeometry(flattenLayerNodes(ctx.doc.layers), ctx.requestRepaint);
+    reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
     hoveredId = null; // pointer engaged — hover chrome resumes after release
     // Right (or middle) click PRESERVES the selection: a future context menu
     // must be able to act on the live selection (#47).
@@ -557,7 +561,7 @@ registerTool({
         drag = {
           kind: 'move',
           startMm: e.mm,
-          targets: flattenLayerNodes(ctx.doc.layers)
+          targets: ctx.flatLayers
             .filter((l) => ids.includes(l.id))
             .map((l) => ({ id: l.id, orig: l })),
           crossed: false,
@@ -592,15 +596,14 @@ registerTool({
     };
   },
   onPointerMove(e: ToolPointerEvent, ctx: ToolContext) {
-    reconcileTextGeometry(flattenLayerNodes(ctx.doc.layers), ctx.requestRepaint);
+    reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
     if (marquee) {
       if (!marquee.active && !pastThreshold(e.screen, marquee.startScreen)) return;
       marquee.active = true;
       marquee.currentMm = e.mm;
-      const hits = marqueeHitIds(
-        flattenLayerNodes(ctx.doc.layers),
-        marqueeRect(marquee.startMm, marquee.currentMm),
-      );
+      // Marquee CANDIDATES come from the flat projection (#150) — selection
+      // semantics (promoting a swept nested leaf to its group) are #151's.
+      const hits = marqueeHitIds(ctx.flatLayers, marqueeRect(marquee.startMm, marquee.currentMm));
       const base = marquee.baseIds;
       ctx.selectIds(
         marquee.additive ? [...base, ...hits.filter((id) => !base.includes(id))] : hits,
@@ -637,7 +640,10 @@ registerTool({
         // layer list and silently drop the clones.
         // Flatten once: this "move" case both reads (duplicateLayersAbove
         // below) and writes back a flat Layer[] — identity for a group-free
-        // doc, matching the mechanical shim used across this file (#146).
+        // doc. DELIBERATE flatten-write shim left from #146: for a grouped
+        // doc the write-back would discard group structure. Group-aware
+        // move/duplicate (via the selection resolver + tree primitives) is
+        // #151's job — do not convert this site piecemeal here (#150).
         let layers = flattenLayerNodes(ctx.doc.layers);
         if (!drag.crossed) {
           // We're past the client-space threshold gate above, so THIS move is
@@ -793,9 +799,11 @@ registerTool({
         for (const { id, orig } of drag.targets) {
           scaled.set(id, scaleLayer(orig, f, anchor, MIN_RESIZE_MM));
         }
+        // Recursive write (#150): each scaled leaf lands wherever it sits in
+        // the tree — a flat root map would no-op for group-nested members.
         ctx.replace({
           ...ctx.doc,
-          layers: ctx.doc.layers.map((l) => scaled.get(l.id) ?? l),
+          layers: mapLeavesById(ctx.doc.layers, [...scaled.keys()], (l) => scaled.get(l.id) ?? l),
         });
         break;
       }
@@ -813,7 +821,7 @@ registerTool({
       }
       case 'anchor': {
         const anchorLayerId = drag.layerId;
-        const layer = flattenLayerNodes(ctx.doc.layers).find((l) => l.id === anchorLayerId);
+        const layer = ctx.flatLayers.find((l) => l.id === anchorLayerId);
         if (layer?.type === 'path') {
           const nx = snap(e.mm.x);
           const ny = snap(e.mm.y);
@@ -831,7 +839,7 @@ registerTool({
       }
       case 'handle': {
         const handleLayerId = drag.layerId;
-        const layer = flattenLayerNodes(ctx.doc.layers).find((l) => l.id === handleLayerId);
+        const layer = ctx.flatLayers.find((l) => l.id === handleLayerId);
         if (layer?.type === 'path') {
           const cur = layer.points[drag.index]?.[drag.which];
           if (!gestureOpen && cur && e.mm.x === cur.x && e.mm.y === cur.y) break;
@@ -900,11 +908,11 @@ registerTool({
     downScreen = null;
   },
   renderDraft(d: DraftRenderContext, ctx: ToolContext) {
-    reconcileTextGeometry(flattenLayerNodes(ctx.doc.layers), ctx.requestRepaint);
+    reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
     // hover chrome — subtle, and skipped for layers already wearing selection
     // chrome (hoveredId is cleared on pointerdown, so nothing draws mid-drag)
     if (hoveredId && !ctx.selectedIds.includes(hoveredId)) {
-      const layer = flattenLayerNodes(ctx.doc.layers).find((l) => l.id === hoveredId);
+      const layer = ctx.flatLayers.find((l) => l.id === hoveredId);
       const bbox = layer && !layer.hidden ? layerBbox(layer) : null;
       if (layer && bbox) {
         drawHoverOutline(d.ctx, rotatedRectAABB(bbox, layerRotation(layer)), d.camera);

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Guide, ShapeLayer } from '@zpd/core';
 import type { ToolContext } from '../types';
+import { projectFlatLayers } from '../flat-projection';
 import { Sidebar } from './sidebar';
 
 afterEach(cleanup);
@@ -33,6 +34,9 @@ function stubCtx() {
     select: vi.fn(),
     selectIds: vi.fn(),
   } as unknown as ToolContext;
+  Object.defineProperty(ctx, 'flatLayers', {
+    get: () => projectFlatLayers(ctx.doc.layers),
+  });
   return { ctx, commit };
 }
 

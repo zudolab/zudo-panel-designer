@@ -6,8 +6,9 @@
 // must not linger), and evicts renderer image-cache entries that no longer
 // match — see reconcileImageCache in renderer.ts for why a reused id needs
 // eviction, not just skipping.
-import { createDefaultDoc, flattenLayerNodes, type DocState } from '@zpd/core';
+import { createDefaultDoc, type DocState } from '@zpd/core';
 import { confirmDialog } from './components/confirm-dialog';
+import { projectFlatLayers } from './flat-projection';
 import { resetTextGeometryNamespace } from './text-geometry';
 import type { ToolContext } from './types';
 
@@ -15,7 +16,10 @@ export function replaceDoc(nextDoc: DocState, ctx: ToolContext): void {
   resetTextGeometryNamespace();
   ctx.reset(nextDoc);
   ctx.selectIds([]);
-  ctx.evictImageCache(flattenLayerNodes(nextDoc.layers));
+  // projectFlatLayers (not ctx.flatLayers): ctx.doc still reads the OLD doc
+  // until React re-renders after reset(); the eviction must see the INCOMING
+  // doc's leaves. Also warms the projection cache for nextDoc's tree.
+  ctx.evictImageCache(projectFlatLayers(nextDoc.layers));
 }
 
 // New Panel (issue #76): confirm-then-replace with the default starter doc.

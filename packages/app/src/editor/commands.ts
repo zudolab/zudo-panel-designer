@@ -17,7 +17,7 @@
 // refactor fires exactly the same way after it. See Editor.tsx's keydown
 // handler for how this registry replaces the old inline branches, and
 // commands.test.ts for the parity table.
-import type { AlignType, DistributeAxis } from '@zpd/core';
+import { deleteNodeById, type AlignType, type DistributeAxis } from '@zpd/core';
 import { applyAlign, applyDistribute, canAlign, canDistribute, type Reference } from './align-ops';
 import { downloadPanelConfig } from './download';
 import { pickImportJsonFile } from './import';
@@ -226,8 +226,14 @@ const STATIC_COMMANDS: CommandDef[] = [
       // since Delete/Backspace is fully registry-dispatched.
       const ids = ctx.selectedIds;
       if (ids.length === 0) return;
-      const doomed = new Set(ids);
-      ctx.commit({ ...ctx.doc, layers: ctx.doc.layers.filter((l) => !doomed.has(l.id)) });
+      // Recursive delete (#150): deleteNodeById removes each selected node
+      // wherever it sits in the tree (a flat root filter would no-op for
+      // group-nested leaves). Group-id cascade + maximal-root collapse
+      // semantics for group selections are #151's.
+      ctx.commit({
+        ...ctx.doc,
+        layers: ids.reduce((tree, id) => deleteNodeById(tree, id), ctx.doc.layers),
+      });
       ctx.selectIds([]);
     },
     isEnabled: ALWAYS_ENABLED,
