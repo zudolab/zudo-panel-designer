@@ -20,6 +20,7 @@ import {
 } from '@zpd/core';
 import type { ToolContext } from '../types';
 import { projectFlatLayers } from '../flat-projection';
+import { bakeMultiRotate, captureMultiRotateSession } from '../multi-rotate';
 import { RotateSelectionPanel } from './rotate-selection-panel';
 
 afterEach(cleanup);
@@ -265,5 +266,75 @@ describe('RotateSelectionPanel — baseline reset on selection change', () => {
     expect(layerById('b').rotation).toBe(35);
     expect(layerById('a').rotation).toBe(15); // untouched — 'a' left the selection
     expect(layerById('c').rotation).toBe(20);
+  });
+});
+
+// Regression for a codex-review P1 finding: an unchanged selection must not
+// pin a stale session across an EXTERNAL doc edit (another tool's move/align)
+// that lands between two visits to this row. Gated on !gestureOpen so it
+// never fires mid-edit against the row's OWN replace() stream.
+describe('RotateSelectionPanel — re-captures on an external doc edit under an unchanged selection', () => {
+  it('bakes the next delta from the moved position, not the stale pre-move snapshot', () => {
+    const { ctx, layerById } = makeHarness(TWO_RECTS_DOC);
+    const { rerender } = render(<RotateSelectionPanel ctx={ctx} selectedIds={['a', 'b']} />);
+
+    // An external edit (e.g. a plain drag-move tool) commits directly —
+    // never through this row — moving 'a' far from its captured position.
+    const movedLayers = ctx.doc.layers.map((l) =>
+      'id' in l && l.id === 'a' ? { ...l, x: 200 } : l,
+    );
+    ctx.commit({ ...ctx.doc, layers: movedLayers });
+
+    // In the real app any commit re-renders the whole Editor tree, including
+    // this row — reproduce that here with an unchanged-props rerender.
+    rerender(<RotateSelectionPanel ctx={ctx} selectedIds={['a', 'b']} />);
+
+    const input = screen.getByLabelText('Rotate selection (°)');
+    fireEvent.change(input, { target: { value: '10' } });
+
+    // Ground truth: a session captured FRESH from the moved doc, baked at the
+    // same delta — this is what a correct re-capture must match.
+    const freshSession = captureMultiRotateSession(
+      movedLayers,
+      ['a', 'b'],
+      projectFlatLayers(movedLayers),
+    );
+    if (!freshSession) throw new Error('expected a capturable session for two rotatable rects');
+    const expected = bakeMultiRotate(movedLayers, freshSession, 10);
+    const expectedA = expected.find((l) => 'id' in l && l.id === 'a') as ShapeLayer;
+
+    expect(layerById('a').x).toBeCloseTo(expectedA.x, 6);
+    expect(layerById('a').rotation).toBe(10);
+  });
+
+  it('does NOT re-capture mid-gesture — an external edit while this row is actively editing is ignored', () => {
+    const { ctx, layerById } = makeHarness(TWO_RECTS_DOC);
+    render(<RotateSelectionPanel ctx={ctx} selectedIds={['a', 'b']} />);
+    const input = screen.getByLabelText('Rotate selection (°)');
+
+    fireEvent.change(input, { target: { value: '5' } }); // opens the gesture, session frozen
+    expect(layerById('a').rotation).toBe(5);
+
+    // An external edit lands mid-gesture — this row must keep baking from ITS
+    // OWN frozen session, not silently re-capture from the mutated doc.
+    const externallyMoved = ctx.doc.layers.map((l) =>
+      'id' in l && l.id === 'b' ? { ...l, x: 999 } : l,
+    );
+    ctx.replace({ ...ctx.doc, layers: externallyMoved });
+
+    fireEvent.change(input, { target: { value: '10' } });
+    // Still baked from the ORIGINAL start snapshot (b at x=30), so 'a' — which
+    // never moved externally — lands exactly where a fresh 10° bake from the
+    // untouched original doc would put it.
+    const freshFromOriginal = captureMultiRotateSession(
+      TWO_RECTS_DOC.layers,
+      ['a', 'b'],
+      projectFlatLayers(TWO_RECTS_DOC.layers),
+    );
+    if (!freshFromOriginal) throw new Error('expected a capturable session for two rotatable rects');
+    const expected = bakeMultiRotate(TWO_RECTS_DOC.layers, freshFromOriginal, 10);
+    const expectedA = expected.find((l) => 'id' in l && l.id === 'a') as ShapeLayer;
+    expect(layerById('a').x).toBeCloseTo(expectedA.x, 6);
+    expect(layerById('a').rotation).toBe(10);
   });
 });
