@@ -41,10 +41,18 @@ const OUTSIDE_GHOST_ALPHA = 0.35;
 const LOADING_FONT_ALPHA = 0.3;
 
 export interface RenderExtras {
-  // Multi-select contract (#44): the full (normalized) selection. The chrome
-  // pass draws a dashed bbox per selected layer plus a combined bbox when >1;
-  // resize handles / path nodes render only when exactly one is selected (#45).
+  // Multi-select contract (#44): the full (normalized) selection, EXPANDED to
+  // flat leaf ids since #151 (a raw group id matches no flat layer). The
+  // chrome pass draws a dashed bbox per selected layer plus a combined bbox
+  // when >1; resize handles / path nodes render only for a single selection.
   selectedIds: readonly string[];
+  // Whether the SELECTION is a true single-leaf selection (#151). A lone
+  // one-child GROUP also expands to exactly one leaf id here, but must get
+  // the combined (no single-layer handles) treatment — the select tool
+  // offers no grabs for it, so drawing handles would be dead chrome. When
+  // absent, derived from selectedIds.length === 1 (pre-#151 behavior, keeps
+  // group-free callers/tests bit-identical).
+  singleSelection?: boolean;
   images: Map<string, HTMLImageElement>;
   showNodes: boolean; // draw path anchors/handles for the selected path layer
   showOutsidePanel: boolean; // ghost-paint off-panel layer content (issue #43)
@@ -685,9 +693,12 @@ function drawSelectionChrome(
   if (boxes.length === 0) return;
 
   // Handles + rotate affordance + path nodes are single-selection concerns:
-  // multi-resize is #52. `selected` is defined iff EXACTLY one layer is
-  // selected — and boxes is then non-empty, so the layer is present + visible.
+  // multi-resize is #52. `selected` is defined iff the selection is a true
+  // single LEAF (#151 — a one-child group expands to one leaf id too, but
+  // takes the combined branch below) — and boxes is then non-empty, so the
+  // layer is present + visible.
   const selected =
+    (extras.singleSelection ?? extras.selectedIds.length === 1) &&
     extras.selectedIds.length === 1
       ? layers.find((l) => l.id === extras.selectedIds[0])
       : undefined;

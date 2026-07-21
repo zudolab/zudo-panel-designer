@@ -149,6 +149,11 @@ describe('resolveSelectionOverlayMode — the #151 matrix', () => {
     expect(resolveSelectionOverlayMode(tree(), ['ghost'])).toBe('none');
   });
 
+  it('a selected group left CHILDLESS resolves to none — nothing to draw or transform', () => {
+    const t: LayerNode[] = [group('empty', []), rect('a', 0, 0)];
+    expect(resolveSelectionOverlayMode(t, ['empty'])).toBe('none');
+  });
+
   it('a lone leaf is single', () => {
     expect(resolveSelectionOverlayMode(tree(), ['a'])).toBe('single');
   });

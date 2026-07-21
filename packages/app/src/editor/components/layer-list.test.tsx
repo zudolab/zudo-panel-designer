@@ -153,6 +153,35 @@ describe('LayerList multi-select', () => {
     expect(selectIds).toHaveBeenLastCalledWith(['c']);
   });
 
+  // #151: the Meta list-toggle is the same raw-leaf escape hatch as a canvas
+  // Meta-click — adding a grouped row's leaf strips its selected ancestor
+  // group id so a [group, descendant] overlap never enters selectedIds.
+  it('meta-click on a grouped row strips its selected ancestor group', () => {
+    const doc = {
+      panelHp: 12,
+      layers: [
+        { kind: 'group' as const, id: 'G', name: 'G', children: [shape('a', 'A'), shape('b', 'B')] },
+        shape('c', 'C'),
+      ],
+    };
+    const selectIds = vi.fn();
+    const ctx = {
+      get doc() {
+        return doc;
+      },
+      get flatLayers() {
+        return projectFlatLayers(doc.layers);
+      },
+      commit: vi.fn(),
+      select: vi.fn(),
+      selectIds,
+    } as unknown as ToolContext;
+    render(<LayerList ctx={ctx} selectedIds={['G']} />);
+
+    fireEvent.click(selectionButton('A'), { metaKey: true });
+    expect(selectIds).toHaveBeenLastCalledWith(['a']); // G dropped, raw leaf in
+  });
+
   it('shift-click selects the range from the last singly-clicked anchor', () => {
     const { ctx, selectIds } = multiCtx([]);
     render(<LayerList ctx={ctx} selectedIds={[]} />);

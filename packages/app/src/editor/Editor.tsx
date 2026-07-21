@@ -33,7 +33,11 @@ import { dispatchCommand, type CommandContext } from './commands';
 import { createDemoDoc } from './demo-doc';
 import { readDoc } from './doc-store';
 import { normalizeSelectedIds } from './selection';
-import { expandSelectionToLeafIds, resolveSelectionLeaves } from './selection-resolve';
+import {
+  expandSelectionToLeafIds,
+  resolveSelectionLeaves,
+  resolveSelectionOverlayMode,
+} from './selection-resolve';
 import { installTestBridge } from './test-bridge';
 import { isEditableTarget } from './is-editable-target';
 import { useAutosave } from './use-autosave';
@@ -107,9 +111,15 @@ export function Editor() {
   );
   // The flat-leaf view of the selection for the chrome pass (#151): a selected
   // group id draws per-leaf chrome on its descendants (renderScene consumes
-  // flat leaf ids only; the combined-bbox group chrome is #152's).
+  // flat leaf ids only; the combined-bbox group chrome is #152's). The overlay
+  // mode rides along so a one-child group — which also expands to exactly one
+  // leaf id — never wears the single-layer handles the tool won't serve.
   const chromeLeafIds = useMemo(
     () => expandSelectionToLeafIds(doc.layers, selectedIds),
+    [doc.layers, selectedIds],
+  );
+  const overlayMode = useMemo(
+    () => resolveSelectionOverlayMode(doc.layers, selectedIds),
     [doc.layers, selectedIds],
   );
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
@@ -385,6 +395,7 @@ export function Editor() {
       // Expanded to leaf ids (#151): the chrome pass matches flat leaves only,
       // so a raw group id would draw no selection chrome at all.
       selectedIds: chromeLeafIds,
+      singleSelection: overlayMode === 'single',
       images: imagesRef.current,
       showNodes: activeToolId === 'select' && selectedLayer?.type === 'path',
       showOutsidePanel,

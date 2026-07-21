@@ -141,27 +141,27 @@ export function promoteMarqueeSelection(
 
 export type SelectionOverlayMode = 'none' | 'single' | 'combined';
 
-// Overlay/chrome dispatch (#151 spec, verbatim): 'combined' iff any selected
-// id is a GROUP or the resolved leaf count is > 1 — a one-child group is
-// combined (it must get the combined-bbox treatment, never the single-layer
-// rotate/resize handles), a lone leaf is 'single', anything that resolves to
-// nothing (empty or stale-only selection) is 'none'.
+// Overlay/chrome dispatch (#151): 'combined' iff any selected id is a GROUP
+// or the resolved leaf count is > 1 — a one-child group is combined (it must
+// get the combined-bbox treatment, never the single-layer rotate/resize
+// handles), a lone leaf is 'single'. Anything that resolves to NO leaves at
+// all — empty selection, stale-only ids, or a selected group left childless —
+// is 'none': there is nothing to draw or transform, so classifying a
+// bounds-less selection as combined would just push a null-bounds guard into
+// every consumer (matches the reference implementation, pgen §13.3).
 export function resolveSelectionOverlayMode(
   tree: LayerNode[],
   selectedIds: readonly string[],
 ): SelectionOverlayMode {
   if (selectedIds.length === 0) return 'none';
-  let anyGroup = false;
+  const leafCount = expandSelectionToLeafIds(tree, selectedIds).length;
+  if (leafCount === 0) return 'none';
+  if (leafCount > 1) return 'combined';
   for (const id of selectedIds) {
     const found = findNodeById(tree, id);
-    if (found && isGroupNode(found.node)) {
-      anyGroup = true;
-      break;
-    }
+    if (found && isGroupNode(found.node)) return 'combined';
   }
-  const leafCount = expandSelectionToLeafIds(tree, selectedIds).length;
-  if (anyGroup || leafCount > 1) return 'combined';
-  return leafCount === 1 ? 'single' : 'none';
+  return 'single';
 }
 
 export interface SelectionLeavesResolution {
