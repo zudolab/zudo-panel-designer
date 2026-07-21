@@ -12,6 +12,7 @@ import {
   pathBbox,
   rectCenter,
   rectCorners,
+  rotatableLayer,
   rotatedRectAABB,
   type ColorIndex,
   type Guide,
@@ -25,7 +26,7 @@ import type { Camera } from './camera';
 import { guideScreenCoord, type GuideDraft } from './guides';
 import { outsidePanelRegion } from './outside-panel-region';
 import { getTextGeometry, reconcileTextGeometry } from './text-geometry';
-import type { DraftRenderContext, PanelDims } from './types';
+import type { DraftRenderContext, MultiRotateChrome, PanelDims } from './types';
 
 export { measureTextBbox } from './text-geometry';
 
@@ -61,6 +62,12 @@ export interface RenderExtras {
   // off). `guideDraft` is the live ruler-drag preview, or null when idle.
   guides?: readonly Guide[];
   guideDraft?: GuideDraft | null;
+  // Live multi/group-rotate gesture (#152), forwarded from the active tool's
+  // multiRotateChrome() hook. When set, the combined-selection chrome draws
+  // the FROZEN start bounds ctx-rotated by the live delta (plus the delta
+  // badge) instead of re-deriving live AABBs, which would pulsate and stay
+  // axis-aligned while the leaves visually rotate.
+  multiRotate?: MultiRotateChrome | null;
   // The active tool's draft preview hook (pen path, marquee, …). Drawn last,
   // unclipped, on top of the selection chrome.
   renderDraft?: (draft: DraftRenderContext) => void;
@@ -235,6 +242,50 @@ export function multiResizeBbox(
   return scalable ? mergeBboxes(boxes) : null;
 }
 
+// Whether the rotate BAKE can change this layer at all (#152): patterns pass
+// through rotateLayersAboutPivot unchanged (core rotate.ts, the multi-scale
+// precedent), and a path with no points anywhere has no geometry to rotate —
+// same reasoning as layerCanScale above, kept separate because the two gates
+// answer different gestures and must stay free to diverge.
+export function layerCanRotateBake(layer: Layer): boolean {
+  if (!rotatableLayer(layer)) return false;
+  if (layer.type === 'path') {
+    return layer.points.length > 0 || (layer.extraSubpaths?.some((s) => s.length > 0) ?? false);
+  }
+  return true;
+}
+
+// The bounds that offer the multi/group ROTATE knob, or null when the
+// selection doesn't qualify (#152). Extends the multiResizeBbox shared-gate
+// pattern: this ONE function gates BOTH the chrome pass and the select tool's
+// knob grab, so what is drawn is exactly what is grabbable. The union spans
+// the ROTATABLE, bakeable, MEASURABLE leaves only — the same set
+// captureMultiRotateSession freezes — so the idle knob, the grab hit-test,
+// the gesture pivot and the mid-gesture chrome all share ONE bounds/pivot
+// pair. A knob anchored to the full selection union instead would (a) jump
+// to the frozen rotatable-only bounds on the first tick and stop tracking
+// the pointer's ray whenever a selected pattern displaces the union, and
+// (b) promise a gesture that grabs a null session when the only rotatable
+// member is unmeasurable (invalid-size text) or unbakeable (empty path).
+// Unlike multiResizeBbox there is deliberately NO ≥2-boxes requirement: a
+// one-child group is combined overlay mode with a single leaf and still
+// rotates (the caller supplies the combined-mode precondition — the chrome's
+// combined branch, and the tool's resolveSelectionOverlayMode check).
+export function multiRotateBbox(
+  layers: readonly Layer[],
+  selectedIds: readonly string[],
+): Rect | null {
+  reconcileTextGeometry(layers);
+  const boxes: Rect[] = [];
+  for (const layer of layers) {
+    if (!selectedIds.includes(layer.id) || layer.hidden || !layerCanRotateBake(layer)) continue;
+    const raw = layerBbox(layer);
+    if (!raw) continue;
+    boxes.push(normalizeRect(rotatedRectAABB(raw, layerRotation(layer))));
+  }
+  return boxes.length > 0 ? mergeBboxes(boxes) : null;
+}
+
 // The rotate handle floats a fixed SCREEN distance beyond the top-edge
 // midpoint, along the layer's rotated "up" direction, so it tracks the
 // oriented chrome at any rotation and stays the same size at any zoom.
@@ -251,6 +302,38 @@ export function rotateHandleScreenPos(bbox: Rect, rotationDeg: number, cam: Came
     x: topMid.x + Math.sin(rad) * ROTATE_HANDLE_OFFSET_PX,
     y: topMid.y - Math.cos(rad) * ROTATE_HANDLE_OFFSET_PX,
   };
+}
+
+// The multi-rotate knob's SCREEN position (#152): the single-rotate handle
+// geometry (same ROTATE_HANDLE_OFFSET_PX conventions) above `bounds`, orbited
+// about `pivot` by the live gesture delta. Draw and hit-test both go through
+// this one function — the chrome wraps the same math in a ctx-rotate, so a
+// divergence would make the knob visible-but-unclickable. deltaDeg 0 (the
+// idle chrome, and every grab — a grab always happens with no gesture active)
+// is an exact pass-through of rotateHandleScreenPos.
+export function multiRotateKnobScreenPos(
+  bounds: Rect,
+  pivot: Pt,
+  deltaDeg: number,
+  cam: Camera,
+): Pt {
+  const base = rotateHandleScreenPos(bounds, 0, cam);
+  if (!deltaDeg) return base;
+  const c = mmToScreen(pivot, cam);
+  const rad = (deltaDeg * Math.PI) / 180;
+  const dx = base.x - c.x;
+  const dy = base.y - c.y;
+  return {
+    x: c.x + dx * Math.cos(rad) - dy * Math.sin(rad),
+    y: c.y + dx * Math.sin(rad) + dy * Math.cos(rad),
+  };
+}
+
+// Signed delta label for the multi-rotate badge (#152): `+37.5°` / `-45.0°`.
+// The -0 fold keeps a tiny counter-clockwise jitter from flashing "-0.0°".
+export function formatRotateDeltaBadge(deltaDeg: number): string {
+  const d = deltaDeg === 0 ? 0 : deltaDeg;
+  return `${d >= 0 ? '+' : ''}${d.toFixed(1)}°`;
 }
 
 export function paintLayer(
@@ -683,6 +766,79 @@ function drawHandleSquares(ctx: CanvasRenderingContext2D, rects: readonly Handle
   }
 }
 
+// Stem + circular knob above a bbox's (rotated) top-edge midpoint — the ONE
+// rotate affordance, shared byte-identically by the single-selection chrome
+// (#51) and the multi/group-rotate chrome (#152, drawn with rotationDeg 0
+// inside the gesture's ctx-rotate wrap). Caller owns save/restore.
+function drawRotateKnob(
+  ctx: CanvasRenderingContext2D,
+  bbox: Rect,
+  rotationDeg: number,
+  cam: Camera,
+): void {
+  const topMid = mmToScreen(
+    rotateMmPoint({ x: bbox.x + bbox.width / 2, y: bbox.y }, rectCenter(bbox), rotationDeg),
+    cam,
+  );
+  const knob = rotateHandleScreenPos(bbox, rotationDeg, cam);
+  ctx.strokeStyle = SELECT_COLOR;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(topMid.x, topMid.y);
+  ctx.lineTo(knob.x, knob.y);
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(knob.x, knob.y, ROTATE_HANDLE_RADIUS_PX, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+}
+
+// Small dark pill with the signed delta text, anchored near the live knob
+// position (#152). Screen space, drawn OUTSIDE the gesture's rotate wrap so
+// the text stays upright at any delta.
+function drawAngleBadge(ctx: CanvasRenderingContext2D, label: string, x: number, y: number): void {
+  ctx.save();
+  ctx.font = '11px system-ui, sans-serif';
+  const w = ctx.measureText(label).width + 10;
+  const h = 18;
+  ctx.fillStyle = 'rgba(20,22,26,0.85)';
+  ctx.fillRect(x, y - h, w, h);
+  ctx.fillStyle = '#ffffff';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + 5, y - h / 2);
+  ctx.restore();
+}
+
+// Mid-gesture multi-rotate chrome (#152): the FROZEN start bounds under one
+// outer ctx-rotate wrap (about the frozen pivot, by the live delta) covering
+// the dashed rect, the corner handles, and the knob — so the whole box
+// visibly turns with the content instead of pulsating as a re-derived AABB
+// union would. The signed delta badge rides the live knob position, outside
+// the wrap. Per-leaf boxes are deliberately NOT drawn mid-gesture: each
+// leaf's live AABB pulsates while it rotates (the frozen box is the chrome).
+function drawMultiRotateGestureChrome(
+  ctx: CanvasRenderingContext2D,
+  mr: MultiRotateChrome,
+  cam: Camera,
+): void {
+  const pivotScreen = mmToScreen(mr.pivot, cam);
+  ctx.save();
+  ctx.translate(pivotScreen.x, pivotScreen.y);
+  ctx.rotate((mr.deltaDeg * Math.PI) / 180);
+  ctx.translate(-pivotScreen.x, -pivotScreen.y);
+  ctx.strokeStyle = SELECT_COLOR;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 4]);
+  strokeMmRect(ctx, mr.bounds, cam);
+  ctx.setLineDash([]);
+  drawHandleSquares(ctx, cornerHandleRects(mr.bounds, cam));
+  drawRotateKnob(ctx, mr.bounds, 0, cam);
+  ctx.restore();
+  const knob = multiRotateKnobScreenPos(mr.bounds, mr.pivot, mr.deltaDeg, cam);
+  drawAngleBadge(ctx, formatRotateDeltaBadge(mr.deltaDeg), knob.x + 16, knob.y - 8);
+}
+
 function drawSelectionChrome(
   ctx: CanvasRenderingContext2D,
   layers: Layer[],
@@ -698,14 +854,20 @@ function drawSelectionChrome(
   // takes the combined branch below) — and boxes is then non-empty, so the
   // layer is present + visible.
   const selected =
-    (extras.singleSelection ?? extras.selectedIds.length === 1) &&
-    extras.selectedIds.length === 1
+    (extras.singleSelection ?? extras.selectedIds.length === 1) && extras.selectedIds.length === 1
       ? layers.find((l) => l.id === extras.selectedIds[0])
       : undefined;
   const rotation = selected ? layerRotation(selected) : 0;
   // RAW (pre-rotation) bbox: the oriented chrome + handles anchor to it, not
   // to the axis-aligned AABB in `boxes`.
   const rawBbox = selected ? layerBbox(selected) : null;
+
+  // Live multi-rotate gesture (#152): the frozen-bounds chrome REPLACES the
+  // whole combined-selection chrome for the duration of the stream.
+  if (!selected && extras.multiRotate) {
+    drawMultiRotateGestureChrome(ctx, extras.multiRotate, cam);
+    return;
+  }
 
   ctx.save();
   ctx.strokeStyle = SELECT_COLOR;
@@ -731,6 +893,11 @@ function drawSelectionChrome(
     // exactly the rects drawn here.
     const multiBbox = multiResizeBbox(layers, extras.selectedIds);
     if (multiBbox) drawHandleSquares(ctx, cornerHandleRects(multiBbox, cam));
+    // Multi/group rotate knob (#152): same shared-gate pattern. Drawn after
+    // (= on top of) the corner handles, matching its precedence in the grab
+    // chain (rotate wins over resize where they overlap).
+    const rotateBbox = multiRotateBbox(layers, extras.selectedIds);
+    if (rotateBbox) drawRotateKnob(ctx, rotateBbox, 0, cam);
     ctx.restore();
     return;
   }
@@ -746,28 +913,9 @@ function drawSelectionChrome(
 
   // Rotate handle (#51, image joined in #147): shape/text/image — the types
   // layerRotation reads. A stem connects the rotated top-edge midpoint to a
-  // circular knob.
+  // circular knob (shared with the multi-rotate chrome, #152).
   if (canRotate(selected) && rawBbox) {
-    const topMid = mmToScreen(
-      rotateMmPoint(
-        { x: rawBbox.x + rawBbox.width / 2, y: rawBbox.y },
-        rectCenter(rawBbox),
-        rotation,
-      ),
-      cam,
-    );
-    const knob = rotateHandleScreenPos(rawBbox, rotation, cam);
-    ctx.strokeStyle = SELECT_COLOR;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(topMid.x, topMid.y);
-    ctx.lineTo(knob.x, knob.y);
-    ctx.stroke();
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(knob.x, knob.y, ROTATE_HANDLE_RADIUS_PX, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    drawRotateKnob(ctx, rawBbox, rotation, cam);
   }
 
   // path node anchors + bezier handles when node-editing

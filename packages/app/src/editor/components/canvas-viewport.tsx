@@ -11,6 +11,9 @@ export interface CanvasViewportProps {
   onPointerDown(e: ReactPointerEvent<HTMLCanvasElement>): void;
   onPointerMove(e: ReactPointerEvent<HTMLCanvasElement>): void;
   onPointerUp(e: ReactPointerEvent<HTMLCanvasElement>): void;
+  // Browser-revoked pointer (#152) — routed so an interrupted gesture closes
+  // like a pointerup instead of leaving a drag armed forever.
+  onPointerCancel(e: ReactPointerEvent<HTMLCanvasElement>): void;
   onPointerLeave(e: ReactPointerEvent<HTMLCanvasElement>): void;
   onDoubleClick(e: ReactPointerEvent<HTMLCanvasElement>): void;
 }
@@ -22,6 +25,7 @@ export function CanvasViewport({
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  onPointerCancel,
   onPointerLeave,
   onDoubleClick,
 }: CanvasViewportProps) {
@@ -34,6 +38,7 @@ export function CanvasViewport({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
         onPointerLeave={onPointerLeave}
         onDoubleClick={onDoubleClick}
       />
