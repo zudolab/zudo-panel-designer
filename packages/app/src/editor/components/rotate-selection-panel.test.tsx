@@ -338,3 +338,81 @@ describe('RotateSelectionPanel — re-captures on an external doc edit under an 
     expect(layerById('a').rotation).toBe(10);
   });
 });
+
+// Regression tripwire for the #158 e2e finding: in the real app ctx.doc reads
+// Editor's docRef, synced in a passive effect AFTER each commit — so the
+// render flush an event handler triggers still sees the PREVIOUS doc, while
+// the row's own state in that same flush is already fresh. The synchronous
+// makeHarness above can never produce that child-fresh/parent-stale window
+// (its ctx.doc getter reads the live history), which is exactly why the
+// original bug slipped past this suite. This harness reproduces the ordering
+// faithfully: mutators hit the reducer-truth history synchronously, reads lag
+// behind until sync() runs — called after each event, mirroring "handlers
+// only run after commit+effects" (Editor.tsx's docRef comment).
+describe('RotateSelectionPanel — child-before-parent commit ordering (lagging ctx.doc)', () => {
+  function makeLaggyHarness(initialDoc: DocState) {
+    let history: HistoryState<DocState> = createHistory(initialDoc);
+    let syncedDoc: DocState = history.present; // the docRef analogue
+    const ctx = {
+      get doc() {
+        return syncedDoc;
+      },
+      get flatLayers() {
+        return projectFlatLayers(syncedDoc.layers);
+      },
+      commit: (next: DocState) => {
+        history = coreCommit(history, next);
+      },
+      replace: (next: DocState) => {
+        history = coreReplace(history, next);
+      },
+      beginGesture: () => {
+        history = coreBeginGesture(history);
+      },
+      abortGesture: () => {
+        history = coreAbortGesture(history);
+      },
+    } as unknown as ToolContext;
+    return {
+      ctx,
+      sync: () => {
+        syncedDoc = history.present;
+      },
+      getHistory: () => history,
+      layerById: (id: string) =>
+        history.present.layers.find((l) => 'id' in l && l.id === id) as ShapeLayer,
+    };
+  }
+
+  it('typing right after an Escape bakes from the pre-gesture baseline, not on the aborted delta', () => {
+    const { ctx, sync, getHistory, layerById } = makeLaggyHarness(TWO_RECTS_DOC);
+    const baselinePast = getHistory().past.length;
+    render(<RotateSelectionPanel ctx={ctx} selectedIds={['a', 'b']} />);
+    const input = screen.getByLabelText('Rotate selection (°)');
+
+    fireEvent.change(input, { target: { value: '10' } });
+    sync();
+    fireEvent.change(input, { target: { value: '47' } });
+    sync();
+
+    // Escape's flush renders the row with gestureOpen already false but
+    // ctx.doc STILL the 47-baked tree (sync() has not run yet) — the exact
+    // stale window of the browser repro. Unfixed, the recapture guard
+    // latches session/capturedTree onto that abandoned tree here, and the
+    // post-flush sync() (a ref write in the app — no re-render) never
+    // self-corrects it.
+    fireEvent.keyDown(input, { key: 'Escape' });
+    sync();
+    expect(getHistory().past.length).toBe(baselinePast); // abort itself worked...
+    expect(layerById('a').rotation).toBeUndefined(); // ...and the doc reverted
+
+    fireEvent.change(input, { target: { value: '45' } });
+    sync();
+    fireEvent.keyDown(input, { key: 'Enter' });
+    sync();
+
+    expect(layerById('a').rotation).toBe(45); // NOT 92 (= 47 + 45 baked on the aborted delta)
+    expect(layerById('b').rotation).toBe(45);
+    expect(getHistory().past.length).toBe(baselinePast + 1);
+  });
+});

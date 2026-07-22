@@ -54,6 +54,28 @@ export function RotateSelectionPanel({ ctx, selectedIds }: RotateSelectionPanelP
   const [draft, setDraft] = useState('0.0');
   const [gestureOpen, setGestureOpen] = useState(false);
 
+  // Own-bake provenance marker (#157 e2e bug, found by #158's integration
+  // pass): in the REAL app `ctx.doc` reads Editor's docRef, which is synced
+  // in a passive effect AFTER each commit — so in the render flush that
+  // cancel() triggers (its abortGesture dispatch and setGestureOpen(false)
+  // batch together), this component sees its OWN state already fresh
+  // (gestureOpen=false) while `tree` is still the pre-abort mid-gesture doc:
+  // this row's last bake output. The doc-change recapture below would latch
+  // capturedTree/session onto that abandoned tree, and — since the later
+  // docRef sync is a ref write, not a render — nothing ever self-corrects:
+  // the next edit then bakes on top of the aborted delta (type 10, 47,
+  // Escape, 45 => 92°). Recapturing from this row's own bake output is
+  // wrong under EVERY circumstance (mid-gesture it corrupts the frozen-
+  // delta model; post-abort it resurrects the abandoned delta), so instead
+  // of trying to out-time React, the guard checks provenance: applyDelta
+  // records each baked tree here, and a tree matching it never triggers a
+  // recapture — timing-independent, however late the docRef sync lands.
+  // Every LEGITIMATE recapture clears the marker again, which keeps redo
+  // honest: redo restores the exact finalized bake object (reference-equal
+  // to this marker), and the undo that precedes any redo always lands a
+  // clearing recapture first.
+  const [lastBakedTree, setLastBakedTree] = useState<typeof tree | null>(null);
+
   const key = selectionKey(selectedIds);
 
   // Capture (or drop) the session at render time — the same "adjust state
@@ -69,13 +91,24 @@ export function RotateSelectionPanel({ ctx, selectedIds }: RotateSelectionPanelP
   //    from the now-stale pre-nudge snapshots and silently discard the nudge.
   //    Gated on !gestureOpen: `tree` also changes on every OWN replace() tick
   //    mid-gesture, and recapturing THAT would corrupt the frozen-delta model
-  //    this row exists to provide.
-  if (eligible && (key !== capturedKey || (!gestureOpen && tree !== capturedTree))) {
+  //    this row exists to provide. Also gated on tree !== lastBakedTree
+  //    (see the marker's comment above): a tree that IS this row's own bake
+  //    output is never an external edit — post-Escape it is the abandoned
+  //    pre-abort doc still visible through the not-yet-synced docRef, and
+  //    no recapture is needed then anyway, since abortGesture restores
+  //    present to the exact object `session`/`capturedTree` were captured
+  //    from (tree === capturedTree again by reference once the abort lands).
+  if (
+    eligible &&
+    (key !== capturedKey ||
+      (!gestureOpen && tree !== capturedTree && tree !== lastBakedTree))
+  ) {
     setCapturedKey(key);
     setCapturedTree(tree);
     setSession(captureMultiRotateSession(tree, selectedIds, ctx.flatLayers));
     setDraft('0.0');
     setGestureOpen(false);
+    setLastBakedTree(null); // a fresh baseline obsoletes the old provenance marker
   } else if (!eligible && capturedKey !== null) {
     setCapturedKey(null);
     setCapturedTree(null);
@@ -94,7 +127,9 @@ export function RotateSelectionPanel({ ctx, selectedIds }: RotateSelectionPanelP
       setGestureOpen(true);
       ctx.beginGesture();
     }
-    ctx.replace({ ...ctx.doc, layers: bakeMultiRotate(tree, session, deltaDeg) });
+    const baked = bakeMultiRotate(tree, session, deltaDeg);
+    setLastBakedTree(baked); // provenance marker — see the recapture guard above
+    ctx.replace({ ...ctx.doc, layers: baked });
   };
 
   // Enter/blur: the gesture entry (if one opened) stands as-is — zpd-native,
