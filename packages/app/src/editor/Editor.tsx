@@ -627,6 +627,7 @@ export function Editor() {
         </div>
         <Sidebar
           ctx={ctx}
+          doc={doc}
           selectedIds={selectedIds}
           selectedLayer={selectedLayer}
           activeToolId={activeToolId}

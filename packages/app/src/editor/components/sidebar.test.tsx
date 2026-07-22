@@ -27,8 +27,9 @@ const GUIDES: Guide[] = [
 
 function stubCtx() {
   const commit = vi.fn();
+  const doc = { panelHp: 12, layers: [LAYER], guides: GUIDES };
   const ctx = {
-    doc: { panelHp: 12, layers: [LAYER], guides: GUIDES },
+    doc,
     selectedIds: [],
     commit,
     select: vi.fn(),
@@ -37,15 +38,16 @@ function stubCtx() {
   Object.defineProperty(ctx, 'flatLayers', {
     get: () => projectFlatLayers(ctx.doc.layers),
   });
-  return { ctx, commit };
+  return { ctx, doc, commit };
 }
 
 function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
-  const { ctx } = stubCtx();
+  const { ctx, doc } = stubCtx();
   const onShowGuidesChange = vi.fn();
   render(
     <Sidebar
       ctx={ctx}
+      doc={doc as Parameters<typeof Sidebar>[0]['doc']}
       selectedIds={[]}
       selectedLayer={null}
       activeToolId="select"
