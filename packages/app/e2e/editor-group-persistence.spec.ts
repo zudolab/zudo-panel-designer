@@ -197,45 +197,35 @@ test('@smoke numeric-rotate Escape leaves zero undo/redo residue', async ({ page
   expect(await bridge(page).getDoc()).toEqual(docBefore);
 });
 
-// KNOWN PRODUCT BUG (#157, filed for the manager rather than patched here —
-// see this worktree's e2e-confirm log for full triage). Root cause, isolated
-// via instrumented tracing (source left untouched — `git diff` on
-// rotate-selection-panel.tsx is empty):
+// Regression guard for a #157 bug found by #158's integration pass: typing
+// again immediately after an Escape used to bake ON TOP of the abandoned
+// pre-abort delta (10, 47, Escape, 45 => 92° instead of 45°).
 //
-// RotateSelectionPanel's render-time recapture guard —
-//   `eligible && (key !== capturedKey || (!gestureOpen && tree !== capturedTree))`
-// — assumes the component's OWN local state (`gestureOpen`, set by cancel())
-// and the PARENT's `ctx.doc` (updated by the ctx.abortGesture() dispatch
-// cancel() also fires) always land in the SAME React commit. In a real
-// browser they do not always: instrumented logging on this exact repro
-// caught a render where `gestureOpen` had already flipped to `false` but
-// `ctx.doc.layers` was STILL the pre-abort (stale, mid-gesture) tree. At
-// THAT render the guard's `!gestureOpen && tree !== capturedTree` reads
-// true and recaptures a session from the stale, not-yet-reverted tree —
-// latching `capturedTree`/`session` onto it. `ctx.doc` does correctly
-// revert a moment later (confirmed: the two assertions in the PASSING test
-// above hold), but this component's OWN captured baseline never
-// self-corrects, so the NEXT edit bakes on top of the abandoned delta
-// instead of from zero: type 10, type 47, Escape (doc/history correctly
-// revert), then type 45 bakes to 92° (= 47 + 45), not 45°.
+// Root cause: ctx.doc reads Editor's docRef, which is synced in a passive
+// effect AFTER each commit — so in the one render flush that cancel()
+// triggers (its ctx.abortGesture() dispatch and setGestureOpen(false) batch
+// together), RotateSelectionPanel saw its OWN state already fresh
+// (gestureOpen=false) while `ctx.doc.layers` was still the pre-abort
+// mid-gesture tree. Its idle-recapture guard (`!gestureOpen && tree !==
+// capturedTree`) then latched `capturedTree`/`session` onto that abandoned
+// tree, and since the later docRef sync is a ref write (no re-render), the
+// baseline never self-corrected.
 //
-// The existing unit suite (rotate-selection-panel.test.tsx's "full type ->
-// Escape -> type -> Enter cycle" test) exercises the identical LOGICAL
-// sequence and passes — but React Testing Library's fireEvent wraps every
-// dispatch in a synchronous act() that force-flushes cross-component
-// updates together, which papers over exactly this render-order race. That
-// gap is itself worth closing (a browser-timing-only regression like this
-// has no unit-level tripwire), but is out of scope for this pass.
-//
-// Not patched here: a correct fix needs to make the guard resilient to
-// child-before-parent commit ordering (e.g. a ref cancel() sets to suppress
-// exactly one spurious recapture, or moving the capture to a post-commit
-// effect) without regressing the 10 other scenarios rotate-selection-
-// panel.test.tsx already protects (mid-gesture external-edit immunity,
-// idle external-edit recapture, selection-change reset, etc.) — that is a
-// deliberate, non-trivial design change, not a one-line fix.
-test.fail(
-  '@smoke [KNOWN BUG #157] typing again immediately after an Escape can bake on top of the abandoned pre-abort delta',
+// Fix (rotate-selection-panel.tsx): provenance, not timing — applyDelta
+// records each baked tree (`lastBakedTree`), and the idle-recapture branch
+// skips any tree matching it: a tree that IS the row's own bake output is
+// never an external edit, so recapturing from it is wrong under every
+// circumstance. Legitimate idle recaptures (external edit under an
+// unchanged selection) still fire — an external tree can never be
+// reference-equal to the row's own abandoned bake — and every such
+// recapture clears the marker. No recapture is needed for the abort
+// itself: abortGesture restores present to the exact object the session was
+// captured from, so once it lands, tree === capturedTree again by
+// reference. A unit-level tripwire that reproduces this child-fresh/
+// parent-stale ordering (a lagging ctx.doc harness) now lives in
+// rotate-selection-panel.test.tsx.
+test(
+  '@smoke typing again immediately after an Escape bakes from the pre-gesture baseline, not the abandoned pre-abort delta',
   async ({ page }) => {
     await openEditor(page);
     await click(page, RECT_CENTER);
@@ -253,8 +243,8 @@ test.fail(
     const rect = (await bridge(page).getDoc()).layers.find((l) => l.id === 'demo-rect') as {
       rotation?: number;
     };
-    // Spec-accurate expectation (currently fails: bakes to 92, see comment
-    // above for the confirmed root cause).
+    // Baked from the pre-gesture baseline — 92 (= 47 + 45) here means the
+    // abandoned pre-abort delta leaked back in (see comment above).
     expect(rect.rotation).toBe(45);
   },
 );
