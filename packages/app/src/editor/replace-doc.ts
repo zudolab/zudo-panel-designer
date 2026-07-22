@@ -7,7 +7,7 @@
 // match — see reconcileImageCache in renderer.ts for why a reused id needs
 // eviction, not just skipping.
 import { createDefaultDoc, type DocState } from '@zpd/core';
-import { confirmDialog } from './components/confirm-dialog';
+import { confirmDialog } from './components/confirm-dialog-api';
 import { projectFlatLayers } from './flat-projection';
 import { resetTextGeometryNamespace } from './text-geometry';
 import type { ToolContext } from './types';

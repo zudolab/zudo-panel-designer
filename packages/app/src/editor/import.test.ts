@@ -6,7 +6,7 @@
 // and replaceDoc has its own (replace-doc.test.ts).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PANEL_CONFIG_VERSION, serializePanelConfig, type DocState, type Pt } from '@zpd/core';
-import { confirmDialog } from './components/confirm-dialog';
+import { confirmDialog } from './components/confirm-dialog-api';
 import { importDroppedFile, importJsonFile, isImportableImageFile } from './import';
 import { replaceDoc } from './replace-doc';
 import { toastError, toastSuccess } from './registry/toasts';
@@ -15,7 +15,7 @@ import type { ToolContext } from './types';
 
 vi.mock('./svg-import/route-import-file', () => ({ routeImportFile: vi.fn() }));
 vi.mock('./replace-doc', () => ({ replaceDoc: vi.fn() }));
-vi.mock('./components/confirm-dialog', () => ({ confirmDialog: vi.fn() }));
+vi.mock('./components/confirm-dialog-api', () => ({ confirmDialog: vi.fn() }));
 vi.mock('./registry/toasts', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 
 afterEach(() => {
