@@ -6,8 +6,13 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createDefaultDoc,
+  flattenLayerNodes,
+  isGroupNode,
+  MAX_GROUP_DEPTH,
   type DocState,
+  type GroupNode,
   type Layer,
+  type LayerNode,
   type PathLayer,
   type Pt,
   type ShapeLayer,
@@ -17,6 +22,7 @@ import { useClipboard } from './use-clipboard';
 import { importImageFile } from './import-image';
 import { classifyImportFile, sniffedRasterMimeType } from './svg-import/classify-file';
 import type { ToolContext } from './types';
+import { projectFlatLayers } from './flat-projection';
 
 vi.mock('./import-image', () => ({ importImageFile: vi.fn(() => Promise.resolve()) }));
 // jsdom (as pinned in this repo) implements FileReader but not the
@@ -58,6 +64,10 @@ const textLayer: TextLayer = {
   color: 0,
 };
 
+function groupNode(id: string, children: LayerNode[]): GroupNode {
+  return { kind: 'group', id, name: id, children };
+}
+
 // Mirrors Editor.tsx's real ToolContext wiring: `doc`/`selectedIds` are LIVE
 // getters, `commit`/`selectIds`/etc. mutate the same backing state, so the
 // hook's handlers (which read ctx.doc/ctx.selectedIds fresh on every call)
@@ -76,7 +86,10 @@ function createCtx(doc: DocState, selectedIds: readonly string[] = []) {
       return currentSelectedIds.length === 1 ? currentSelectedIds[0] : null;
     },
     get selectedLayer() {
-      return currentDoc.layers.find((l) => l.id === ctx.selectedId) ?? null;
+      return flattenLayerNodes(currentDoc.layers).find((l) => l.id === ctx.selectedId) ?? null;
+    },
+    get flatLayers() {
+      return projectFlatLayers(currentDoc.layers);
     },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
@@ -193,10 +206,11 @@ describe('useClipboard — copy/cut', () => {
     act(() => dispatchPaste(window));
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     expect(ctx.doc.layers).toHaveLength(doc.layers.length + 2);
-    const patternClone = ctx.doc.layers.find(
+    const flatLayers = flattenLayerNodes(ctx.doc.layers);
+    const patternClone = flatLayers.find(
       (l) => l.type === 'pattern' && l.id !== 'layer-default-dot-grid',
     );
-    const original = ctx.doc.layers.find((l) => l.id === 'layer-default-dot-grid');
+    const original = flatLayers.find((l) => l.id === 'layer-default-dot-grid');
     if (patternClone?.type !== 'pattern' || original?.type !== 'pattern') {
       throw new Error('expected a pattern clone and its untouched original');
     }
@@ -249,16 +263,15 @@ describe('useClipboard — copy -> paste round trip (internal clipboard)', () =>
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     expect(ctx.doc.layers).toHaveLength(3); // pattern + original + clone
-    const pasted = ctx.doc.layers.find(
-      (l) => l.id !== 'shape-1' && l.type !== 'pattern',
-    ) as ShapeLayer;
+    const flatLayers = flattenLayerNodes(ctx.doc.layers);
+    const pasted = flatLayers.find((l) => l.id !== 'shape-1' && l.type !== 'pattern') as ShapeLayer;
     expect(pasted).toBeDefined();
     expect(pasted.id).not.toBe(shapeLayer.id);
     expect(pasted.x).toBeCloseTo(shapeLayer.x + 2, 5);
     expect(pasted.y).toBeCloseTo(shapeLayer.y + 2, 5);
     expect(ctx.selectedIds).toEqual([pasted.id]);
     // source untouched
-    const original = ctx.doc.layers.find((l) => l.id === 'shape-1') as ShapeLayer;
+    const original = flatLayers.find((l) => l.id === 'shape-1') as ShapeLayer;
     expect(original).toMatchObject({ x: shapeLayer.x, y: shapeLayer.y });
   });
 
@@ -300,7 +313,7 @@ describe('useClipboard — Cmd/Ctrl+D duplicate', () => {
     act(() => result.current.handleDuplicate());
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     expect(ctx.doc.layers).toHaveLength(2);
-    const [original, clone] = ctx.doc.layers;
+    const [original, clone] = flattenLayerNodes(ctx.doc.layers);
     if (original?.type !== 'pattern' || clone?.type !== 'pattern') {
       throw new Error('expected two pattern layers');
     }
@@ -316,6 +329,234 @@ describe('useClipboard — Cmd/Ctrl+D duplicate', () => {
 
     act(() => result.current.handleDuplicate());
     expect(ctx.commit).not.toHaveBeenCalled();
+  });
+
+  it('duplicating a selected group clones the whole SUBTREE (structure intact), fresh ids root-to-leaf', () => {
+    const g = groupNode('G', [shapeLayer, textLayer]);
+    const doc = baseDoc([]);
+    doc.layers = [...doc.layers, g];
+    const ctx = createCtx(doc, ['G']);
+    const { result } = renderHook(() => useClipboard(ctx));
+
+    act(() => result.current.handleDuplicate());
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const clone = ctx.doc.layers.find((l) => l.id !== 'G' && l.id !== 'layer-default-dot-grid');
+    if (!clone || !isGroupNode(clone)) throw new Error('expected a cloned group');
+    expect(clone.id).not.toBe('G');
+    expect(clone.children).toHaveLength(2);
+    expect(clone.children.map((c) => c.id)).not.toEqual(['shape-1', 'text-1']);
+    expect(clone.children[0]).toMatchObject({ x: shapeLayer.x + 2, y: shapeLayer.y + 2 });
+    expect(clone.children[1]).toMatchObject({ x: textLayer.x + 2, y: textLayer.y + 2 });
+    expect(ctx.selectedIds).toEqual([clone.id]);
+  });
+});
+
+describe('useClipboard — group-aware copy/cut/paste (v2 envelope, #156)', () => {
+  it('copy a group -> paste yields a group subtree with all-fresh unique ids and the cascade applied to every leaf', () => {
+    const g = groupNode('G', [shapeLayer, textLayer]);
+    const doc = baseDoc([]);
+    doc.layers = [...doc.layers, g];
+    const ctx = createCtx(doc, ['G']);
+    const { result } = renderHook(() => useClipboard(ctx));
+
+    act(() => result.current.handleCopy());
+    expect(ctx.commit).not.toHaveBeenCalled(); // copy never mutates the doc
+
+    act(() => dispatchPaste(window));
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const pasted = ctx.doc.layers.find((l) => l.id !== 'G' && l.id !== 'layer-default-dot-grid');
+    if (!pasted || !isGroupNode(pasted)) throw new Error('expected a pasted group');
+    expect(pasted.id).not.toBe('G');
+    expect(pasted.children).toHaveLength(2);
+    const childIds = pasted.children.map((c) => c.id);
+    expect(new Set(childIds).size).toBe(2); // all-fresh, unique
+    expect(childIds).not.toContain('shape-1');
+    expect(childIds).not.toContain('text-1');
+    expect(pasted.children[0]).toMatchObject({ x: shapeLayer.x + 2, y: shapeLayer.y + 2 });
+    expect(pasted.children[1]).toMatchObject({ x: textLayer.x + 2, y: textLayer.y + 2 });
+    // source untouched
+    const original = ctx.doc.layers.find((l) => l.id === 'G');
+    if (!original || !isGroupNode(original)) throw new Error('expected the original group');
+    expect(original.children[0]).toMatchObject({ x: shapeLayer.x, y: shapeLayer.y });
+    expect(ctx.selectedIds).toEqual([pasted.id]);
+  });
+
+  it('an ancestor+descendant selection ([G, a] where a is inside G) copies the ancestor ONCE, not the leaf twice', () => {
+    const g = groupNode('G', [shapeLayer, textLayer]);
+    const doc = baseDoc([]);
+    doc.layers = [...doc.layers, g];
+    const ctx = createCtx(doc, ['G', 'shape-1']); // externally violated overlap
+    const { result } = renderHook(() => useClipboard(ctx));
+
+    act(() => result.current.handleCopy());
+    act(() => dispatchPaste(window));
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const pastedNodes = ctx.doc.layers.filter(
+      (l) => l.id !== 'G' && l.id !== 'layer-default-dot-grid',
+    );
+    expect(pastedNodes).toHaveLength(1); // ONE pasted node — the cloned group, not a loose leaf too
+    const [pasted] = pastedNodes;
+    if (!isGroupNode(pasted)) throw new Error('expected the pasted node to be a group');
+    expect(pasted.children).toHaveLength(2); // shape-1's clone lives inside it, not duplicated
+  });
+
+  it('cut of a group cascades the whole subtree in ONE undo entry', () => {
+    const g = groupNode('G', [shapeLayer, textLayer]);
+    const doc = baseDoc([]);
+    doc.layers = [...doc.layers, g];
+    const ctx = createCtx(doc, ['G']);
+    const { result } = renderHook(() => useClipboard(ctx));
+
+    act(() => result.current.handleCut());
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    expect(ctx.doc.layers.find((l) => l.id === 'G')).toBeUndefined();
+    expect(flattenLayerNodes(ctx.doc.layers)).toHaveLength(1); // only the default pattern remains
+    expect(ctx.selectedIds).toEqual([]);
+
+    // the cut group still pastes back as a group (captured before delete).
+    act(() => dispatchPaste(window));
+    const pasted = ctx.doc.layers.find((l) => l.id !== 'layer-default-dot-grid');
+    if (!pasted || !isGroupNode(pasted)) throw new Error('expected the cut group to paste back');
+    expect(pasted.children).toHaveLength(2);
+  });
+
+  it('a v1 (flat-leaves) envelope still pastes — a flat array is a valid LayerNode[]', () => {
+    const envelopeText = JSON.stringify({
+      app: 'zpd',
+      kind: 'layers',
+      version: 1,
+      layers: [shapeLayer],
+    });
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+
+    act(() => dispatchPaste(window, { text: envelopeText }));
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const pasted = flattenLayerNodes(ctx.doc.layers).find((l) => l.type !== 'pattern');
+    expect(pasted).toMatchObject({ type: 'shape', x: shapeLayer.x + 2, y: shapeLayer.y + 2 });
+  });
+
+  it('an over-deep envelope (past MAX_GROUP_DEPTH) is defended at the parse boundary — pastes the pruned survivor, never crashes', () => {
+    // Mirrors serialize.test.ts's own depth-cap fixture: a chain of
+    // MAX_GROUP_DEPTH + 2 nested groups so the innermost leaf sits one level
+    // past the cap. parseEnvelope reuses parsePanelConfig's node parser
+    // unchanged, so this is the same defense proven there — exercised here
+    // through the clipboard paste path specifically, since a v2 envelope now
+    // carries real group structure that could otherwise slip a too-deep
+    // subtree straight into the doc.
+    let innermost: LayerNode = {
+      id: 'deep-leaf',
+      name: 'deep',
+      type: 'shape',
+      shape: 'rect',
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+      color: 0,
+    };
+    for (let depth = MAX_GROUP_DEPTH + 1; depth >= 0; depth -= 1) {
+      innermost = { kind: 'group', id: `g-${depth}`, name: `g-${depth}`, children: [innermost] };
+    }
+    const envelopeText = JSON.stringify({
+      app: 'zpd',
+      kind: 'layers',
+      version: 2,
+      layers: [innermost],
+    });
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+
+    expect(() => act(() => dispatchPaste(window, { text: envelopeText }))).not.toThrow();
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const pasted = ctx.doc.layers.find((l) => l.id !== 'layer-default-dot-grid');
+    if (!pasted || !isGroupNode(pasted)) throw new Error('expected the pruned group chain to paste');
+    let cursor: LayerNode | undefined = pasted;
+    let depthSeen = 0;
+    while (cursor && isGroupNode(cursor)) {
+      depthSeen += 1;
+      cursor = cursor.children[0];
+    }
+    expect(depthSeen).toBe(MAX_GROUP_DEPTH + 1); // groups at depth 0..MAX_GROUP_DEPTH survive
+    expect(cursor).toBeUndefined(); // the one-past-cap group (and its leaf) was dropped
+  });
+
+  it('a foreign/future envelope version (3) is rejected — returns null, never crashes', () => {
+    const envelopeText = JSON.stringify({
+      app: 'zpd',
+      kind: 'layers',
+      version: 3,
+      layers: [shapeLayer],
+    });
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+
+    expect(() => act(() => dispatchPaste(window, { text: envelopeText }))).not.toThrow();
+    expect(ctx.commit).not.toHaveBeenCalled();
+  });
+
+  // codex review finding: a fractional version (e.g. 1.5) sat inside the
+  // numeric 1..2 range check but is neither supported schema — it must be
+  // rejected like any other unrecognized version, not silently accepted.
+  it('a non-integer envelope version (1.5) is rejected — returns null, never crashes', () => {
+    const envelopeText = JSON.stringify({
+      app: 'zpd',
+      kind: 'layers',
+      version: 1.5,
+      layers: [shapeLayer],
+    });
+    const doc = baseDoc([]);
+    const ctx = createCtx(doc, []);
+    renderHook(() => useClipboard(ctx));
+
+    expect(() => act(() => dispatchPaste(window, { text: envelopeText }))).not.toThrow();
+    expect(ctx.commit).not.toHaveBeenCalled();
+  });
+
+  it('cross-tab: the exact string handleCopy writes to the OS clipboard round-trips through parse -> paste in a fresh hook instance, preserving group structure', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
+    try {
+      const g = groupNode('G', [shapeLayer]);
+      const sourceDoc = baseDoc([]);
+      sourceDoc.layers = [...sourceDoc.layers, g];
+      const sourceCtx = createCtx(sourceDoc, ['G']);
+      const { result: sourceResult, unmount: unmountSource } = renderHook(() =>
+        useClipboard(sourceCtx),
+      );
+      act(() => sourceResult.current.handleCopy());
+      const writtenText = writeText.mock.calls[0][0] as string;
+      // Unmount the source hook's `window` paste listener before mounting the
+      // target below — two concurrently-mounted hooks would both register a
+      // `window` paste listener and cross-fire on the dispatch (same pitfall
+      // the hand-built-envelope tests above avoid by never double-mounting).
+      unmountSource();
+
+      // A second, independent tab/session: a fresh hook instance, doc, ctx —
+      // receives ONLY the OS clipboard string (no shared internal ref).
+      const targetDoc = baseDoc([]);
+      const targetCtx = createCtx(targetDoc, []);
+      renderHook(() => useClipboard(targetCtx));
+
+      act(() => dispatchPaste(window, { text: writtenText }));
+
+      expect(targetCtx.commit).toHaveBeenCalledTimes(1);
+      const pasted = targetCtx.doc.layers.find((l) => l.id !== 'layer-default-dot-grid');
+      if (!pasted || !isGroupNode(pasted)) throw new Error('expected the group to survive round-trip');
+      expect(pasted.children).toHaveLength(1);
+      expect(pasted.children[0]).toMatchObject({ x: shapeLayer.x + 2, y: shapeLayer.y + 2 });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -335,7 +576,7 @@ describe('useClipboard — Cmd/Ctrl+A select-all', () => {
 });
 
 describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
-  it('writes {app:"zpd", kind:"layers", version:1, layers:[...]} to navigator.clipboard.writeText', () => {
+  it('writes {app:"zpd", kind:"layers", version:2, layers:[...]} to navigator.clipboard.writeText', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     try {
@@ -347,7 +588,7 @@ describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
 
       expect(writeText).toHaveBeenCalledTimes(1);
       const envelope = JSON.parse(writeText.mock.calls[0][0] as string);
-      expect(envelope).toMatchObject({ app: 'zpd', kind: 'layers', version: 1 });
+      expect(envelope).toMatchObject({ app: 'zpd', kind: 'layers', version: 2 });
       expect(envelope.layers).toEqual([shapeLayer]);
     } finally {
       vi.unstubAllGlobals();
@@ -438,7 +679,7 @@ describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
 
       // Pasted the internal shape snapshot's clone, NOT the stale envelope's text layer.
       expect(ctx.commit).toHaveBeenCalledTimes(1);
-      const pasted = ctx.doc.layers.find(
+      const pasted = flattenLayerNodes(ctx.doc.layers).find(
         (l) => l.id !== 'shape-1' && l.id !== 'text-1' && l.type !== 'pattern',
       );
       expect(pasted?.type).toBe('shape');
@@ -484,7 +725,7 @@ describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
 
       // Write B is still outstanding, so the internal snapshot (textLayer) wins.
       expect(ctx.commit).toHaveBeenCalledTimes(1);
-      const pasted = ctx.doc.layers.find(
+      const pasted = flattenLayerNodes(ctx.doc.layers).find(
         (l) => l.id !== 'shape-1' && l.id !== 'text-1' && l.type !== 'pattern',
       );
       expect(pasted?.type).toBe('text');
@@ -537,7 +778,9 @@ describe('useClipboard — paste priority: image > envelope > internal', () => {
     act(() => dispatchPaste(window, { text: envelopeText }));
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
-    const pasted = ctx.doc.layers.find((l) => l.id !== 'text-1' && l.type !== 'pattern');
+    const pasted = flattenLayerNodes(ctx.doc.layers).find(
+      (l) => l.id !== 'text-1' && l.type !== 'pattern',
+    );
     expect(pasted).toMatchObject({ type: 'shape', x: shapeLayer.x + 2, y: shapeLayer.y + 2 });
   });
 
@@ -693,7 +936,7 @@ describe('useClipboard — pattern layers in envelopes (#97)', () => {
   // Pre-#97 the parser filtered patterns out of envelopes; they now paste
   // like any layer (cross-tab pattern copy is a legitimate flow).
   it('an envelope carrying a pattern layer pastes it with the cascade offset', () => {
-    const patternLayer = baseDoc([]).layers[0];
+    const patternLayer = flattenLayerNodes(baseDoc([]).layers)[0];
     const envelopeText = JSON.stringify({
       app: 'zpd',
       kind: 'layers',
@@ -709,7 +952,7 @@ describe('useClipboard — pattern layers in envelopes (#97)', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     expect(ctx.doc.layers).toHaveLength(2);
-    const pasted = ctx.doc.layers[1];
+    const pasted = flattenLayerNodes(ctx.doc.layers)[1];
     if (pasted.type !== 'pattern' || patternLayer.type !== 'pattern') {
       throw new Error('expected pattern layers');
     }
@@ -736,7 +979,7 @@ describe('useClipboard — envelope layer validation', () => {
 
     expect(() => act(() => dispatchPaste(window, { text: envelopeText }))).not.toThrow();
     expect(ctx.commit).toHaveBeenCalledTimes(1);
-    const pasted = ctx.doc.layers.find((l) => l.type !== 'pattern') as PathLayer;
+    const pasted = flattenLayerNodes(ctx.doc.layers).find((l) => l.type !== 'pattern') as PathLayer;
     expect(pasted).toBeDefined();
     expect(pasted.points).toEqual([]);
     expect(pasted.strokeWidth).toBe(0);

@@ -16,12 +16,14 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import {
+  mapLeavesById,
   PANEL_HEIGHT_MM,
   panelWidthMm,
   translatePathLayer,
   type DocState,
   type Layer,
 } from '@zpd/core';
+import { projectFlatLayers } from './flat-projection';
 import { fit, project, unproject, zoomAt, type Camera } from './camera';
 import { installBrowserZoomGuard } from './browser-zoom-guard';
 import { reconcileImageCache, renderScene } from './renderer';
@@ -31,6 +33,11 @@ import { dispatchCommand, type CommandContext } from './commands';
 import { createDemoDoc } from './demo-doc';
 import { readDoc } from './doc-store';
 import { normalizeSelectedIds } from './selection';
+import {
+  expandSelectionToLeafIds,
+  resolveSelectionLeaves,
+  resolveSelectionOverlayMode,
+} from './selection-resolve';
 import { installTestBridge } from './test-bridge';
 import { isEditableTarget } from './is-editable-target';
 import { useAutosave } from './use-autosave';
@@ -63,6 +70,7 @@ export function Editor() {
     replace,
     reset,
     beginGesture,
+    abortGesture,
     undo,
     redo,
   } = useDocHistory(initialDoc);
@@ -96,13 +104,28 @@ export function Editor() {
     () => ({ widthMm: panelWidthMm(doc.panelHp), heightMm: PANEL_HEIGHT_MM }),
     [doc.panelHp],
   );
+  // Normalized against the TREE (#151): selectedIds may hold group ids, which
+  // a flat projection would wrongly drop as stale.
   const selectedIds = useMemo(
     () => normalizeSelectedIds(rawSelectedIds, doc.layers),
     [rawSelectedIds, doc.layers],
   );
+  // The flat-leaf view of the selection for the chrome pass (#151): a selected
+  // group id draws per-leaf chrome on its descendants (renderScene consumes
+  // flat leaf ids only; the combined-bbox group chrome is #152's). The overlay
+  // mode rides along so a one-child group — which also expands to exactly one
+  // leaf id — never wears the single-layer handles the tool won't serve.
+  const chromeLeafIds = useMemo(
+    () => expandSelectionToLeafIds(doc.layers, selectedIds),
+    [doc.layers, selectedIds],
+  );
+  const overlayMode = useMemo(
+    () => resolveSelectionOverlayMode(doc.layers, selectedIds),
+    [doc.layers, selectedIds],
+  );
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const selectedLayer = useMemo(
-    () => doc.layers.find((l) => l.id === selectedId) ?? null,
+    () => projectFlatLayers(doc.layers).find((l) => l.id === selectedId) ?? null,
     [doc.layers, selectedId],
   );
 
@@ -178,7 +201,10 @@ export function Editor() {
       },
       get selectedLayer() {
         const id = readSelectedId();
-        return docRef.current.layers.find((l) => l.id === id) ?? null;
+        return projectFlatLayers(docRef.current.layers).find((l) => l.id === id) ?? null;
+      },
+      get flatLayers() {
+        return projectFlatLayers(docRef.current.layers);
       },
       toMm: (screenPt) =>
         cameraRef.current ? unproject(cameraRef.current, screenPt) : { x: 0, y: 0 },
@@ -187,6 +213,7 @@ export function Editor() {
       replace,
       reset,
       beginGesture,
+      abortGesture,
       undo,
       redo,
       select: (id) => setRawSelectedIds(id === null ? [] : [id]),
@@ -199,7 +226,7 @@ export function Editor() {
       openDialog,
       closeDialog,
     }),
-    [commit, replace, reset, beginGesture, undo, redo, readSelectedId, readSelectedIds],
+    [commit, replace, reset, beginGesture, abortGesture, undo, redo, readSelectedId, readSelectedIds],
   );
 
   // Clipboard (#74): Cmd/Ctrl+C/X/D/A (wired into the keydown fallback below)
@@ -290,12 +317,16 @@ export function Editor() {
       get selectedLayer() {
         return ctx.selectedLayer;
       },
+      get flatLayers() {
+        return ctx.flatLayers;
+      },
       toMm: ctx.toMm,
       toScreen: ctx.toScreen,
       commit: ctx.commit,
       replace: ctx.replace,
       reset: ctx.reset,
       beginGesture: ctx.beginGesture,
+      abortGesture: ctx.abortGesture,
       undo: ctx.undo,
       redo: ctx.redo,
       select: ctx.select,
@@ -328,7 +359,7 @@ export function Editor() {
 
   // --- image asset loading -----------------------------------------------
   useEffect(() => {
-    for (const layer of doc.layers) {
+    for (const layer of projectFlatLayers(doc.layers)) {
       if (layer.type === 'image' && !imagesRef.current.has(layer.id)) {
         const img = new Image();
         img.onload = () => setAssetVersion((v) => v + 1);
@@ -359,13 +390,24 @@ export function Editor() {
     canvas.style.width = `${canvasSize.w}px`;
     canvas.style.height = `${canvasSize.h}px`;
     const activeTool = getTool(activeToolId);
-    renderScene(canvas, doc, panel, camera, {
-      selectedIds,
+    // renderScene (and every flat-consumer below it) reads Layer[] — project
+    // the tree at this render boundary (#146/#150). projectFlatLayers keeps
+    // the array identity stable per committed tree, so text geometry's
+    // incarnation tracking sees one incarnation per commit, not per repaint.
+    renderScene(canvas, { ...doc, layers: projectFlatLayers(doc.layers) }, panel, camera, {
+      // Expanded to leaf ids (#151): the chrome pass matches flat leaves only,
+      // so a raw group id would draw no selection chrome at all.
+      selectedIds: chromeLeafIds,
+      singleSelection: overlayMode === 'single',
       images: imagesRef.current,
       showNodes: activeToolId === 'select' && selectedLayer?.type === 'path',
       showOutsidePanel,
       guides: showGuides ? doc.guides : [],
       guideDraft: showGuides ? guideDrag.draft : null,
+      // Live multi-rotate gesture chrome (#152): the streaming tool owns the
+      // frozen bounds/pivot + live delta; the chrome pass draws them instead
+      // of re-deriving (pulsating) live AABBs.
+      multiRotate: activeTool?.multiRotateChrome?.(ctx) ?? null,
       renderDraft: activeTool?.renderDraft ? (d) => activeTool.renderDraft?.(d, ctx) : undefined,
       requestRepaint: ctx.requestRepaint,
     });
@@ -399,14 +441,23 @@ export function Editor() {
       // members (allowed via the numeric inspectors) and shear the group. dx/dy
       // are already grid steps (0.1 / 1mm), and this matches translatePathLayer,
       // which already moves paths by the raw delta.
-      const ids = new Set(readSelectedIds());
-      if (ids.size === 0) return;
-      const layers = docRef.current.layers.map((l) => {
-        if (!ids.has(l.id)) return l;
+      const ids = readSelectedIds();
+      if (ids.length === 0) return;
+      // Group-aware expansion (#151): a selected group id nudges its EDITABLE
+      // descendant leaves (hidden — intrinsic or ancestor-folded — excluded),
+      // one shared delta for the whole selection like multi-move.
+      const tree = docRef.current.layers;
+      const { editableLeafIds } = resolveSelectionLeaves(tree, ids, projectFlatLayers(tree));
+      // mapLeavesById nudges matching leaves at ANY depth and only leaves —
+      // group nodes never carry x/y (structure + hidden only, see types.ts).
+      const layers = mapLeavesById(tree, editableLeafIds, (l) => {
         const patch =
           l.type === 'path' ? translatePathLayer(l, dx, dy) : { x: l.x + dx, y: l.y + dy };
         return { ...l, ...patch } as Layer;
       });
+      // Same tree reference back = no editable leaf matched (e.g. a fully
+      // hidden selection) — skip the commit so no phantom undo entry is pushed.
+      if (layers === tree) return;
       commit({ ...docRef.current, layers });
     };
 
@@ -516,6 +567,11 @@ export function Editor() {
   const onPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     getTool(effectiveToolId)?.onPointerUp?.(toPointer(e), ctx);
   };
+  // pointercancel (#152): the browser revoked the pointer (OS gesture, touch
+  // interruption). Tools that opt in treat it exactly as pointerup.
+  const onPointerCancel = (e: ReactPointerEvent<HTMLCanvasElement>) => {
+    getTool(effectiveToolId)?.onPointerCancel?.(toPointer(e), ctx);
+  };
   const onPointerLeave = (e: ReactPointerEvent<HTMLCanvasElement>) => {
     getTool(effectiveToolId)?.onPointerLeave?.(toPointer(e), ctx);
   };
@@ -564,12 +620,14 @@ export function Editor() {
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
+            onPointerCancel={onPointerCancel}
             onPointerLeave={onPointerLeave}
             onDoubleClick={onDoubleClick}
           />
         </div>
         <Sidebar
           ctx={ctx}
+          doc={doc}
           selectedIds={selectedIds}
           selectedLayer={selectedLayer}
           activeToolId={activeToolId}

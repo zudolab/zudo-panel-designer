@@ -9,9 +9,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { marqueeHitIds, marqueeRect } from './select'; // also registers 'select'
 import { getTool } from '../registry/tools';
 import {
+  abortGesture as coreAbortGesture,
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
+  flattenLayerNodes,
   redo as coreRedo,
   replace as coreReplace,
   reset as coreReset,
@@ -27,6 +29,7 @@ import {
 import { normalizeSelectedIds } from '../selection';
 import type { DraftRenderContext, PanelDims, ToolContext, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
+import { projectFlatLayers } from '../flat-projection';
 import { resetTextGeometryForTests, setTextMeasureForTests } from '../text-geometry';
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
@@ -62,7 +65,8 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
   let beginGestureCalls = 0;
   let repaintCalls = 0;
 
-  const readSelectedIds = () => normalizeSelectedIds(selectedIds, history.present.layers);
+  const readSelectedIds = () =>
+    normalizeSelectedIds(selectedIds, flattenLayerNodes(history.present.layers));
   const readSelectedId = () => {
     const ids = readSelectedIds();
     return ids.length === 1 ? ids[0] : null;
@@ -89,7 +93,10 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
       return readSelectedId();
     },
     get selectedLayer() {
-      return history.present.layers.find((l) => l.id === readSelectedId()) ?? null;
+      return flattenLayerNodes(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
+    },
+    get flatLayers() {
+      return projectFlatLayers(history.present.layers);
     },
     toMm: (p: Pt) => ({
       x: (p.x - camera.offsetX) / camera.pxPerMm,
@@ -108,6 +115,9 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
     beginGesture: () => {
       beginGestureCalls += 1;
       history = coreBeginGesture(history);
+    },
+    abortGesture: () => {
+      history = coreAbortGesture(history);
     },
     undo: () => {
       history = coreUndo(history);

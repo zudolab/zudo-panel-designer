@@ -9,6 +9,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { DocState, Pt, TextLayer } from '@zpd/core';
 import type { GoogleFontEntry } from '../data/google-fonts-types';
 import type { ToolContext } from '../types';
+import { projectFlatLayers } from '../flat-projection';
 import { getDialog } from '../registry/dialogs';
 import { FONT_FAVORITES_STORAGE_KEY, toggleFontFavorite } from '../use-font-favorites';
 
@@ -92,7 +93,7 @@ afterEach(() => {
 /* ── ctx + dialog harness ── */
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
-  return {
+  const ctx = {
     doc: { panelHp: 12, guides: [], layers: [] },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
@@ -115,6 +116,12 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     closeDialog: vi.fn(),
     ...overrides,
   } as unknown as ToolContext;
+  // Live flat view over whatever doc the stub ended up with (non-enumerable
+  // so object spreads never snapshot it).
+  Object.defineProperty(ctx, 'flatLayers', {
+    get: () => projectFlatLayers(ctx.doc.layers),
+  });
+  return ctx;
 }
 
 function getDialogComponent() {

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import type { ShapeLayer } from '@zpd/core';
+import type { GroupNode, LayerNode, ShapeLayer } from '@zpd/core';
 import type { ToolContext } from '../types';
+import { projectFlatLayers } from '../flat-projection';
 import { LayerList } from './layer-list';
 
 afterEach(cleanup);
@@ -30,6 +31,9 @@ function stubCtx() {
     select,
     selectIds,
   } as unknown as ToolContext;
+  Object.defineProperty(ctx, 'flatLayers', {
+    get: () => projectFlatLayers(ctx.doc.layers),
+  });
   return { ctx, commit, select, selectIds };
 }
 
@@ -102,6 +106,9 @@ function multiCtx(selectedIds: readonly string[]) {
     get doc() {
       return doc;
     },
+    get flatLayers() {
+      return projectFlatLayers(doc.layers);
+    },
     selectedIds,
     commit,
     select: vi.fn(),
@@ -144,6 +151,35 @@ describe('LayerList multi-select', () => {
 
     fireEvent.click(selectionButton('A'), { ctrlKey: true });
     expect(selectIds).toHaveBeenLastCalledWith(['c']);
+  });
+
+  // #151: the Meta list-toggle is the same raw-leaf escape hatch as a canvas
+  // Meta-click — adding a grouped row's leaf strips its selected ancestor
+  // group id so a [group, descendant] overlap never enters selectedIds.
+  it('meta-click on a grouped row strips its selected ancestor group', () => {
+    const doc = {
+      panelHp: 12,
+      layers: [
+        { kind: 'group' as const, id: 'G', name: 'G', children: [shape('a', 'A'), shape('b', 'B')] },
+        shape('c', 'C'),
+      ],
+    };
+    const selectIds = vi.fn();
+    const ctx = {
+      get doc() {
+        return doc;
+      },
+      get flatLayers() {
+        return projectFlatLayers(doc.layers);
+      },
+      commit: vi.fn(),
+      select: vi.fn(),
+      selectIds,
+    } as unknown as ToolContext;
+    render(<LayerList ctx={ctx} selectedIds={['G']} />);
+
+    fireEvent.click(selectionButton('A'), { metaKey: true });
+    expect(selectIds).toHaveBeenLastCalledWith(['a']); // G dropped, raw leaf in
   });
 
   it('shift-click selects the range from the last singly-clicked anchor', () => {
@@ -288,10 +324,328 @@ describe('LayerList keyboard access', () => {
     onlyButton.focus();
     fireEvent.click(within(onlyButton.closest('li')!).getByTitle('Delete'));
     const [nextDoc] = commit.mock.calls[0];
-    currentCtx = { ...ctx, doc: nextDoc } as ToolContext;
+    currentCtx = {
+      ...ctx,
+      doc: nextDoc,
+      flatLayers: projectFlatLayers(nextDoc.layers),
+    } as ToolContext;
     rerender(<LayerList ctx={currentCtx} selectedIds={[]} />);
 
     expect(screen.queryAllByRole('listitem')).toHaveLength(0);
     expect(screen.queryByRole('button', { name: /Select layer/ })).toBeNull();
+  });
+});
+
+// ─── #153 tree rendering + row actions ─────────────────────────────────────
+
+function group(id: string, name: string, children: LayerNode[], extra: Partial<GroupNode> = {}): GroupNode {
+  return { kind: 'group', id, name, children, ...extra };
+}
+
+function nodeTreeCtx(layers: LayerNode[]) {
+  let doc = { panelHp: 12, layers };
+  const commit = vi.fn();
+  const selectIds = vi.fn();
+  const ctx = {
+    get doc() {
+      return doc;
+    },
+    get flatLayers() {
+      return projectFlatLayers(doc.layers);
+    },
+    selectedIds: [] as readonly string[],
+    commit,
+    select: vi.fn(),
+    selectIds,
+  } as unknown as ToolContext;
+  return {
+    ctx,
+    commit,
+    selectIds,
+    setDoc(next: typeof doc) {
+      doc = next;
+    },
+  };
+}
+
+// Bottom -> top: A, then group G (containing B, C), then D. Reversed for
+// panel display this interleaves as [D, G-header, C, B, A] — G's z-band
+// renders exactly where G sits, not bundled separately above/below.
+function fixtureTree(): LayerNode[] {
+  return [shape('a', 'A'), group('G', 'Group', [shape('b', 'B'), shape('c', 'C')]), shape('d', 'D')];
+}
+
+describe('LayerList tree rendering (#153)', () => {
+  it('renders nested rows with correct data-depth and true z-order interleaving', () => {
+    const { ctx } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    const rows = screen.getAllByRole('listitem');
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining('D'),
+      expect.stringContaining('Group'),
+      expect.stringContaining('C'),
+      expect.stringContaining('B'),
+      expect.stringContaining('A'),
+    ]);
+    expect(rows.map((row) => row.getAttribute('data-depth'))).toEqual(['0', '0', '1', '1', '0']);
+    // G's own header is top-level (no parent group) — its two children carry
+    // G's id as their DIRECT parent.
+    expect(rows[1].hasAttribute('data-group-id')).toBe(false);
+    expect(rows[2].getAttribute('data-group-id')).toBe('G');
+    expect(rows[3].getAttribute('data-group-id')).toBe('G');
+  });
+
+  it('collapsing a group hides its descendant rows; expanding restores them', () => {
+    const { ctx } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Group' }));
+    expect(screen.queryByText('B')).toBeNull();
+    expect(screen.queryByText('C')).toBeNull();
+    expect(screen.getByText('D')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Group' }));
+    expect(screen.getByText('B')).toBeTruthy();
+    expect(screen.getByText('C')).toBeTruthy();
+  });
+
+  it('collapse state survives an unrelated re-render', () => {
+    const { ctx } = nodeTreeCtx(fixtureTree());
+    const { rerender } = render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Group' }));
+    expect(screen.queryByText('B')).toBeNull();
+
+    // Unrelated re-render: same ctx/doc identity, only the selectedIds prop
+    // changes — collapse is component-local state, so it must not reset.
+    rerender(<LayerList ctx={ctx} selectedIds={['d']} />);
+    expect(screen.queryByText('B')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Expand Group' })).toBeTruthy();
+  });
+
+  it('renders a hint row for an empty group', () => {
+    const { ctx } = nodeTreeCtx([group('G', 'Empty', [])]);
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+    expect(screen.getByText('Empty group')).toBeTruthy();
+  });
+
+  it('clicking a group row selects the group id, not its leaves', () => {
+    const { ctx, selectIds } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select group Group' }));
+    expect(selectIds).toHaveBeenLastCalledWith(['G']);
+  });
+
+  it('shift-click ranges over VISIBLE rows: a range sweeping a group header collapses its covered rows to the group (#154)', () => {
+    const { ctx, selectIds } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select layer A' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select layer D' }), { shiftKey: true });
+    // Visible rows [D, G, C, B, A] — the range covers G's header AND its
+    // child rows; maximalSelectedRoots keeps only G, so the
+    // [group, descendant] invariant holds and the result is DFS-ordered.
+    expect(selectIds).toHaveBeenLastCalledWith(['a', 'G', 'd']);
+  });
+
+  it('shift-clicking a group row ranges up to it as a real range member (#154)', () => {
+    const { ctx, selectIds } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select layer A' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select group Group' }), { shiftKey: true });
+    // Range [G..A] over visible rows sweeps G's children too — collapsed to
+    // ['a', 'G'] by the overlap invariant.
+    expect(selectIds).toHaveBeenLastCalledWith(['a', 'G']);
+  });
+
+  describe('group rename', () => {
+    it('Enter commits a trimmed, changed name', () => {
+      const { ctx, commit } = nodeTreeCtx(fixtureTree());
+      render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+      fireEvent.doubleClick(screen.getByText('Group'));
+      const input = screen.getByDisplayValue('Group');
+      fireEvent.change(input, { target: { value: 'Renamed' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(commit).toHaveBeenCalledTimes(1);
+      const [nextDoc] = commit.mock.calls[0];
+      const renamedGroup = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G');
+      expect(renamedGroup).toMatchObject({ name: 'Renamed' });
+      expect(screen.queryByDisplayValue('Renamed')).toBeNull();
+    });
+
+    it('blur commits a trimmed, changed name', () => {
+      const { ctx, commit } = nodeTreeCtx(fixtureTree());
+      render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+      fireEvent.doubleClick(screen.getByText('Group'));
+      const input = screen.getByDisplayValue('Group');
+      fireEvent.change(input, { target: { value: 'Renamed' } });
+      fireEvent.blur(input);
+
+      expect(commit).toHaveBeenCalledTimes(1);
+      const [nextDoc] = commit.mock.calls[0];
+      const renamedGroup = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G');
+      expect(renamedGroup).toMatchObject({ name: 'Renamed' });
+    });
+
+    it('Escape cancels without committing, even when a blur follows', () => {
+      const { ctx, commit } = nodeTreeCtx(fixtureTree());
+      render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+      fireEvent.doubleClick(screen.getByText('Group'));
+      const input = screen.getByDisplayValue('Group');
+      fireEvent.change(input, { target: { value: 'Renamed' } });
+      fireEvent.keyDown(input, { key: 'Escape' });
+      fireEvent.blur(input);
+
+      expect(commit).not.toHaveBeenCalled();
+      expect(screen.getByText('Group')).toBeTruthy();
+    });
+
+    it('Enter followed by a racing blur does not double-commit', () => {
+      const { ctx, commit } = nodeTreeCtx(fixtureTree());
+      render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+      fireEvent.doubleClick(screen.getByText('Group'));
+      const input = screen.getByDisplayValue('Group');
+      fireEvent.change(input, { target: { value: 'Renamed' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      fireEvent.blur(input);
+
+      expect(commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('an unchanged name does not commit on blur', () => {
+      const { ctx, commit } = nodeTreeCtx(fixtureTree());
+      render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+      fireEvent.doubleClick(screen.getByText('Group'));
+      fireEvent.blur(screen.getByDisplayValue('Group'));
+
+      expect(commit).not.toHaveBeenCalled();
+    });
+  });
+
+  it('group visibility toggle sets the group hidden and folds hidden to descendants at flatten', () => {
+    const { ctx, commit } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide Group' }));
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    const groupNode = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G');
+    expect(groupNode).toMatchObject({ hidden: true });
+    const flat = projectFlatLayers(nextDoc.layers);
+    expect(flat.find((l) => l.id === 'b')).toMatchObject({ hidden: true });
+    expect(flat.find((l) => l.id === 'c')).toMatchObject({ hidden: true });
+  });
+
+  it('delete-group cascades in one history entry', () => {
+    const { ctx, commit } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Group (and all children)' }));
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    expect((nextDoc.layers as LayerNode[]).map((n) => n.id)).toEqual(['a', 'd']);
+  });
+
+  it('drops a cascade-deleted descendant out of the selection', () => {
+    const { ctx, commit, selectIds } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={['b', 'd']} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Group (and all children)' }));
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(selectIds).toHaveBeenLastCalledWith(['d']);
+  });
+
+  it('ungroup releases children in place, at the group\'s own slot', () => {
+    const { ctx, commit } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ungroup Group' }));
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    expect((nextDoc.layers as LayerNode[]).map((n) => n.id)).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('ungrouping a selected group selects the children it released', () => {
+    const { ctx, selectIds } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={['G']} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ungroup Group' }));
+
+    expect(selectIds).toHaveBeenLastCalledWith(['b', 'c']);
+  });
+
+  it('local reorder (bring forward) moves a leaf within its group parent via moveNodeToParent', () => {
+    const { ctx, commit } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    const bRow = screen.getByRole('button', { name: 'Select layer B' }).closest('li')!;
+    fireEvent.click(within(bRow).getByTitle('Bring forward'));
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    const groupNode = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G') as GroupNode;
+    expect(groupNode.children.map((n) => n.id)).toEqual(['c', 'b']);
+  });
+
+  it('local reorder does not reparent across group boundaries', () => {
+    const { ctx, commit } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    // 'C' is the topmost child of G; "bring forward" one more step must stay
+    // inside G (same-parent clamp), never spill out to the top level.
+    const cRow = screen.getByRole('button', { name: 'Select layer C' }).closest('li')!;
+    fireEvent.click(within(cRow).getByTitle('Bring forward'));
+
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('group rows have no bring-forward/send-backward buttons (issue spec)', () => {
+    const { ctx } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    // Scope to the group's own HEADER <div> (a direct child of its <li>),
+    // not the whole <li> subtree — the group's <li> now also nests its
+    // children's <ul> (codex review: valid list markup), and those child
+    // leaf rows (B, C) legitimately DO have their own move buttons.
+    const groupLi = screen.getByRole('button', { name: 'Select group Group' }).closest('li')!;
+    const header = groupLi.querySelector(':scope > div')!;
+    expect(within(header as HTMLElement).queryByTitle('Bring forward')).toBeNull();
+    expect(within(header as HTMLElement).queryByTitle('Send backward')).toBeNull();
+  });
+
+  it('group rename commits a cleared (empty) name, same as leaf rename', () => {
+    const { ctx, commit } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.doubleClick(screen.getByText('Group'));
+    const input = screen.getByDisplayValue('Group');
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    const renamedGroup = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G');
+    expect(renamedGroup).toMatchObject({ name: '' });
+  });
+
+  it('meta-clicking a group strips an already-selected descendant leaf (overlap invariant)', () => {
+    const { ctx, selectIds } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={['b']} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select group Group' }), { metaKey: true });
+    expect(selectIds).toHaveBeenLastCalledWith(['G']);
   });
 });

@@ -5,14 +5,18 @@
 // path node editing all live here; a later wave refines this ONE file without
 // touching the registry.
 import {
-  duplicateLayersAbove,
+  cloneNodeWithFreshIds,
+  findNodeById,
   hitTestLayer,
+  isGroupNode,
+  mapLeavesById,
+  maximalSelectedRoots,
   mergeBboxes,
-  mintId,
   movePathAnchor,
   movePathHandle,
   rectCenter,
   rectsIntersect,
+  replaceNodeWithNodes,
   resizeRotatedRect,
   rotatedRectAABB,
   scaleLayer,
@@ -20,13 +24,32 @@ import {
   snapScalar,
   snapToGrid,
   translatePathLayer,
+  updateLeafById,
   type DocState,
   type Layer,
+  type LayerNode,
   type Pt,
   type Rect,
   type ResizeHandle,
   type SnapOptions,
 } from '@zpd/core';
+import {
+  expandSelectionToLeafIds,
+  promoteMarqueeSelection,
+  resolveSelectionLeaves,
+  resolveSelectionOverlayMode,
+  selectionOwnerId,
+  toggleLeafSelection,
+  togglePromotedSelection,
+  topmostAncestorIdForLeaf,
+} from '../selection-resolve';
+import {
+  bakeMultiRotate,
+  captureMultiRotateSession,
+  snapRotateDelta,
+  unwrapRotateDelta,
+  type MultiRotateSession,
+} from '../multi-rotate';
 import {
   canRotate,
   cornerHandleRects,
@@ -34,12 +57,19 @@ import {
   layerBbox,
   layerRotation,
   multiResizeBbox,
+  multiRotateBbox,
+  multiRotateKnobScreenPos,
   resizeHandleRects,
   rotateHandleScreenPos,
 } from '../renderer';
 import { registerTool } from '../registry/tools';
 import { getTextGeometry, reconcileTextGeometry } from '../text-geometry';
-import type { DraftRenderContext, ToolContext, ToolPointerEvent } from '../types';
+import type {
+  DraftRenderContext,
+  MultiRotateChrome,
+  ToolContext,
+  ToolPointerEvent,
+} from '../types';
 
 const SNAP_MM = 0.1;
 const MIN_RESIZE_MM = 0.5;
@@ -208,6 +238,19 @@ type Drag =
       startPointerDeg: number; // pointer angle about the center at pointerdown
       startRotation: number; // layer rotation at pointerdown
     }
+  | {
+      kind: 'multi-rotate';
+      // The frozen capture (#152): rotatable leaf set, start snapshots,
+      // canonical layerBbox centers, combined start bounds, pivot — all
+      // measured at pointerdown and never re-derived mid-gesture.
+      session: MultiRotateSession;
+      startPointerDeg: number; // pointer angle about the frozen pivot
+      // Last APPLIED delta — the unwrap anchor for the next tick (each tick
+      // picks the mod-360 representative of the raw offset closest to this,
+      // so the signed delta accumulates continuously past ±180°), and what
+      // the chrome/badge reads.
+      deltaDeg: number;
+    }
   | { kind: 'anchor'; layerId: string; index: number }
   | { kind: 'handle'; layerId: string; index: number; which: 'hin' | 'hout' };
 
@@ -219,6 +262,9 @@ interface MarqueeState {
   // empty-space click just deselects and never flashes a marquee.
   active: boolean;
   additive: boolean; // shift/meta/ctrl held: union with the down-time selection
+  // Meta/Ctrl (vs Shift) at pointerdown — decides whether a clickSelectId
+  // release targets the raw leaf (meta escape hatch) or the promoted id (#151).
+  meta: boolean;
   baseIds: readonly string[];
   // A press on an UNSELECTED pattern square arms the marquee like empty space
   // (#97's drag rule), but when the gesture never materializes a marquee the
@@ -276,7 +322,9 @@ export function marqueeHitIds(layers: readonly Layer[], rectMm: Rect): string[] 
 function updateLayer(ctx: ToolContext, id: string, patch: Partial<Layer>, commit: boolean): void {
   const next: DocState = {
     ...ctx.doc,
-    layers: ctx.doc.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as Layer) : l)),
+    // Recursive write (#150): patches the leaf wherever it sits in the tree —
+    // a flat root-array map would silently no-op for a leaf nested in a group.
+    layers: updateLeafById(ctx.doc.layers, id, (l) => ({ ...l, ...patch }) as Layer),
   };
   if (commit) ctx.commit(next);
   else ctx.replace(next);
@@ -323,13 +371,14 @@ export function hitTestCanonicalText(layer: Extract<Layer, { type: 'text' }>, mm
 }
 
 function topmostHit(ctx: ToolContext, mm: Pt): Layer | null {
-  reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+  const layers = ctx.flatLayers;
+  reconcileTextGeometry(layers, ctx.requestRepaint);
   // Preserve core's two-tier ordering exactly: every non-pattern wins over
   // every pattern, and topmost wins within a tier. Only text substitutes the
   // app's canonical Canvas-metric geometry for core's rough estimate.
   for (const patternTier of [false, true]) {
-    for (let i = ctx.doc.layers.length - 1; i >= 0; i -= 1) {
-      const layer = ctx.doc.layers[i];
+    for (let i = layers.length - 1; i >= 0; i -= 1) {
+      const layer = layers[i];
       if (layer.hidden || (layer.type === 'pattern') !== patternTier) continue;
       const hit =
         layer.type === 'text' ? hitTestCanonicalText(layer, mm) : hitTestLayer(layer, mm.x, mm.y);
@@ -365,11 +414,10 @@ function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolCont
   if (selected.type !== 'shape' && selected.type !== 'image') return false;
   const bbox = layerBbox(selected);
   if (!bbox) return false;
-  // Rotated shapes resize too (#51): handles sit at the ROTATED corners and
-  // the drag resolves in the layer's local frame via resizeRotatedRect (#48).
-  // The type gate above is the whole eligibility check (core's isResizable
-  // was deleted in #48); images have no rotation field so they stay axis-
-  // aligned through layerRotation() === 0.
+  // Rotated shapes/images resize too (#51, image joined in #147): handles sit
+  // at the ROTATED corners and the drag resolves in the layer's local frame
+  // via resizeRotatedRect (#48). The type gate above is the whole eligibility
+  // check (core's isResizable was deleted in #48).
   const rotation = layerRotation(selected);
   for (const h of resizeHandleRects(bbox, ctx.camera, rotation)) {
     if (
@@ -393,7 +441,7 @@ function tryGrabResizeHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolCont
 }
 
 function tryGrabRotateHandle(selected: Layer, e: ToolPointerEvent, ctx: ToolContext): boolean {
-  if (!canRotate(selected)) return false; // shape/text only — never invent rotation
+  if (!canRotate(selected)) return false; // shape/text/image only — never invent rotation
   const bbox = layerBbox(selected);
   if (!bbox) return false;
   const rotation = layerRotation(selected);
@@ -457,12 +505,36 @@ function groupFactorFloor(targets: readonly MoveTarget[], bbox: Rect): number {
   return Math.min(floor, 1);
 }
 
+// The flat MoveTarget list for a set of resolved leaf ids — `orig` snapshots
+// each leaf's pointerdown geometry from the flat projection.
+function moveTargetsFor(layers: readonly Layer[], leafIds: readonly string[]): MoveTarget[] {
+  const wanted = new Set(leafIds);
+  return layers.filter((l) => wanted.has(l.id)).map((l) => ({ id: l.id, orig: l }));
+}
+
+// Pairs each source leaf id with its clone's fresh id by walking the two
+// structurally-identical subtrees in parallel (cloneNodeWithFreshIds preserves
+// shape, so index i of one maps to index i of the other). Feeds the
+// Alt-duplicate re-target: the drag's flat targets swap to the clone leaves.
+function mapCloneLeafIds(source: LayerNode, clone: LayerNode, into: Map<string, string>): void {
+  if (isGroupNode(source) && isGroupNode(clone)) {
+    for (let i = 0; i < source.children.length; i += 1) {
+      mapCloneLeafIds(source.children[i], clone.children[i], into);
+    }
+  } else if (!isGroupNode(source)) {
+    into.set(source.id, clone.id);
+  }
+}
+
 // Multi-resize grab (#52): corner handles on the combined bbox start a uniform
 // group scale. multiResizeBbox (renderer.ts) is the shared eligibility gate,
-// so exactly the handles the chrome draws are grabbable here.
+// so exactly the handles the chrome draws are grabbable here. The gate and the
+// targets both use the selection's EXPANDED editable leaves (#151) — a raw
+// group id matches no flat layer, and identical ids for a group-free doc.
 function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
-  const ids = ctx.selectedIds;
-  const bbox = multiResizeBbox(ctx.doc.layers, ids);
+  const layers = ctx.flatLayers;
+  const ids = resolveSelectionLeaves(ctx.doc.layers, ctx.selectedIds, layers).editableLeafIds;
+  const bbox = multiResizeBbox(layers, ids);
   if (!bbox) return false;
   for (const h of cornerHandleRects(bbox, ctx.camera)) {
     if (
@@ -476,7 +548,7 @@ function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolea
         handle: h.id,
         bbox,
         startMm: e.mm,
-        targets: ctx.doc.layers
+        targets: layers
           .filter((l) => ids.includes(l.id) && l.type !== 'pattern')
           .map((l) => ({ id: l.id, orig: l })),
       };
@@ -484,6 +556,36 @@ function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolea
     }
   }
   return false;
+}
+
+// Multi/group rotate grab (#152): the knob above the combined bbox starts a
+// batch rotate about the frozen pivot. Shares its whole eligibility with the
+// chrome pass — combined overlay mode (the chrome's combined branch) AND
+// multiRotateBbox (the renderer's shared gate), so exactly the knob that is
+// drawn is grabbable. The knob rides the FULL combined bbox (what the chrome
+// outlines); the gesture's pivot/bounds come from the rotatable leaves only
+// (captureMultiRotateSession) — a selected pattern must not displace them.
+function tryGrabMultiRotateHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
+  const tree = ctx.doc.layers;
+  if (resolveSelectionOverlayMode(tree, ctx.selectedIds) !== 'combined') return false;
+  const layers = ctx.flatLayers;
+  const ids = resolveSelectionLeaves(tree, ctx.selectedIds, layers).editableLeafIds;
+  const bbox = multiRotateBbox(layers, ids);
+  if (!bbox) return false;
+  // deltaDeg 0: a grab always happens with no gesture active, but going
+  // through the shared position helper keeps draw and hit-test on the same
+  // offset/radius constants (#152 — drift = visible-but-unclickable).
+  const knob = multiRotateKnobScreenPos(bbox, rectCenter(bbox), 0, ctx.camera);
+  if (Math.hypot(knob.x - e.screen.x, knob.y - e.screen.y) > ROTATE_GRAB_PX) return false;
+  const session = captureMultiRotateSession(tree, ctx.selectedIds, layers);
+  if (!session) return false;
+  drag = {
+    kind: 'multi-rotate',
+    session,
+    startPointerDeg: pointerDeg(e.mm, session.pivot),
+    deltaDeg: 0,
+  };
+  return true;
 }
 
 registerTool({
@@ -502,12 +604,14 @@ registerTool({
     'handles to reshape a path, and drag the round handle above a shape or text layer to rotate it ' +
     'about its center (Shift snaps to 45° steps). With several layers selected, drag a corner of ' +
     'the combined box to scale them all uniformly about the opposite corner — hold Alt to scale ' +
-    'about the center instead (patterns are unaffected). A pattern square selects on click only ' +
+    'about the center instead (patterns are unaffected) — or drag the round handle above the ' +
+    'combined box to rotate them together about its center (Shift snaps to 45° steps; patterns ' +
+    'keep their angle). A pattern square selects on click only ' +
     'where no other layer is hit; dragging an unselected pattern draws a marquee instead, and a ' +
     'selected pattern drags like any layer (size it from the Properties panel). Arrow keys nudge ' +
     'the selection (Shift = ×10); Delete/Backspace removes it. Shortcut: V.',
   onPointerDown(e: ToolPointerEvent, ctx: ToolContext) {
-    reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+    reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
     hoveredId = null; // pointer engaged — hover chrome resumes after release
     // Right (or middle) click PRESERVES the selection: a future context menu
     // must be able to act on the live selection (#47).
@@ -523,51 +627,75 @@ registerTool({
     if (grabbable && tryGrabNode(grabbable, e, ctx)) return;
     if (grabbable && tryGrabRotateHandle(grabbable, e, ctx)) return;
     if (grabbable && tryGrabResizeHandle(grabbable, e, ctx)) return;
-    // >1 selected: the combined bbox's corner handles win over a fresh
-    // hit-test, same precedence as the single-selection handles above (#52).
+    // Combined selection: the rotate knob wins over the corner handles
+    // (rotate ABOVE resize, matching the single-selection grab order), and
+    // both win over a fresh hit-test (#52/#152).
+    if (tryGrabMultiRotateHandle(e, ctx)) return;
     if (tryGrabMultiResizeHandle(e, ctx)) return;
 
     const hit = topmostHit(ctx, e.mm);
     const toggleModifier = e.shiftKey || e.metaKey || e.ctrlKey;
+    const tree = ctx.doc.layers;
     // #97's drag rule: a press on a pattern square that is NOT already
     // selected behaves like empty space for DRAG purposes — the panel stays
     // marquee-able even with a cover-sized square under everything — while a
     // CLICK (never crossing the drag threshold) still (toggle-)selects the
     // pattern on release via the marquee's clickSelectId. A SELECTED pattern
     // takes the normal layer path below, so its next drag MOVES it.
+    // "Selected" is the EXPANDED sense (#151): a pattern inside a selected
+    // group is a selection member and must drag the group, not arm a marquee.
     const unselectedPatternHit =
-      hit && hit.type === 'pattern' && !ctx.selectedIds.includes(hit.id) ? hit : null;
+      hit &&
+      hit.type === 'pattern' &&
+      !expandSelectionToLeafIds(tree, ctx.selectedIds).includes(hit.id)
+        ? hit
+        : null;
     if (hit && !unselectedPatternHit) {
-      if (toggleModifier) {
-        // Modifier vocabulary (#47): Shift = add to / toggle within the
-        // selection; Meta/Ctrl = toggle exactly one layer. Both toggle the
-        // clicked layer's membership and leave the rest untouched; no move
-        // drag starts on a modifier click.
-        const ids = ctx.selectedIds;
-        ctx.selectIds(ids.includes(hit.id) ? ids.filter((id) => id !== hit.id) : [...ids, hit.id]);
+      // Modifier vocabulary (#47, group-aware since #151). Meta/Ctrl WINS
+      // over Shift: it targets the RAW leaf (the group escape hatch), and
+      // adding the leaf strips any selected ancestor so a [group, descendant]
+      // overlap never exists. Plain Shift toggles the PROMOTED (topmost
+      // ancestor) id, preserving existing shift semantics otherwise. No move
+      // drag starts on a modifier click.
+      if (e.metaKey || e.ctrlKey) {
+        ctx.selectIds(toggleLeafSelection(tree, ctx.selectedIds, hit.id));
+        return;
+      }
+      if (e.shiftKey) {
+        ctx.selectIds(togglePromotedSelection(tree, ctx.selectedIds, hit.id));
         return;
       }
       const ids = ctx.selectedIds;
-      if (ids.length > 1 && ids.includes(hit.id)) {
-        // Multi-move (#49): grabbing any member drags the whole selection —
-        // pattern members included since #97 (they carry an x/y/size square
-        // that translates like any other layer's origin).
+      // Plain press on a leaf the selection already covers (directly, or via
+      // a selected ancestor group): drag the WHOLE selection's expanded
+      // editable leaves (#49/#151 — pattern members included since #97). A
+      // pure click instead collapses to the covering id on release.
+      const owner = selectionOwnerId(tree, ids, hit.id);
+      if (owner !== null) {
         drag = {
           kind: 'move',
           startMm: e.mm,
-          targets: ctx.doc.layers
-            .filter((l) => ids.includes(l.id))
-            .map((l) => ({ id: l.id, orig: l })),
+          targets: moveTargetsFor(
+            ctx.flatLayers,
+            resolveSelectionLeaves(tree, ids, ctx.flatLayers).editableLeafIds,
+          ),
           crossed: false,
-          collapseTo: hit.id,
+          collapseTo: ids.length > 1 ? owner : null,
         };
         return;
       }
-      ctx.select(hit.id);
+      // Fresh hit: promote to the TOPMOST ancestor group id (the leaf's own
+      // id when ungrouped — identity for group-free docs) and arm the move
+      // drag over its editable leaves (#151).
+      const promotedId = topmostAncestorIdForLeaf(tree, hit.id);
+      ctx.select(promotedId);
       drag = {
         kind: 'move',
         startMm: e.mm,
-        targets: [{ id: hit.id, orig: hit }],
+        targets: moveTargetsFor(
+          ctx.flatLayers,
+          resolveSelectionLeaves(tree, [promotedId], ctx.flatLayers).editableLeafIds,
+        ),
         crossed: false,
         collapseTo: null,
       };
@@ -585,20 +713,23 @@ registerTool({
       currentMm: e.mm,
       active: false,
       additive: toggleModifier,
+      meta: e.metaKey || e.ctrlKey,
       baseIds: toggleModifier ? ctx.selectedIds : [],
       clickSelectId: unselectedPatternHit?.id ?? null,
     };
   },
   onPointerMove(e: ToolPointerEvent, ctx: ToolContext) {
-    reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+    reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
     if (marquee) {
       if (!marquee.active && !pastThreshold(e.screen, marquee.startScreen)) return;
       marquee.active = true;
       marquee.currentMm = e.mm;
-      const hits = marqueeHitIds(ctx.doc.layers, marqueeRect(marquee.startMm, marquee.currentMm));
-      const base = marquee.baseIds;
+      // Marquee CANDIDATES come from the flat projection (#150); each swept
+      // nested leaf then PROMOTES to its topmost ancestor group id, deduped
+      // and collapsed to maximal roots with the additive base (#151).
+      const hits = marqueeHitIds(ctx.flatLayers, marqueeRect(marquee.startMm, marquee.currentMm));
       ctx.selectIds(
-        marquee.additive ? [...base, ...hits.filter((id) => !base.includes(id))] : hits,
+        promoteMarqueeSelection(ctx.doc.layers, hits, marquee.additive ? marquee.baseIds : []),
       );
       ctx.requestRepaint(); // the rubber-band moved even if the selection didn't
       return;
@@ -630,7 +761,12 @@ registerTool({
         // ctx.doc getter reads a ref that only re-syncs after React renders
         // (Editor.tsx), so the second replace would rebuild from the pre-clone
         // layer list and silently drop the clones.
-        let layers = ctx.doc.layers;
+        // Tree-preserving since #151 (closes #150's deliberate flatten-write
+        // shim): reads stay on the flat drag targets, writes land on the TREE
+        // via mapLeavesById, and Alt-duplicate clones whole SUBTREES per
+        // maximal selected root — a grouped selection duplicates its groups
+        // instead of dissolving them into loose leaves.
+        let tree = ctx.doc.layers;
         if (!drag.crossed) {
           // We're past the client-space threshold gate above, so THIS move is
           // the crossing moment — the one instant Alt is sampled (#49). An
@@ -641,23 +777,31 @@ registerTool({
             // Clone insertion is a real doc change: open the (single) undo
             // entry now even if the snapped move delta is still zero.
             ensureGesture(ctx);
-            const dup = duplicateLayersAbove(
-              layers,
-              drag.targets.map((t) => t.id),
-              (source) => mintId(source.type),
-            );
-            layers = dup.layers;
-            // Re-target the drag to the clones — the originals stay put. The
-            // clone starts at its source's geometry, so keeping `orig` keeps
-            // the delta math unchanged.
+            // Pre-collapse to maximal roots (#151): a selection holding both
+            // a group and one of its own descendants clones the group ONCE.
+            // Each root — a top-level leaf, a group, or a Meta-selected leaf
+            // nested inside an unselected group — is cloned with fresh ids
+            // directly above its source, in its own parent.
+            const leafIdMap = new Map<string, string>();
+            const cloneRootIds: string[] = [];
+            for (const rootId of maximalSelectedRoots(tree, ctx.selectedIds)) {
+              const found = findNodeById(tree, rootId);
+              if (!found) continue;
+              const clone = cloneNodeWithFreshIds(found.node);
+              cloneRootIds.push(clone.id);
+              mapCloneLeafIds(found.node, clone, leafIdMap);
+              tree = replaceNodeWithNodes(tree, rootId, [found.node, clone]);
+            }
+            // Re-target the drag to the clone leaves — the originals stay
+            // put. The clone starts at its source's geometry, so keeping
+            // `orig` keeps the delta math unchanged; the ?? fallback is pure
+            // defense for an id missing from the map.
             drag.targets = drag.targets.map((t) => ({
-              id: dup.idMap.get(t.id) ?? t.id,
+              id: leafIdMap.get(t.id) ?? t.id,
               orig: t.orig,
             }));
-            // Selection follows the clones — every member (patterns included
-            // since #97) is cloned; the ?? fallback is pure defense for an id
-            // missing from the map.
-            ctx.selectIds(ctx.selectedIds.map((id) => dup.idMap.get(id) ?? id));
+            // Selection follows the clone ROOTS (group ids stay group ids).
+            ctx.selectIds(cloneRootIds);
             drag.collapseTo = null;
           }
         }
@@ -719,9 +863,11 @@ registerTool({
             patches.set(id, { x: addMm(orig.x, sdx), y: addMm(orig.y, sdy) });
           }
         }
+        // Recursive write (#150/#151): each patched leaf lands wherever it
+        // sits in `tree` (which already contains this event's Alt-clones).
         ctx.replace({
           ...ctx.doc,
-          layers: layers.map((l) => {
+          layers: mapLeavesById(tree, [...patches.keys()], (l) => {
             const patch = patches.get(l.id);
             return patch ? ({ ...l, ...patch } as Layer) : l;
           }),
@@ -785,9 +931,11 @@ registerTool({
         for (const { id, orig } of drag.targets) {
           scaled.set(id, scaleLayer(orig, f, anchor, MIN_RESIZE_MM));
         }
+        // Recursive write (#150): each scaled leaf lands wherever it sits in
+        // the tree — a flat root map would no-op for group-nested members.
         ctx.replace({
           ...ctx.doc,
-          layers: ctx.doc.layers.map((l) => scaled.get(l.id) ?? l),
+          layers: mapLeavesById(ctx.doc.layers, [...scaled.keys()], (l) => scaled.get(l.id) ?? l),
         });
         break;
       }
@@ -803,9 +951,29 @@ registerTool({
         updateLayer(ctx, drag.layerId, { rotation: next }, false);
         break;
       }
+      case 'multi-rotate': {
+        // Raw offset unwrapped across the atan2 ±180° branch cut against the
+        // last applied delta, then Shift-snapped (45° increments from gesture
+        // start — DELTA snap, the single-rotate keeps its own #51 snap) or
+        // rounded to 0.1°. No grid/guide snapping during a rotate gesture.
+        const raw = pointerDeg(e.mm, drag.session.pivot) - drag.startPointerDeg;
+        const delta = snapRotateDelta(unwrapRotateDelta(raw, drag.deltaDeg), e.shiftKey);
+        // Lazy history: a drag that never leaves delta 0 writes no entry.
+        if (!gestureOpen && delta === 0) break;
+        ensureGesture(ctx);
+        drag.deltaDeg = delta;
+        // ONE streamed replace per tick, re-baked ENTIRELY from the frozen
+        // start snapshots (never cumulatively from live state — compounding
+        // rounding would drift the orbit). Pointerup adds no trailing commit.
+        ctx.replace({
+          ...ctx.doc,
+          layers: bakeMultiRotate(ctx.doc.layers, drag.session, delta),
+        });
+        break;
+      }
       case 'anchor': {
         const anchorLayerId = drag.layerId;
-        const layer = ctx.doc.layers.find((l) => l.id === anchorLayerId);
+        const layer = ctx.flatLayers.find((l) => l.id === anchorLayerId);
         if (layer?.type === 'path') {
           const nx = snap(e.mm.x);
           const ny = snap(e.mm.y);
@@ -823,7 +991,7 @@ registerTool({
       }
       case 'handle': {
         const handleLayerId = drag.layerId;
-        const layer = ctx.doc.layers.find((l) => l.id === handleLayerId);
+        const layer = ctx.flatLayers.find((l) => l.id === handleLayerId);
         if (layer?.type === 'path') {
           const cur = layer.points[drag.index]?.[drag.which];
           if (!gestureOpen && cur && e.mm.x === cur.x && e.mm.y === cur.y) break;
@@ -848,32 +1016,13 @@ registerTool({
       }
     }
   },
-  onPointerUp(_e: ToolPointerEvent, ctx: ToolContext) {
-    if (marquee?.active) ctx.requestRepaint(); // erase the rubber-band
-    // Pattern click rule (#97): a press on an unselected pattern that never
-    // materialized a marquee is a CLICK — (toggle-)select the pattern now,
-    // mirroring the modifier vocabulary of the direct-hit path above.
-    if (marquee && !marquee.active && marquee.clickSelectId !== null) {
-      const id = marquee.clickSelectId;
-      if (marquee.additive) {
-        const ids = ctx.selectedIds;
-        ctx.selectIds(ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]);
-      } else {
-        ctx.select(id);
-      }
-    }
-    // A grab on a multi-selection member that never crossed the threshold is
-    // a plain CLICK — collapse the selection to that layer (standard tool
-    // behavior; without this a multi-selection could never be narrowed by
-    // clicking one of its members).
-    if (drag?.kind === 'move' && !drag.crossed && drag.collapseTo !== null) {
-      ctx.select(drag.collapseTo);
-    }
-    marquee = null;
-    drag = null;
-    gestureOpen = false;
-    downScreen = null;
-  },
+  onPointerUp: endPointerSession,
+  // pointercancel is pointerup, exactly (#152): the streamed replaces already
+  // hold the last applied change and closing the drag adds no trailing
+  // commit, so a revoked pointer (OS gesture, capture loss) simply ends the
+  // gesture where it stood — undo covers the rest. There is deliberately no
+  // mid-drag ESC cancel (parity with the reference implementation).
+  onPointerCancel: endPointerSession,
   onPointerLeave(_e: ToolPointerEvent, ctx: ToolContext) {
     // No further pointermove will arrive to clear the hover outline — a
     // hovered layer would otherwise keep its chrome after the cursor leaves
@@ -884,6 +1033,15 @@ registerTool({
       ctx.requestRepaint();
     }
   },
+  // Non-null exactly while a multi-rotate stream is live (gesture opened):
+  // before the first non-zero tick the doc is untouched, so the normal
+  // chrome — which equals the frozen chrome at delta 0 — keeps drawing and
+  // a zero-change drag never flickers.
+  multiRotateChrome(): MultiRotateChrome | null {
+    return drag?.kind === 'multi-rotate' && gestureOpen
+      ? { bounds: drag.session.bounds, pivot: drag.session.pivot, deltaDeg: drag.deltaDeg }
+      : null;
+  },
   onDeactivate() {
     marquee = null;
     hoveredId = null;
@@ -892,11 +1050,16 @@ registerTool({
     downScreen = null;
   },
   renderDraft(d: DraftRenderContext, ctx: ToolContext) {
-    reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+    reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
     // hover chrome — subtle, and skipped for layers already wearing selection
-    // chrome (hoveredId is cleared on pointerdown, so nothing draws mid-drag)
-    if (hoveredId && !ctx.selectedIds.includes(hoveredId)) {
-      const layer = ctx.doc.layers.find((l) => l.id === hoveredId);
+    // chrome (hoveredId is cleared on pointerdown, so nothing draws mid-drag).
+    // "Selected" is the EXPANDED sense (#151): a leaf inside a selected group
+    // already wears chrome, so hovering it must not double-outline.
+    if (
+      hoveredId &&
+      !expandSelectionToLeafIds(ctx.doc.layers, ctx.selectedIds).includes(hoveredId)
+    ) {
+      const layer = ctx.flatLayers.find((l) => l.id === hoveredId);
       const bbox = layer && !layer.hidden ? layerBbox(layer) : null;
       if (layer && bbox) {
         drawHoverOutline(d.ctx, rotatedRectAABB(bbox, layerRotation(layer)), d.camera);
@@ -919,3 +1082,35 @@ registerTool({
     }
   },
 });
+
+function endPointerSession(_e: ToolPointerEvent, ctx: ToolContext) {
+  if (marquee?.active) ctx.requestRepaint(); // erase the rubber-band
+  // Pattern click rule (#97): a press on an unselected pattern that never
+  // materialized a marquee is a CLICK — (toggle-)select the pattern now,
+  // mirroring the modifier vocabulary of the direct-hit path above.
+  if (marquee && !marquee.active && marquee.clickSelectId !== null) {
+    const id = marquee.clickSelectId;
+    const tree = ctx.doc.layers;
+    // Same group-aware modifier vocabulary as the direct-hit path (#151):
+    // Meta targets the raw pattern leaf, Shift toggles the promoted id, a
+    // plain click selects the promoted id (identity when ungrouped).
+    if (marquee.meta) {
+      ctx.selectIds(toggleLeafSelection(tree, ctx.selectedIds, id));
+    } else if (marquee.additive) {
+      ctx.selectIds(togglePromotedSelection(tree, ctx.selectedIds, id));
+    } else {
+      ctx.select(topmostAncestorIdForLeaf(tree, id));
+    }
+  }
+  // A grab on a multi-selection member that never crossed the threshold is
+  // a plain CLICK — collapse the selection to that layer (standard tool
+  // behavior; without this a multi-selection could never be narrowed by
+  // clicking one of its members).
+  if (drag?.kind === 'move' && !drag.crossed && drag.collapseTo !== null) {
+    ctx.select(drag.collapseTo);
+  }
+  marquee = null;
+  drag = null;
+  gestureOpen = false;
+  downScreen = null;
+}

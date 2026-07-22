@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Guide, ShapeLayer } from '@zpd/core';
 import type { ToolContext } from '../types';
+import { projectFlatLayers } from '../flat-projection';
 import { Sidebar } from './sidebar';
 
 afterEach(cleanup);
@@ -26,22 +27,27 @@ const GUIDES: Guide[] = [
 
 function stubCtx() {
   const commit = vi.fn();
+  const doc = { panelHp: 12, layers: [LAYER], guides: GUIDES };
   const ctx = {
-    doc: { panelHp: 12, layers: [LAYER], guides: GUIDES },
+    doc,
     selectedIds: [],
     commit,
     select: vi.fn(),
     selectIds: vi.fn(),
   } as unknown as ToolContext;
-  return { ctx, commit };
+  Object.defineProperty(ctx, 'flatLayers', {
+    get: () => projectFlatLayers(ctx.doc.layers),
+  });
+  return { ctx, doc, commit };
 }
 
 function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
-  const { ctx } = stubCtx();
+  const { ctx, doc } = stubCtx();
   const onShowGuidesChange = vi.fn();
   render(
     <Sidebar
       ctx={ctx}
+      doc={doc as Parameters<typeof Sidebar>[0]['doc']}
       selectedIds={[]}
       selectedLayer={null}
       activeToolId="select"

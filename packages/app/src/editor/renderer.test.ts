@@ -23,8 +23,12 @@ import {
   CORNER_HANDLE_IDS,
   cornerHandleRects,
   layerBbox,
+  layerRotation,
+  formatRotateDeltaBadge,
   measureTextBbox,
   multiResizeBbox,
+  multiRotateBbox,
+  multiRotateKnobScreenPos,
   reconcileImageCache,
   renderScene,
   resizeHandleRects,
@@ -187,8 +191,8 @@ describe('rotateHandleScreenPos (#51)', () => {
   });
 });
 
-describe('canRotate (#51 eligibility)', () => {
-  it('is true for exactly the types layerRotation reads: shape and text', () => {
+describe('canRotate (#51 eligibility, image joined in #147)', () => {
+  it('is true for exactly the types layerRotation reads: shape, text, and image', () => {
     expect(canRotate(shape('a', 0, 0))).toBe(true);
     expect(
       canRotate({
@@ -226,7 +230,7 @@ describe('canRotate (#51 eligibility)', () => {
         width: 1,
         height: 1,
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       canRotate({
         id: 'g',
@@ -240,6 +244,27 @@ describe('canRotate (#51 eligibility)', () => {
         size: 128.5,
       }),
     ).toBe(false);
+  });
+});
+
+describe('layerRotation — image (#147)', () => {
+  const image: ImageLayer = {
+    id: 'i',
+    name: 'i',
+    type: 'image',
+    src: 'data:,',
+    x: 0,
+    y: 0,
+    width: 10,
+    height: 10,
+  };
+
+  it('reads the rotation field when set', () => {
+    expect(layerRotation({ ...image, rotation: 45 })).toBe(45);
+  });
+
+  it('defaults to 0 when rotation is unset', () => {
+    expect(layerRotation(image)).toBe(0);
   });
 });
 
@@ -313,6 +338,107 @@ describe('multiResizeBbox (#52 eligibility gate)', () => {
   });
 });
 
+describe('multiRotateBbox (#152 eligibility gate)', () => {
+  it('returns the combined bbox when at least one selected leaf is rotatable', () => {
+    const layers: Layer[] = [shape('a', 0, 0), shape('b', 40, 30)];
+    expect(multiRotateBbox(layers, ['a', 'b'])).toEqual({ x: 0, y: 0, width: 50, height: 40 });
+  });
+
+  it('is null for a pattern-only selection — nothing in it can rotate', () => {
+    const layers: Layer[] = [pattern('g1'), pattern('g2')];
+    expect(multiRotateBbox(layers, ['g1', 'g2'])).toBeNull();
+  });
+
+  it('a pattern plus a shape qualifies, and the union spans the ROTATABLE leaf only', () => {
+    // ONE bounds/pivot pair for knob, grab, gesture pivot and mid-gesture
+    // chrome: the pattern must not displace it (it would make the knob jump
+    // off the pointer's ray on the first tick).
+    const layers: Layer[] = [pattern('g1'), shape('a', 10, 10)];
+    expect(multiRotateBbox(layers, ['g1', 'a'])).toEqual({ x: 10, y: 10, width: 10, height: 10 });
+  });
+
+  it('is null for a pattern plus an EMPTY path — the bake cannot change either', () => {
+    // Same phantom-gesture guard as multiResizeBbox: a knob here would open
+    // an undo entry that changes nothing.
+    const emptyPath: Layer = {
+      id: 'p0',
+      name: 'p0',
+      type: 'path',
+      points: [],
+      closed: false,
+      fill: null,
+      stroke: 1,
+      strokeWidth: 1,
+    };
+    expect(multiRotateBbox([pattern('g1'), emptyPath], ['g1', 'p0'])).toBeNull();
+  });
+
+  it('is null when the only rotatable member is hidden', () => {
+    const layers: Layer[] = [shape('a', 0, 0, { hidden: true }), pattern('g1')];
+    expect(multiRotateBbox(layers, ['a', 'g1'])).toEqual(null);
+  });
+
+  it('unlike multiResizeBbox, a SINGLE leaf qualifies (one-child group case)', () => {
+    // Combined overlay mode is the caller's precondition; a one-child group
+    // resolves to one leaf and still rotates (#152).
+    const layers: Layer[] = [shape('a', 0, 0)];
+    expect(multiRotateBbox(layers, ['a'])).toEqual({ x: 0, y: 0, width: 10, height: 10 });
+  });
+
+  it('paths are rotatable (they bake via point geometry, no rotation field needed)', () => {
+    const path: Layer = {
+      id: 'p1',
+      name: 'p1',
+      type: 'path',
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+      ],
+      closed: false,
+      fill: null,
+      stroke: 1,
+      strokeWidth: 1,
+    };
+    expect(multiRotateBbox([path, pattern('g1')], ['p1', 'g1'])).not.toBeNull();
+  });
+});
+
+describe('multiRotateKnobScreenPos (#152 — shared draw/hit-test geometry)', () => {
+  const bounds: Rect = { x: 10, y: 10, width: 20, height: 10 }; // top-mid (20, 10)
+
+  it('delta 0 is an exact pass-through of the single-rotate handle position', () => {
+    expect(multiRotateKnobScreenPos(bounds, { x: 20, y: 15 }, 0, IDENTITY)).toEqual(
+      rotateHandleScreenPos(bounds, 0, IDENTITY),
+    );
+  });
+
+  it('orbits the knob about the pivot by the delta (90° cw puts it right of the pivot)', () => {
+    const pivot = { x: 20, y: 15 };
+    const knob = multiRotateKnobScreenPos(bounds, pivot, 90, IDENTITY);
+    // base knob: (20, 10 - ROTATE_HANDLE_OFFSET_PX) = (20, -10), 25px above
+    // the pivot; 90° cw about (20, 15) in y-down screen space → (45, 15).
+    expect(knob.x).toBeCloseTo(45);
+    expect(knob.y).toBeCloseTo(15);
+  });
+});
+
+describe('formatRotateDeltaBadge (#152 — signed delta label)', () => {
+  it('formats positive, negative and zero deltas', () => {
+    expect(formatRotateDeltaBadge(37.5)).toBe('+37.5°');
+    expect(formatRotateDeltaBadge(-45)).toBe('-45.0°');
+    expect(formatRotateDeltaBadge(0)).toBe('+0.0°');
+  });
+
+  it('folds -0 so a counter-clockwise jitter never flashes "-0.0°"', () => {
+    expect(formatRotateDeltaBadge(-0)).toBe('+0.0°');
+  });
+
+  it('stays signed past ±180° (unwrapped deltas accumulate)', () => {
+    expect(formatRotateDeltaBadge(270)).toBe('+270.0°');
+    expect(formatRotateDeltaBadge(-190.5)).toBe('-190.5°');
+  });
+});
+
 describe('cornerHandleRects (#52 — corner handles ONLY for multi-selections)', () => {
   it('returns exactly the 4 corner handles, no edge handles', () => {
     const rects = cornerHandleRects(BBOX, IDENTITY);
@@ -373,6 +499,121 @@ describe('reconcileImageCache', () => {
     };
     reconcileImageCache(cache, [shapeLayer]);
     expect(cache.has('a')).toBe(false);
+  });
+});
+
+// --- rotated image paint transform (#147) ------------------------------------
+//
+// Same jsdom-can't-rasterize constraint as the pattern-square block above:
+// the transform MATH is proven at the command level (translate/rotate/
+// translate about the bbox center, then drawImage), not by inspecting pixels.
+describe('paintLayer — rotated image (#147)', () => {
+  interface CtxCall {
+    method: string;
+    args: unknown[];
+  }
+  let calls: CtxCall[];
+  const originalGetContext = HTMLCanvasElement.prototype.getContext;
+  const CAM: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
+
+  beforeEach(() => {
+    calls = [];
+    HTMLCanvasElement.prototype.getContext = ((): CanvasRenderingContext2D => {
+      const store: Record<string, unknown> = {};
+      return new Proxy(store, {
+        get: (t, p: string) => {
+          if (p in t) return t[p];
+          if (p === 'globalAlpha') return 1;
+          if (p === 'measureText') return () => ({ width: 0 });
+          return (...args: unknown[]) => {
+            calls.push({ method: p, args });
+            return undefined;
+          };
+        },
+        set: (t, p: string, v) => {
+          t[p] = v;
+          return true;
+        },
+      }) as unknown as CanvasRenderingContext2D;
+    }) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+  });
+
+  afterEach(() => {
+    HTMLCanvasElement.prototype.getContext = originalGetContext;
+    vi.clearAllMocks();
+  });
+
+  it('rotates about the bbox center (translate/rotate/translate) then paints via drawImage', () => {
+    // 20x10 image at (10,20) — bbox center (20,25) — rotated 90deg.
+    const layer: ImageLayer = {
+      id: 'img-1',
+      name: 'Reference',
+      type: 'image',
+      src: 'data:,',
+      x: 10,
+      y: 20,
+      width: 20,
+      height: 10,
+      rotation: 90,
+    };
+    const fakeImg = { complete: true, naturalWidth: 20, naturalHeight: 10 } as HTMLImageElement;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 200;
+    canvas.height = 200;
+    renderScene(canvas, { layers: [layer] }, PANEL, CAM, {
+      selectedIds: [],
+      images: new Map([['img-1', fakeImg]]),
+      showNodes: false,
+      showOutsidePanel: false,
+      requestRepaint: vi.fn(),
+    });
+
+    const translateToCenterIdx = calls.findIndex(
+      (c) => c.method === 'translate' && c.args[0] === 20 && c.args[1] === 25,
+    );
+    const rotateIdx = calls.findIndex(
+      (c, i) => i > translateToCenterIdx && c.method === 'rotate' && c.args[0] === Math.PI / 2,
+    );
+    const translateBackIdx = calls.findIndex(
+      (c, i) => i > rotateIdx && c.method === 'translate' && c.args[0] === -20 && c.args[1] === -25,
+    );
+    const drawIdx = calls.findIndex(
+      (c, i) => i > translateBackIdx && c.method === 'drawImage' && c.args[0] === fakeImg,
+    );
+    expect(translateToCenterIdx).toBeGreaterThan(-1);
+    expect(rotateIdx).toBeGreaterThan(translateToCenterIdx);
+    expect(translateBackIdx).toBeGreaterThan(rotateIdx);
+    expect(drawIdx).toBeGreaterThan(translateBackIdx);
+    expect(calls[drawIdx].args).toEqual([fakeImg, 10, 20, 20, 10]);
+  });
+
+  it('unrotated image paints with no rotate call at all', () => {
+    const layer: ImageLayer = {
+      id: 'img-2',
+      name: 'Reference',
+      type: 'image',
+      src: 'data:,',
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+    };
+    const fakeImg = { complete: true, naturalWidth: 10, naturalHeight: 10 } as HTMLImageElement;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 200;
+    canvas.height = 200;
+    renderScene(canvas, { layers: [layer] }, PANEL, CAM, {
+      selectedIds: [],
+      images: new Map([['img-2', fakeImg]]),
+      showNodes: false,
+      showOutsidePanel: false,
+      requestRepaint: vi.fn(),
+    });
+
+    expect(calls.some((c) => c.method === 'rotate')).toBe(false);
+    expect(calls.some((c) => c.method === 'drawImage')).toBe(true);
   });
 });
 

@@ -42,9 +42,11 @@ import {
 } from './pen';
 import { getTool } from '../registry/tools';
 import {
+  abortGesture as coreAbortGesture,
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
+  flattenLayerNodes,
   redo as coreRedo,
   replace as coreReplace,
   reset as coreReset,
@@ -57,6 +59,7 @@ import {
 import { normalizeSelectedIds } from '../selection';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
+import { projectFlatLayers } from '../flat-projection';
 
 const CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 }; // identity: screen px == mm
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
@@ -68,7 +71,8 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
   let repaintCalls = 0;
 
   // Same derivation the Editor performs (see Editor.tsx / selection.ts).
-  const readSelectedIds = () => normalizeSelectedIds(selectedIds, history.present.layers);
+  const readSelectedIds = () =>
+    normalizeSelectedIds(selectedIds, flattenLayerNodes(history.present.layers));
   const readSelectedId = () => {
     const ids = readSelectedIds();
     return ids.length === 1 ? ids[0] : null;
@@ -91,7 +95,10 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
       return readSelectedId();
     },
     get selectedLayer() {
-      return history.present.layers.find((l) => l.id === readSelectedId()) ?? null;
+      return flattenLayerNodes(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
+    },
+    get flatLayers() {
+      return projectFlatLayers(history.present.layers);
     },
     toMm: (p: Pt) => p,
     toScreen: (p: Pt) => p,
@@ -106,6 +113,9 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
     },
     beginGesture: () => {
       history = coreBeginGesture(history);
+    },
+    abortGesture: () => {
+      history = coreAbortGesture(history);
     },
     undo: () => {
       history = coreUndo(history);

@@ -9,20 +9,41 @@
 // the effect below owns end to end.
 //
 // The OS clipboard payload is a versioned envelope — {app:'zpd', kind:
-// 'layers', version:1, layers:[...]} — written on copy/cut via
+// 'layers', version:2, layers:[...]} — written on copy/cut via
 // navigator.clipboard.writeText and read back on paste from the
 // ClipboardEvent's clipboardData, so copy/paste round-trips across zpd tabs
 // (and a payload from an unrelated app, or a future envelope version, is
 // simply ignored rather than crashing the paste).
+//
+// v2 (#156, layer groups): `layers` became `LayerNode[]` — a copy/cut
+// captures the selection's MAXIMAL roots (leaves and/or groups) straight
+// from the TREE, so a copied group round-trips as a group, not a bag of
+// loose leaves. A v1 envelope (this app's own pre-#156 output, or a
+// hand-edited one) is still accepted on paste: a flat Layer[] is already a
+// valid LayerNode[] (every Layer is a leaf node), so no separate v1 code path
+// is needed — see parseEnvelope below.
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { cloneLayersWithFreshIds, mintId, parsePanelConfig, type Layer } from '@zpd/core';
+import {
+  cloneNodeWithFreshIds,
+  deleteNodeById,
+  findNodeById,
+  isGroupNode,
+  maximalSelectedRoots,
+  parsePanelConfig,
+  translatePathLayer,
+  type LayerNode,
+} from '@zpd/core';
+import { topmostAncestorIdForLeaf } from './selection-resolve';
 import { isEditableTarget } from './is-editable-target';
 import { routeImportFile } from './svg-import/route-import-file';
 import type { ToolContext } from './types';
 
 const ENVELOPE_APP = 'zpd';
 const ENVELOPE_KIND = 'layers';
-const ENVELOPE_VERSION = 1;
+const ENVELOPE_VERSION = 2;
+// Oldest envelope version this app still accepts on paste — a v1 (pre-#156,
+// flat-leaves-only) envelope from an older build or another still-open tab.
+const MIN_SUPPORTED_ENVELOPE_VERSION = 1;
 
 // Cascade offset applied to every clone (paste AND duplicate share this one
 // clone technique) so a repeated paste/duplicate never lands exactly on top
@@ -33,7 +54,7 @@ interface ZpdClipboardEnvelope {
   app: typeof ENVELOPE_APP;
   kind: typeof ENVELOPE_KIND;
   version: typeof ENVELOPE_VERSION;
-  layers: Layer[];
+  layers: LayerNode[];
 }
 
 export interface UseClipboardReturn {
@@ -47,20 +68,35 @@ export interface UseClipboardReturn {
   handleSelectAll(): void;
 }
 
-// The full directly-selected set — pattern squares included since #97
-// (multiple pattern squares are legitimately useful, so copy/cut/paste/
-// duplicate treat them like any layer). Select-all below is the ONE
-// deliberate pattern exception left in the clipboard.
-function copyableSelection(ctx: ToolContext): Layer[] {
-  const ids = new Set(ctx.selectedIds);
-  return ctx.doc.layers.filter((l) => ids.has(l.id));
+// Collapses the selection to its MAXIMAL selected roots (#148/#151 — a
+// selected group id already covers its descendants, and a selection holding
+// both a group and one of its own descendants collapses to just the group)
+// and reads the corresponding SUBTREES straight from the TREE — never the
+// flat projection, which loses topology: an ancestor+descendant selection
+// would copy the ancestor's leaves twice instead of the ancestor once.
+// Pattern squares are included since #97 (multiple pattern squares are
+// legitimately useful, so copy/cut/paste/duplicate treat them like any
+// layer); select-all below is the ONE deliberate pattern exception left.
+// Each returned node is a LIVE reference into ctx.doc.layers — callers must
+// not mutate it directly (captureToClipboard deep-clones via JSON round-trip
+// before stashing it).
+function copyableSelection(ctx: ToolContext): LayerNode[] {
+  const tree = ctx.doc.layers;
+  const rootIds = maximalSelectedRoots(tree, ctx.selectedIds);
+  const nodes: LayerNode[] = [];
+  for (const id of rootIds) {
+    const found = findNodeById(tree, id);
+    if (found) nodes.push(found.node);
+  }
+  return nodes;
 }
 
 // Parses OS clipboard text as a zpd layers envelope. Returns null for
-// anything else — a plain sentence, a URL, JSON from an unrelated app, or a
-// future/foreign envelope version — so the caller can leave non-envelope text
-// completely untouched rather than guessing at a mismatched shape.
-function parseEnvelope(text: string): Layer[] | null {
+// anything else — a plain sentence, a URL, JSON from an unrelated app, a
+// version below what this app has ever emitted, or a future/foreign envelope
+// version — so the caller can leave non-envelope text completely untouched
+// rather than guessing at a mismatched shape.
+function parseEnvelope(text: string): LayerNode[] | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -72,20 +108,29 @@ function parseEnvelope(text: string): Layer[] | null {
   if (
     candidate.app !== ENVELOPE_APP ||
     candidate.kind !== ENVELOPE_KIND ||
-    candidate.version !== ENVELOPE_VERSION ||
+    typeof candidate.version !== 'number' ||
+    !Number.isInteger(candidate.version) ||
+    candidate.version < MIN_SUPPORTED_ENVELOPE_VERSION ||
+    candidate.version > ENVELOPE_VERSION ||
     !Array.isArray(candidate.layers)
   ) {
     return null;
   }
-  // Reuse core's defensive panel-config layer parser instead of a hand-rolled
+  // Reuse core's defensive panel-config NODE parser instead of a hand-rolled
   // shape check: parsePanelConfig never throws and validates/defaults every
-  // type-specific field individually, so a same-version envelope from an
-  // older/hand-edited source can't slip in a structurally incomplete layer
-  // (e.g. a 'path' with no `points`) that would later throw in cloneLayer or
-  // insert NaN geometry into the document. Pattern layers paste like any
-  // other since #97 (they're copyable, so envelopes can carry them).
-  const layers = parsePanelConfig({ layers: candidate.layers }).layers;
-  return layers.length > 0 ? layers : null;
+  // type-specific field individually (and, for a `kind: 'group'` entry,
+  // recurses into `children` while enforcing MAX_GROUP_DEPTH), so a
+  // same-version envelope from an older/hand-edited/malicious source can't
+  // slip in a structurally incomplete layer (e.g. a 'path' with no `points`)
+  // or an over-deep group that would later throw or misbehave once inserted.
+  // Deliberately NOT flattened: the whole point of v2 is that a copied group
+  // round-trips as a group — flattening here would defeat that while doing
+  // nothing extra for defense (a v1 flat envelope has no groups to flatten,
+  // and parsePanelConfig already rejects anything a group node's shape
+  // doesn't satisfy). Untrusted input is defended by validating structure,
+  // not by discarding it.
+  const nodes = parsePanelConfig({ layers: candidate.layers }).layers;
+  return nodes.length > 0 ? nodes : null;
 }
 
 // Deep-clones the captured selection into the internal ref (so a later doc
@@ -103,11 +148,11 @@ function parseEnvelope(text: string): Layer[] | null {
 // only zero once EVERY write has settled — see the paste effect's priority-2
 // branch for why that matters.
 function captureToClipboard(
-  clipboardRef: { current: Layer[] },
+  clipboardRef: { current: LayerNode[] },
   outstandingWritesRef: { current: number },
-  layers: Layer[],
+  layers: LayerNode[],
 ): void {
-  const snapshot: Layer[] = JSON.parse(JSON.stringify(layers));
+  const snapshot: LayerNode[] = JSON.parse(JSON.stringify(layers));
   clipboardRef.current = snapshot;
   try {
     const envelope: ZpdClipboardEnvelope = {
@@ -130,23 +175,49 @@ function captureToClipboard(
   }
 }
 
-// Shared clone technique for BOTH paste and duplicate: fresh ids + cascade
-// offset via core's cloneLayersWithFreshIds, appended (top of z-order, same
-// as every other append-new-layer path), selected, as ONE commit.
-function insertClones(ctx: ToolContext, sourceLayers: readonly Layer[]): void {
-  if (sourceLayers.length === 0) return;
-  const clones = cloneLayersWithFreshIds(sourceLayers, {
-    makeId: (source) => mintId(source.type),
-    offsetMm: CASCADE_OFFSET_MM,
-  });
+// Recursively applies the cascade offset to every LEAF of `node` — groups
+// have no position of their own (#145: zpd groups carry structure + `hidden`
+// only, no positionOffset), so a group's "position" is just wherever its
+// leaves happen to sit; translating the whole subtree means translating each
+// leaf. Mirrors clone.ts's cloneLayersWithFreshIds per-type offset switch
+// (shape/text/image/pattern: shift x/y; path: translatePathLayer), just
+// recursing through group children instead of mapping a flat array.
+function offsetNodeLeaves(node: LayerNode, offsetMm: number): LayerNode {
+  if (isGroupNode(node)) {
+    return { ...node, children: node.children.map((child) => offsetNodeLeaves(child, offsetMm)) };
+  }
+  switch (node.type) {
+    case 'shape':
+    case 'text':
+    case 'image':
+    case 'pattern':
+      return { ...node, x: node.x + offsetMm, y: node.y + offsetMm };
+    case 'path':
+      return { ...node, ...translatePathLayer(node, offsetMm, offsetMm) };
+  }
+}
+
+// Shared clone technique for BOTH paste and duplicate: fresh ids root-to-leaf
+// via core's cloneNodeWithFreshIds (#148 — groups get a fresh group id too,
+// not just their leaves), then the cascade offset applied to every leaf of
+// each cloned subtree. Appended at the TOP LEVEL (top of z-order, same as
+// every other append-new-layer path) — a pasted/duplicated group never lands
+// nested inside an existing group. Clone ROOTS are selected (group ids stay
+// group ids), which keeps the post-paste/duplicate selection satisfying the
+// no-[group,descendant]-overlap invariant (#151): the roots are exactly the
+// maximal roots that were captured, so none is a descendant of another. ONE
+// commit for the whole batch.
+function insertClones(ctx: ToolContext, sourceNodes: readonly LayerNode[]): void {
+  if (sourceNodes.length === 0) return;
+  const clones = sourceNodes.map((node) => offsetNodeLeaves(cloneNodeWithFreshIds(node), CASCADE_OFFSET_MM));
   ctx.commit({ ...ctx.doc, layers: [...ctx.doc.layers, ...clones] });
-  ctx.selectIds(clones.map((l) => l.id));
+  ctx.selectIds(clones.map((c) => c.id));
 }
 
 export function useClipboard(ctx: ToolContext): UseClipboardReturn {
   // Same-session fallback clipboard — populated by handleCopy/handleCut, read
   // by the paste effect's priority-3 branch below.
-  const clipboardRef = useRef<Layer[]>([]);
+  const clipboardRef = useRef<LayerNode[]>([]);
   // Count of this session's own OS-clipboard writes (copy/cut) that haven't
   // settled yet — nonzero means at least one write may not have landed, so the
   // OS clipboard text could be stale relative to clipboardRef. See
@@ -164,9 +235,19 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     if (layers.length === 0) return;
     captureToClipboard(clipboardRef, outstandingWritesRef, layers);
     // Copy + delete as ONE commit — cut must be a single undo entry.
-    const cutIds = new Set(layers.map((l) => l.id));
-    ctx.commit({ ...ctx.doc, layers: ctx.doc.layers.filter((l) => !cutIds.has(l.id)) });
-    ctx.selectIds(ctx.selectedIds.filter((id) => !cutIds.has(id)));
+    // Recursive delete via MAXIMAL roots (#150/#151): a selected group id
+    // cascades away with its whole subtree (deleting only the copied leaves
+    // would leave an empty group shell behind), and a descendant of a
+    // selected ancestor drops out rather than double-deleting.
+    ctx.commit({
+      ...ctx.doc,
+      layers: maximalSelectedRoots(ctx.doc.layers, ctx.selectedIds).reduce(
+        (tree, id) => deleteNodeById(tree, id),
+        ctx.doc.layers,
+      ),
+    });
+    // Every selected id was either cut or a descendant of a cut root.
+    ctx.selectIds([]);
   }, [ctx]);
 
   const handleDuplicate = useCallback(() => {
@@ -177,8 +258,23 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     // Select-all still EXCLUDES patterns on purpose (#97): a background-ish
     // cover square joining every Cmd/Ctrl+A would make "select everything and
     // move it" drag the background along. Patterns join a selection only by
-    // direct click (two-tier hit) or the layer list.
-    ctx.selectIds(ctx.doc.layers.filter((l) => l.type !== 'pattern').map((l) => l.id));
+    // direct click (two-tier hit) or the layer list. Each remaining leaf
+    // PROMOTES to its topmost ancestor group id, deduped (#151 — the same
+    // promotion a full-canvas marquee applies); a pattern-only group never
+    // enters (no non-pattern leaf nominates it), but a mixed group joins
+    // whole — its pattern members ride along, the rigid-group convention.
+    const tree = ctx.doc.layers;
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    for (const layer of ctx.flatLayers) {
+      if (layer.type === 'pattern') continue;
+      const id = topmostAncestorIdForLeaf(tree, layer.id);
+      if (!seen.has(id)) {
+        seen.add(id);
+        ids.push(id);
+      }
+    }
+    ctx.selectIds(ids);
   }, [ctx]);
 
   // The window `paste` listener — sole owner of Cmd/Ctrl+V (and right-click

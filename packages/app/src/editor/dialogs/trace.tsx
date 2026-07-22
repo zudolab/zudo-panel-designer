@@ -7,7 +7,15 @@
 // mode", which never executes embedded scripts, so a hostile trace result
 // (or a hostile source image feeding the tracer) can't run script in the app.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ImageLayer } from '@zpd/core';
+import {
+  rectCenter,
+  replaceNodeWithNodes,
+  rotatePoint,
+  type DocState,
+  type ImageLayer,
+  type PathLayer,
+  type PathPoint,
+} from '@zpd/core';
 import { registerDialog } from '../registry/dialogs';
 import { Field } from '../components/inspector-ui';
 import type { DialogProps } from '../types';
@@ -19,6 +27,49 @@ import {
 } from '../trace-pipeline';
 import { svgToPathLayers } from '../svg-to-path-layers';
 
+// svgToPathLayers only knows the source image's UNROTATED bbox (x/y/width/
+// height), so a rotated image would otherwise trace into axis-aligned vectors
+// that visibly disagree with what the user sees on canvas (#147). Bake the
+// image's rotation into the freshly traced points here, about the same bbox
+// center paintLayer rotates the raster around, so the vectors land exactly
+// where the rotated image was.
+export function bakeImageRotation(traced: PathLayer[], layer: ImageLayer): PathLayer[] {
+  const rotation = layer.rotation ?? 0;
+  if (!rotation) return traced;
+  const center = rectCenter({ x: layer.x, y: layer.y, width: layer.width, height: layer.height });
+  const rotatePt = (p: PathPoint): PathPoint => {
+    const p2 = rotatePoint(p, center, rotation);
+    const out: PathPoint = { x: p2.x, y: p2.y };
+    if (p.hin) out.hin = rotatePoint(p.hin, center, rotation);
+    if (p.hout) out.hout = rotatePoint(p.hout, center, rotation);
+    return out;
+  };
+  const rotatePoints = (points: PathPoint[]): PathPoint[] => points.map(rotatePt);
+  return traced.map((pathLayer) => ({
+    ...pathLayer,
+    points: rotatePoints(pathLayer.points),
+    ...(pathLayer.extraSubpaths
+      ? { extraSubpaths: pathLayer.extraSubpaths.map(rotatePoints) }
+      : {}),
+  }));
+}
+
+// Pure apply step, exported for unit tests: hides the source raster and
+// splices the traced vectors in DIRECTLY ABOVE it, inside its CURRENT parent
+// (#150 — replaceNodeWithNodes keeps a group-nested image's trace result in
+// the same group, where the old root findIndex/slice insert would have
+// mangled the root array for a nested source).
+export function insertTracedPaths(
+  doc: DocState,
+  source: ImageLayer,
+  traced: PathLayer[],
+): DocState {
+  return {
+    ...doc,
+    layers: replaceNodeWithNodes(doc.layers, source.id, [{ ...source, hidden: true }, ...traced]),
+  };
+}
+
 interface TraceDialogProps {
   layerId: string;
 }
@@ -26,7 +77,7 @@ interface TraceDialogProps {
 const TRACE_DIALOG_TITLE_ID = 'trace-dialog-title';
 
 function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
-  const layer = ctx.doc.layers.find(
+  const layer = ctx.flatLayers.find(
     (l): l is ImageLayer => l.id === props.layerId && l.type === 'image',
   );
 
@@ -41,8 +92,9 @@ function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
   // the dialog decodes its own copy from the layer's dataURL — no source
   // layer's src ever needs a network fetch, only Image() decode. `layer` is
   // the same object reference across re-renders unless ctx.doc.layers is
-  // actually replaced (find() over an unchanged array), so this only
-  // re-decodes on a real doc change, not on every TraceDialog re-render.
+  // actually replaced (ctx.flatLayers is identity-stable per committed tree —
+  // see flat-projection.ts), so this only re-decodes on a real doc change,
+  // not on every TraceDialog re-render.
   useEffect(() => {
     if (!layer) return;
     const img = new Image();
@@ -82,22 +134,19 @@ function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
 
   const apply = () => {
     if (!layer || !svg) return;
-    const traced = svgToPathLayers(svg, {
-      x: layer.x,
-      y: layer.y,
-      width: layer.width,
-      height: layer.height,
-    });
+    const traced = bakeImageRotation(
+      svgToPathLayers(svg, {
+        x: layer.x,
+        y: layer.y,
+        width: layer.width,
+        height: layer.height,
+      }),
+      layer,
+    );
     if (traced.length === 0) return;
-    const index = ctx.doc.layers.findIndex((l) => l.id === layer.id);
-    const before = ctx.doc.layers.slice(0, index);
-    const after = ctx.doc.layers.slice(index + 1);
     // one commit = one undo entry: hide the source raster, insert the traced
-    // vectors directly above it, select the first one
-    ctx.commit({
-      ...ctx.doc,
-      layers: [...before, { ...layer, hidden: true }, ...traced, ...after],
-    });
+    // vectors directly above it (within its current parent), select the first
+    ctx.commit(insertTracedPaths(ctx.doc, layer, traced));
     ctx.select(traced[0].id);
     close();
   };

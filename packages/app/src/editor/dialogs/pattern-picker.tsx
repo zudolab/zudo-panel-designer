@@ -14,7 +14,7 @@
 // CSS visibility does not stop React's useLayoutEffect canvas draws below,
 // and the paged/sentinel approach is simpler to test.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { mintId, patternCoverGeometry, type PatternLayer } from '@zpd/core';
+import { mintId, patternCoverGeometry, updateLeafById, type PatternLayer } from '@zpd/core';
 import {
   defaultParams,
   PATTERN_GENERATORS,
@@ -151,10 +151,9 @@ function PatternPickerDialog({ props, close, ctx }: DialogProps<PatternPickerPro
   function handlePick(gen: PanelPatternGenerator): void {
     if (props.layerId) {
       const layerId = props.layerId;
-      const nextLayers = ctx.doc.layers.map((l) =>
-        l.id === layerId && l.type === 'pattern'
-          ? { ...l, patternType: gen.name, params: defaultParams(gen.name) }
-          : l,
+      // Recursive write (#150): the pattern leaf may be nested inside a group.
+      const nextLayers = updateLeafById(ctx.doc.layers, layerId, (l) =>
+        l.type === 'pattern' ? { ...l, patternType: gen.name, params: defaultParams(gen.name) } : l,
       );
       ctx.commit({ ...ctx.doc, layers: nextLayers });
     } else {

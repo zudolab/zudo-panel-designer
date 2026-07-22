@@ -71,6 +71,15 @@ describe('shortcuttableCommands — only commands with a real shortcut belong in
     expect(ids).not.toContain('align-left');
     expect(ids).not.toContain('view-zoom-in');
   });
+
+  // #155: Group/Ungroup are chorded CommandDefs, so they must surface here
+  // for free — no bespoke wiring into the overlay.
+  it('includes edit-group and edit-ungroup (⌘G / ⌘⇧G)', () => {
+    const result = shortcuttableCommands(allCommands(), true);
+    const ids = result.map((c) => c.id);
+    expect(ids).toContain('edit-group');
+    expect(ids).toContain('edit-ungroup');
+  });
 });
 
 describe('filterShortcuts — live search over label/category', () => {
@@ -112,6 +121,14 @@ describe('shortcut-panel dialog', () => {
     expect(screen.getByText('Edit')).toBeTruthy();
     expect(screen.getByText('Undo')).toBeTruthy();
     expect(screen.getByText('Tool')).toBeTruthy();
+  });
+
+  it('lists Group and Ungroup (#155)', () => {
+    const ShortcutPanelDialog = getShortcutPanelDialog();
+    render(<ShortcutPanelDialog props={{}} close={vi.fn()} ctx={stubCtx()} />);
+
+    expect(screen.getByText('Group')).toBeTruthy();
+    expect(screen.getByText('Ungroup')).toBeTruthy();
   });
 
   it('focuses the search input on mount, not the Close button that precedes it in DOM order', () => {

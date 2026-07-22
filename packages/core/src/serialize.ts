@@ -8,6 +8,7 @@
 // (clamped, defaulted, or dropped) rather than letting one bad field fail
 // the whole document.
 import { createDefaultDoc, DEFAULT_PANEL_HP } from './default-doc';
+import { MAX_GROUP_DEPTH } from './layer-nodes';
 import { PALETTE } from './palette';
 import { MAX_PANEL_HP, PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
 import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
@@ -15,9 +16,11 @@ import { mintId } from './types';
 import type {
   ColorIndex,
   DocState,
+  GroupNode,
   Guide,
   ImageLayer,
   Layer,
+  LayerNode,
   PathLayer,
   PathPoint,
   PatternLayer,
@@ -26,22 +29,25 @@ import type {
 } from './types';
 
 // v2 added the top-level `guides` array; v3 adds pattern square geometry
-// (x/y/size on pattern layers, #96). The v3 bump is a COMPATIBILITY GATE, not
-// just documentation: an older app's strict version check (tryParsePanelConfig)
-// must reject a v3 file, because its parser would silently drop x/y/size and
-// reinterpret a MOVED pattern as a panel-wide fill. parsePanelConfig still
-// does not branch on the version (every field defends itself): a v1/v2 config
-// simply has no pattern geometry, and the same missing-field defense that
-// covers a malformed v3 file gives it cover-default geometry — see
-// parsePatternGeometry.
-export const PANEL_CONFIG_VERSION = 3;
+// (x/y/size on pattern layers, #96). v4 adds the recursive GroupNode layer
+// tree (layer groups). The v4 bump is a COMPATIBILITY GATE, not just
+// documentation: parsePanelConfig silently drops any layer with an unknown
+// `type`/`kind`, so an older build reading a group-bearing v4 config would
+// delete whole subtrees it doesn't understand — the existing
+// tryParsePanelConfig future-version gate is what protects old builds from
+// that silent data loss. Loading a v<=3 config is an IDENTITY migration: a
+// flat Layer[] is already a valid LayerNode[] (every Layer is a leaf
+// LayerNode), so parsePanelConfig does not branch on version at all — the
+// same per-field defense that has always run is what makes this work; only
+// serializePanelConfig's output version changes.
+export const PANEL_CONFIG_VERSION = 4;
 
 export interface PanelConfig {
-  version: 3;
+  version: 4;
   app: 'zpd';
   panel: { hp: number; widthMm: number; heightMm: number };
   palette: string[];
-  layers: Layer[];
+  layers: LayerNode[];
   guides: Guide[];
 }
 
@@ -245,12 +251,38 @@ function parseLayer(value: unknown, panel: PanelDimsMm): Layer | null {
         width: num(value.width, 0),
         height: num(value.height, 0),
       };
-      return layer;
+      const rotation = optionalNum(value.rotation);
+      return rotation === undefined ? layer : { ...layer, rotation };
     }
     default:
       // Unrecognized layer `type` — drop it rather than guess its shape.
       return null;
   }
+}
+
+// Recursive node parse: dispatches on the dual discriminator (`kind` for
+// groups, `type` for leaves — see types.ts). Every field defends itself, same
+// policy as parseLayer: unknown `kind` (a `kind` present but not 'group') is
+// dropped, and a GROUP nested past MAX_GROUP_DEPTH is dropped defensively
+// (the rest of the document survives) rather than throwing or truncating the
+// whole parse. The cap applies to GROUP nesting only, not to depth in
+// general: a leaf directly inside the deepest allowed group (depth
+// MAX_GROUP_DEPTH) adds no further group nesting, so it must still parse —
+// otherwise the deepest legal group could never hold any children at all.
+function parseLayerNode(value: unknown, panel: PanelDimsMm, depth: number): LayerNode | null {
+  if (!isPlainObject(value)) return null;
+  if ('kind' in value) {
+    if (value.kind !== 'group') return null;
+    if (depth > MAX_GROUP_DEPTH) return null;
+    const base = parseBase(value);
+    const childrenRaw = Array.isArray(value.children) ? value.children : [];
+    const children = childrenRaw
+      .map((child) => parseLayerNode(child, panel, depth + 1))
+      .filter((child): child is LayerNode => child !== null);
+    const group: GroupNode = { ...base, kind: 'group', children };
+    return group;
+  }
+  return parseLayer(value, panel);
 }
 
 // A guide needs a valid orientation and a finite numeric position; anything
@@ -294,8 +326,8 @@ export function parsePanelConfig(input: unknown): DocState {
 
   const layers = Array.isArray(input.layers)
     ? input.layers
-        .map((entry) => parseLayer(entry, panelDims))
-        .filter((layer): layer is Layer => layer !== null)
+        .map((entry) => parseLayerNode(entry, panelDims, 0))
+        .filter((node): node is LayerNode => node !== null)
     : [];
 
   return { panelHp: hp, layers, guides: parseGuides(input.guides) };

@@ -5,11 +5,13 @@ export const ZPD_CORE_VERSION = '0.0.0';
 export type {
   ColorIndex,
   DocState,
+  GroupNode,
   Guide,
   GuideOrientation,
   ImageLayer,
   Layer,
   LayerBase,
+  LayerNode,
   PathLayer,
   PathPoint,
   PatternLayer,
@@ -17,6 +19,8 @@ export type {
   TextLayer,
 } from './types';
 export { mintId } from './types';
+
+export { flattenLayerNodes, isGroupNode, MAX_GROUP_DEPTH, walkLayerNodes } from './layer-nodes';
 
 export type { PaletteEntry } from './palette';
 export { PALETTE, paletteEntry } from './palette';
@@ -50,8 +54,10 @@ export * from './path-geometry';
 export * from './hit-test';
 export * from './resize';
 export * from './scale';
+export * from './rotate';
 export * from './snap';
 export * from './layer-ops';
 export * from './clone';
+export * from './group-ops';
 export * from './align';
 export * from './history';

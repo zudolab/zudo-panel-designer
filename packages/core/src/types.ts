@@ -77,9 +77,27 @@ export interface ImageLayer extends LayerBase {
   y: number;
   width: number;
   height: number;
+  rotation?: number; // deg clockwise around bbox center
 }
 
 export type Layer = ShapeLayer | PatternLayer | PathLayer | TextLayer | ImageLayer;
+
+// Dual discriminator (on purpose): groups carry `kind: 'group'` and never
+// `type`; leaves carry `type: '...'` and never `kind`. This keeps every
+// existing `switch (layer.type)` working unmodified — group nodes are erased
+// before those switches ever see them (the flatten boundary, layer-nodes.ts).
+// Groups own structure + `hidden` only: deliberately NO positionOffset,
+// opacity, or locked — zpd has no such per-layer concepts, and all geometry
+// ops bake into leaves in world-mm.
+export interface GroupNode {
+  kind: 'group';
+  id: string;
+  name: string;
+  children: LayerNode[];
+  hidden?: boolean;
+}
+
+export type LayerNode = Layer | GroupNode;
 
 export type GuideOrientation = 'horizontal' | 'vertical';
 
@@ -97,7 +115,7 @@ export interface Guide {
 
 export interface DocState {
   panelHp: number;
-  layers: Layer[]; // bottom -> top (index 0 renders first)
+  layers: LayerNode[]; // bottom -> top (index 0 renders first); flatten to Layer[] at read boundaries
   // Required (never optional): read sites stay clean (no `doc.guides ?? []`),
   // and the serialization boundary owns backward-compat (old configs -> []).
   guides: Guide[];

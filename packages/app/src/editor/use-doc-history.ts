@@ -4,6 +4,7 @@
 // app has no duplicate history logic to keep in sync.
 import { useCallback, useReducer } from 'react';
 import {
+  abortGesture as coreAbortGesture,
   beginGesture as coreBeginGesture,
   canRedo as coreCanRedo,
   canUndo as coreCanUndo,
@@ -22,6 +23,7 @@ type Action =
   | { type: 'replace'; state: DocState }
   | { type: 'reset'; state: DocState }
   | { type: 'beginGesture' }
+  | { type: 'abortGesture' }
   | { type: 'undo' }
   | { type: 'redo' };
 
@@ -35,6 +37,8 @@ function reducer(state: HistoryState<DocState>, action: Action): HistoryState<Do
       return coreReset(action.state);
     case 'beginGesture':
       return coreBeginGesture(state);
+    case 'abortGesture':
+      return coreAbortGesture(state);
     case 'undo':
       return coreUndo(state);
     case 'redo':
@@ -54,6 +58,7 @@ export interface DocHistory {
   // undo entry (see replace-doc.ts).
   reset(next: DocState): void;
   beginGesture(): void;
+  abortGesture(): void;
   undo(): void;
   redo(): void;
 }
@@ -65,6 +70,7 @@ export function useDocHistory(initial: DocState): DocHistory {
   const replace = useCallback((next: DocState) => dispatch({ type: 'replace', state: next }), []);
   const reset = useCallback((next: DocState) => dispatch({ type: 'reset', state: next }), []);
   const beginGesture = useCallback(() => dispatch({ type: 'beginGesture' }), []);
+  const abortGesture = useCallback(() => dispatch({ type: 'abortGesture' }), []);
   const undo = useCallback(() => dispatch({ type: 'undo' }), []);
   const redo = useCallback(() => dispatch({ type: 'redo' }), []);
 
@@ -77,6 +83,7 @@ export function useDocHistory(initial: DocState): DocHistory {
     replace,
     reset,
     beginGesture,
+    abortGesture,
     undo,
     redo,
   };

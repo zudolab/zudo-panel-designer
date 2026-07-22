@@ -4,7 +4,7 @@
 // existing file is edited to add one (see editor/README.md).
 import type { ComponentType } from 'react';
 import type { Camera } from './camera';
-import type { DocState, Layer, Pt } from '@zpd/core';
+import type { DocState, Layer, Pt, Rect } from '@zpd/core';
 
 export interface PanelDims {
   widthMm: number;
@@ -27,6 +27,13 @@ export interface ToolContext {
   // selected.
   readonly selectedId: string | null;
   readonly selectedLayer: Layer | null;
+  // The flat Layer[] projection of doc.layers (#150): DFS leaf order — the
+  // z-order the renderer paints — with ancestor `hidden` folded down. LIVE
+  // like `doc`, and identity-STABLE per committed tree (memoized in
+  // flat-projection.ts): text geometry treats array identity as
+  // document-incarnation state, so read the flat view HERE — never
+  // re-flatten doc.layers ad hoc.
+  readonly flatLayers: readonly Layer[];
 
   // coordinate helpers (screen px relative to the canvas <-> document mm)
   toMm(screen: Pt): Pt;
@@ -44,6 +51,14 @@ export interface ToolContext {
   replace(next: DocState): void;
   reset(next: DocState): void;
   beginGesture(): void;
+  // Cancels an open gesture (Escape): pops the past entry beginGesture
+  // pushed and restores present to it, so the whole replace stream is
+  // discarded with zero undo/redo residue (@zpd/core's abortGesture). No-op
+  // when no gesture is open. Callers must track their OWN "did I open a
+  // gesture" flag (mirroring select.tsx's ensureGesture/gestureOpen) before
+  // calling this — it blindly pops the most recent past entry, which would
+  // be some UNRELATED commit if no gesture of this caller's is actually open.
+  abortGesture(): void;
   undo(): void;
   redo(): void;
 
@@ -108,6 +123,17 @@ export interface DraftRenderContext {
 // fallbacks (e.g. a tool that owns Enter/Esc). void === not handled.
 export type ToolEventResult = boolean | void;
 
+// Live multi/group-rotate gesture chrome (#152). `bounds`/`pivot` are FROZEN
+// at gesture start (rotatable editable leaves only); `deltaDeg` is the live
+// signed drag delta. The renderer draws the frozen bounds ctx-rotated by the
+// delta instead of re-deriving live AABBs — a live union would pulsate and
+// stay axis-aligned while the leaves visually rotate.
+export interface MultiRotateChrome {
+  bounds: Rect;
+  pivot: Pt;
+  deltaDeg: number;
+}
+
 export interface ToolModule {
   id: string;
   label: string;
@@ -123,6 +149,11 @@ export interface ToolModule {
   onPointerDown?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onPointerMove?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onPointerUp?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
+  // The browser revoked the pointer (capture lost to the OS, touch
+  // interruption, …). Contract (#152): treat EXACTLY as onPointerUp — close
+  // local gesture state, no trailing commit; the streamed replaces already
+  // hold the last applied change. Not routed at all before #152.
+  onPointerCancel?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   // Pointer left the canvas element (#47): transient chrome keyed to the
   // cursor position (hover outlines, …) must clear here — no further
   // onPointerMove will arrive to do it.
@@ -130,6 +161,12 @@ export interface ToolModule {
   onDoubleClick?(e: ToolPointerEvent, ctx: ToolContext): ToolEventResult;
   onKeyDown?(e: ToolKeyEvent, ctx: ToolContext): ToolEventResult;
   renderDraft?(draft: DraftRenderContext, ctx: ToolContext): void;
+  // Non-null while this tool is streaming a multi/group-rotate gesture
+  // (#152): the Editor forwards it into RenderExtras so the chrome pass can
+  // draw the frozen start bounds rotated by the live delta instead of the
+  // re-derived (pulsating) combined bbox. renderDraft cannot serve this —
+  // it draws AFTER the chrome pass, too late to suppress it.
+  multiRotateChrome?(ctx: ToolContext): MultiRotateChrome | null;
 }
 
 // --- inspectors -----------------------------------------------------------

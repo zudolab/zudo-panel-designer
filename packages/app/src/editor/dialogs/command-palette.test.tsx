@@ -291,6 +291,52 @@ describe('command-palette dialog', () => {
     expect(screen.getByText('No matching commands')).toBeTruthy();
   });
 
+  // #155: Group/Ungroup are plain chorded CommandDefs, so they're runnable
+  // from the palette for free — proving this also exercises isEnabled gating
+  // through the SAME cmdCtx the keyboard path uses (rowClassName/aria-disabled).
+  it('clicking "Group" with 2 selected leaves groups them and closes', () => {
+    const ctx = stubCommandCtx({
+      doc: {
+        panelHp: 12,
+        guides: [],
+        layers: [
+          { id: 'a', name: 'a', type: 'shape', shape: 'rect', x: 0, y: 0, width: 10, height: 10, color: 1 },
+          { id: 'b', name: 'b', type: 'shape', shape: 'rect', x: 5, y: 5, width: 10, height: 10, color: 1 },
+        ],
+      },
+      selectedIds: ['a', 'b'],
+    });
+    const close = vi.fn();
+    const CommandPaletteDialog = getCommandPaletteDialog();
+    render(<CommandPaletteDialog props={{}} close={close} ctx={ctx as unknown as ToolContext} />);
+
+    fireEvent.change(screen.getByPlaceholderText('Type a command…'), {
+      target: { value: 'group' },
+    });
+    fireEvent.click(screen.getByText('Group'));
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('"Ungroup" is listed disabled (aria-disabled) when nothing selected is a group', () => {
+    const ctx = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [] },
+      selectedIds: [],
+    });
+    const CommandPaletteDialog = getCommandPaletteDialog();
+    render(<CommandPaletteDialog props={{}} close={vi.fn()} ctx={ctx as unknown as ToolContext} />);
+
+    fireEvent.change(screen.getByPlaceholderText('Type a command…'), {
+      target: { value: 'ungroup' },
+    });
+    const row = screen.getByText('Ungroup');
+    expect(row.closest('[role="option"]')?.getAttribute('aria-disabled')).toBe('true');
+
+    fireEvent.click(row);
+    expect(ctx.commit).not.toHaveBeenCalled();
+  });
+
   it('renders recents first when reopened with an empty query', () => {
     recordPaletteRecent('edit-redo');
     const ctx = stubCommandCtx();

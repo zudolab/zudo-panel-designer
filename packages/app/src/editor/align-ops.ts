@@ -15,6 +15,7 @@
 import {
   alignLayers,
   distributeLayers,
+  mapLeavesById,
   MIN_ALIGN_SELECTION,
   MIN_DISTRIBUTE_SELECTION,
   normalizeRect,
@@ -27,6 +28,8 @@ import {
   type Layer,
   type PatternLayer,
 } from '@zpd/core';
+import { projectFlatLayers } from './flat-projection';
+import { resolveSelectionLeaves } from './selection-resolve';
 import { layerBbox, layerRotation } from './renderer';
 import { reconcileTextGeometry } from './text-geometry';
 import type { ToolContext } from './types';
@@ -73,10 +76,19 @@ function hasGeometry(layer: NonPatternLayer): boolean {
 }
 
 export function eligibleLayers(doc: DocState, selectedIds: readonly string[]): NonPatternLayer[] {
-  reconcileTextGeometry(doc.layers);
-  return doc.layers.filter(
-    (l): l is NonPatternLayer =>
-      selectedIds.includes(l.id) && l.type !== 'pattern' && hasGeometry(l),
+  // projectFlatLayers, not an ad-hoc flatten: reconcileTextGeometry treats
+  // array identity as document-incarnation state (#150).
+  const layers = projectFlatLayers(doc.layers);
+  reconcileTextGeometry(layers);
+  // Group-aware expansion (#151): a selected group id aligns its EDITABLE
+  // descendant leaves (hidden — intrinsic or ancestor-folded — excluded, per
+  // the shared "ops act on expanded editable leaves" rule). Identity for a
+  // group-free, fully visible selection.
+  const editable = new Set(
+    resolveSelectionLeaves(doc.layers, selectedIds, layers).editableLeafIds,
+  );
+  return layers.filter(
+    (l): l is NonPatternLayer => editable.has(l.id) && l.type !== 'pattern' && hasGeometry(l),
   );
 }
 
@@ -117,9 +129,11 @@ function applyResults(
     }
   }
   if (patches.size === 0) return;
+  // Recursive write (#150): patched leaves land wherever they sit in the
+  // tree — a flat root map would no-op for group-nested targets.
   ctx.commit({
     ...ctx.doc,
-    layers: ctx.doc.layers.map((l) => {
+    layers: mapLeavesById(ctx.doc.layers, [...patches.keys()], (l) => {
       const patch = patches.get(l.id);
       return patch ? ({ ...l, ...patch } as Layer) : l;
     }),
@@ -148,7 +162,7 @@ export function applyAlign(
   type: AlignType,
   reference: Reference,
 ): void {
-  reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+  reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
   const targets = eligibleLayers(ctx.doc, selectedIds);
   applyResults(
     ctx,
@@ -167,7 +181,7 @@ export function applyDistribute(
   axis: DistributeAxis,
   reference: Reference,
 ): void {
-  reconcileTextGeometry(ctx.doc.layers, ctx.requestRepaint);
+  reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
   const targets = eligibleLayers(ctx.doc, selectedIds);
   applyResults(
     ctx,

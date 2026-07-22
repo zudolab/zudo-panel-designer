@@ -3,16 +3,22 @@
 // inspector host — all in a scrolling inner stack. The Help panel (#36) is a
 // non-scrolling footer BELOW that stack: always visible, never scrolled below
 // the fold, even when the panel stack above overflows.
-import { PALETTE, PANEL_HEIGHT_MM, PANEL_SIZES, type Layer } from '@zpd/core';
+import { PALETTE, PANEL_HEIGHT_MM, PANEL_SIZES, type DocState, type Layer } from '@zpd/core';
 import type { ToolContext } from '../types';
 import { AlignPanel } from './align-panel';
 import { CollapsibleSection } from './collapsible-section';
 import { HelpPanel } from './help-panel';
 import { InspectorHost } from './inspector-host';
 import { LayerList } from './layer-list';
+import { RotateSelectionPanel } from './rotate-selection-panel';
 
 export interface SidebarProps {
   ctx: ToolContext;
+  // The committed doc from Editor's render — NOT the docRef-lagged ctx.doc.
+  // Needed by RotateSelectionPanel's render-time session capture (see its
+  // doc-prop comment); also drives the panel-size select's displayed value so
+  // it never lags a commit by one render.
+  doc: DocState;
   selectedIds: readonly string[];
   selectedLayer: Layer | null;
   activeToolId: string;
@@ -24,6 +30,7 @@ export interface SidebarProps {
 
 export function Sidebar({
   ctx,
+  doc,
   selectedIds,
   selectedLayer,
   activeToolId,
@@ -62,8 +69,8 @@ export function Sidebar({
           <label className="flex items-center justify-between gap-2 text-xs">
             <span className="text-neutral-400">Size</span>
             <select
-              value={ctx.doc.panelHp}
-              onChange={(e) => ctx.commit({ ...ctx.doc, panelHp: Number(e.target.value) })}
+              value={doc.panelHp}
+              onChange={(e) => ctx.commit({ ...doc, panelHp: Number(e.target.value) })}
               className="flex-1 rounded border border-neutral-700 bg-neutral-800 px-1.5 py-0.5 text-neutral-100"
             >
               {PANEL_SIZES.map((s) => (
@@ -99,7 +106,13 @@ export function Sidebar({
         </CollapsibleSection>
 
         <CollapsibleSection title={selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}>
-          <InspectorHost ctx={ctx} layer={selectedLayer} selectedIds={selectedIds} />
+          <div className="flex flex-col gap-2">
+            {/* Combined (multi/group) selections only (#157) — renders
+                nothing for a single-leaf or all-non-rotatable selection, so
+                it composes ahead of InspectorHost without an empty gap. */}
+            <RotateSelectionPanel ctx={ctx} doc={doc} selectedIds={selectedIds} />
+            <InspectorHost ctx={ctx} layer={selectedLayer} selectedIds={selectedIds} />
+          </div>
         </CollapsibleSection>
       </div>
 

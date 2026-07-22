@@ -3,7 +3,7 @@
 // so these tests pin the contract — de-dupe, stale-id filtering, and
 // deterministic DOCUMENT order.
 import { describe, expect, it } from 'vitest';
-import type { Layer, ShapeLayer } from '@zpd/core';
+import type { Layer, LayerNode, ShapeLayer } from '@zpd/core';
 import { nextListSelection, normalizeSelectedIds } from './selection';
 
 function shape(id: string): ShapeLayer {
@@ -47,6 +47,20 @@ describe('normalizeSelectedIds', () => {
   it('handles the empty selection and the empty doc', () => {
     expect(normalizeSelectedIds([], LAYERS)).toEqual([]);
     expect(normalizeSelectedIds(['a'], [])).toEqual([]);
+  });
+
+  // #151: the selection may hold GROUP ids — they survive normalization and
+  // sort by tree DFS position (a group id immediately precedes its
+  // descendants); stale group ids drop like stale leaf ids.
+  it('keeps group ids and orders the mixed selection by tree DFS', () => {
+    const tree: LayerNode[] = [
+      shape('a'),
+      { kind: 'group', id: 'G', name: 'G', children: [shape('b'), shape('c')] },
+      shape('d'),
+    ];
+    expect(normalizeSelectedIds(['d', 'c', 'G', 'a'], tree)).toEqual(['a', 'G', 'c', 'd']);
+    expect(normalizeSelectedIds(['G'], tree)).toEqual(['G']);
+    expect(normalizeSelectedIds(['staleGroup', 'b'], tree)).toEqual(['b']);
   });
 
   it('passes a single valid id through unchanged (the 0/1 status quo)', () => {

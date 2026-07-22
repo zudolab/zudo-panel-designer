@@ -11,14 +11,16 @@
 // The chain is gated as a single early-return, so proving Space (the pan-arm
 // branch) and a dispatchCommand-routed key (tool switch / undo) are both
 // suppressed proves Delete/clipboard/etc. are too — they share that one gate.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import App from '../../App';
+import * as commandsModule from '../commands';
 import { closeDialog, getOpenDialog } from '../registry/dialogs';
 
 afterEach(() => {
   cleanup();
   closeDialog();
+  vi.restoreAllMocks();
 });
 
 function dispatchKeydown(target: EventTarget, init: KeyboardEventInit): KeyboardEvent {
@@ -90,5 +92,41 @@ describe('global keydown — contentEditable guard (finding 4)', () => {
     } finally {
       plain.remove();
     }
+  });
+});
+
+// #155: Group/Ungroup are registered CommandDefs dispatched through the SAME
+// keydown chain/isEditableTarget gate as every other command — proven
+// generically above (Cmd+Z), but the issue calls out an explicit routing
+// test for the new ⌘G/⌘⇧G chords specifically. isEnabled gating (which
+// depends on selection state, unlike Cmd+Z's ALWAYS_ENABLED) is already
+// covered in commands.test.ts; what's proven here is that dispatchCommand
+// itself is never even reached from a real INPUT — independent of whether
+// the command would have been enabled.
+describe('⌘G / ⌘⇧G routing — the isEditableTarget guard applies to Group/Ungroup too', () => {
+  it('⌘G reaches dispatchCommand from the window, but not from a real input element', () => {
+    const spy = vi.spyOn(commandsModule, 'dispatchCommand');
+    const { container } = render(<App />);
+
+    fireEvent.keyDown(window, { key: 'g', metaKey: true });
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    const fileInput = container.querySelector('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    fireEvent.keyDown(fileInput!, { key: 'g', metaKey: true });
+    // Unchanged — isEditableTarget short-circuited before dispatchCommand.
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('⌘⇧G reaches dispatchCommand from the window, but not from a real input element', () => {
+    const spy = vi.spyOn(commandsModule, 'dispatchCommand');
+    const { container } = render(<App />);
+
+    fireEvent.keyDown(window, { key: 'g', metaKey: true, shiftKey: true });
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    const fileInput = container.querySelector('input[type="file"]');
+    fireEvent.keyDown(fileInput!, { key: 'g', metaKey: true, shiftKey: true });
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
