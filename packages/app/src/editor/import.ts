@@ -6,7 +6,7 @@
 // parsePanelConfig, which would silently accept `{}` as an empty document)
 // and, only after the user confirms, replaces the whole document.
 import { tryParsePanelConfig } from '@zpd/core';
-import { confirmDialog } from './components/confirm-dialog';
+import { confirmDialog } from './components/confirm-dialog-api';
 import { replaceDoc } from './replace-doc';
 import { toastError, toastSuccess } from './registry/toasts';
 import { routeImportFile } from './svg-import/route-import-file';

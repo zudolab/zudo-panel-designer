@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { closeDialog, openDialog, registerDialog, unregisterDialog } from '../registry/dialogs';
 import type { CommandContext } from '../commands';
 import { DialogHost } from './dialog-host';
-import { confirmDialog } from './confirm-dialog';
+import { confirmDialog } from './confirm-dialog-api';
 
 afterEach(() => {
   cleanup();
