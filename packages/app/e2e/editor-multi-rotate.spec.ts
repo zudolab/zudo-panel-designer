@@ -456,6 +456,19 @@ test('@smoke save -> reload round-trips every leaf rotation, including a rotated
   fs.mkdirSync(path.dirname(tmpPath), { recursive: true });
   fs.writeFileSync(tmpPath, JSON.stringify(exported));
 
+  // Mutate the LIVE doc after exporting so the assertions below can only
+  // pass if importPanelJson actually replaced the document (codex review
+  // finding — without this, and without comparing EVERY leaf, a rotation
+  // that import silently dropped for e.g. demo-rect/demo-ellipse/demo-text
+  // would slip through, since getLayerTree() only carries id/type/name/
+  // hidden, not geometry). Blur the rotate input FIRST — isEditableTarget
+  // gates the app's global keydown handler, so ⌘A/Delete while it's still
+  // focused would just select/clear the INPUT's own text, not the doc.
+  await rotateInput.blur();
+  await page.keyboard.press(`${MOD}+a`);
+  await page.keyboard.press('Delete');
+  expect(await bridge(page).getLayerTree()).not.toEqual(treeBefore);
+
   await importPanelJson(page, tmpPath);
 
   const after = await bridge(page).getDoc();
@@ -467,8 +480,9 @@ test('@smoke save -> reload round-trips every leaf rotation, including a rotated
   expect(imageAfter.rotation).toBeCloseTo(imageBefore.rotation as number, 6);
   expect(pathAfter.points).toEqual(pathBefore.points);
 
-  // Full-tree identity: the v4 export/import round trip changes nothing
-  // structurally (every leaf, and their order, survives byte-for-byte on the
-  // fields that matter).
+  // Full-doc identity: every leaf's full geometry (not just image/path)
+  // survives the v4 export/import round trip byte-for-byte, including the
+  // baked rotation on demo-rect/demo-ellipse/demo-text.
+  expect(after).toEqual(before);
   expect(await bridge(page).getLayerTree()).toEqual(treeBefore);
 });

@@ -46,6 +46,15 @@ test('@smoke export -> import a grouped doc round-trips intact at v4', async ({ 
   fs.mkdirSync(path.dirname(tmpPath), { recursive: true });
   fs.writeFileSync(tmpPath, JSON.stringify(exported));
 
+  // Mutate the LIVE doc after exporting (delete the group and everything
+  // else) so the import assertions below can only pass if importPanelJson
+  // actually replaced the document — codex review finding: without this,
+  // export -> import is a no-op on an already-matching doc and the
+  // equality checks below would pass even if Replace silently did nothing.
+  await page.keyboard.press(`${MOD}+a`);
+  await page.keyboard.press('Delete');
+  expect(await bridge(page).getLayerTree()).not.toEqual(treeBefore);
+
   await importPanelJson(page, tmpPath);
 
   const treeAfter = await bridge(page).getLayerTree();
