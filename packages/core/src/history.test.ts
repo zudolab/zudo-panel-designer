@@ -103,11 +103,11 @@ describe('abortGesture', () => {
     expect(abortGesture(state)).toEqual(state);
   });
 
-  it('leaves future untouched — only the popped past entry changes', () => {
-    // Constructed directly rather than via beginGesture: beginGesture is
-    // commit() under the hood, which already clears any redo branch, so a
-    // real gesture never has a future to preserve. This isolates
-    // abortGesture's own contract — it must not go near `future` at all.
+  it('without a gestureRestore snapshot, leaves future untouched — only the popped past entry changes', () => {
+    // Constructed directly rather than via beginGesture, so there is no
+    // gestureRestore snapshot to consume — the fallback path for a state
+    // built outside beginGesture (or after an intervening commit/undo/redo
+    // dropped the snapshot): abort must not invent or clear a future then.
     const state = { past: ['v0', 'v1'], present: 'v1-preview', future: ['v2'] };
     const aborted = abortGesture(state);
     expect(aborted).toEqual({ past: ['v0'], present: 'v1', future: ['v2'] });
@@ -197,6 +197,47 @@ describe('reset', () => {
     expect(state.past).toEqual(['v0']); // commit keeps past
     const afterReset = reset('v2');
     expect(afterReset.past).toEqual([]); // reset clears it
+  });
+});
+
+// abortGesture must be the exact inverse of beginGesture — including what
+// beginGesture's internal commit() destroys BEFORE the abort ever runs: the
+// redo branch (cleared on every commit) and, at the MAX_HISTORY cap, the
+// evicted oldest past entry. A cancelled gesture is not a completed edit, so
+// neither loss may stick.
+describe('abortGesture restores what beginGesture destroyed', () => {
+  it('restores the redo branch that beginGesture-after-undo cleared', () => {
+    let state = createHistory('v0');
+    state = commit(state, 'v1');
+    state = commit(state, 'v2');
+    state = undo(state); // present='v1', future=['v2']
+    expect(canRedo(state)).toBe(true);
+
+    let gesture = beginGesture(state); // commit() under the hood — future cleared here
+    gesture = replace(gesture, 'v1-preview');
+
+    const aborted = abortGesture(gesture);
+    expect(aborted).toEqual({ past: ['v0'], present: 'v1', future: ['v2'] });
+    expect(canRedo(aborted)).toBe(true);
+    expect(redo(aborted).present).toBe('v2'); // Escape did not disable Redo
+  });
+
+  it('restores the oldest past entry evicted at the MAX_HISTORY cap', () => {
+    let state = createHistory('v0');
+    for (let i = 1; i <= MAX_HISTORY; i += 1) {
+      state = commit(state, `v${i}`); // past is now exactly at the cap
+    }
+    expect(state.past.length).toBe(MAX_HISTORY);
+    const oldestBefore = state.past[0];
+
+    let gesture = beginGesture(state); // pushes present, evicting the oldest entry
+    gesture = replace(gesture, 'preview');
+
+    const aborted = abortGesture(gesture);
+    expect(aborted.past.length).toBe(MAX_HISTORY);
+    expect(aborted.past[0]).toBe(oldestBefore); // the evicted entry is back
+    expect(aborted.present).toBe(`v${MAX_HISTORY}`);
+    expect(aborted).toEqual(state); // verbatim pre-gesture stacks
   });
 });
 
