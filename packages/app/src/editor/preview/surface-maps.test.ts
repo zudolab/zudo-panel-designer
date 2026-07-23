@@ -552,7 +552,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
         ),
       ).toBe(true);
       expect(canvas.calls.find((call) => call.method === 'stroke')?.strokeStyle).toBe(
-        surfaceMapColorForPalette(mapName, 2),
+        surfaceMapColorForPalette(mapName, 0),
       );
       const patternTranslateIndex = canvas.calls.findIndex(
         (call) => call.method === 'translate' && call.args[0] === 25 && call.args[1] === 30,

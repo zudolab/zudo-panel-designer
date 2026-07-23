@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import type { DocState, HistoryState, ShapeLayer } from '@zpd/core';
+import { createPcbLayerStack, type DocState, type HistoryState, type ShapeLayer } from '@zpd/core';
 import { createPreviewDebugPublisher } from './preview/debug-state';
 import type { PreviewDebugSummary } from './preview/contracts';
 import { installTestBridge } from './test-bridge';
@@ -11,7 +11,7 @@ afterEach(() => {
 
 describe('preview test bridge', () => {
   it('exposes only frozen read-only preview observations and returns zero after close', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [] };
+    const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
     const history = { past: [], present: doc, future: [] } as HistoryState<DocState>;
     const publisher = createPreviewDebugPublisher();
     const summary: PreviewDebugSummary = {
@@ -73,16 +73,18 @@ describe('layer tree bridge (#150)', () => {
     const doc: DocState = {
       panelHp: 12,
       guides: [],
-      layers: [
-        shape('a'),
-        {
-          kind: 'group',
-          id: 'g',
-          name: 'G',
-          hidden: true,
-          children: [shape('b'), { kind: 'group', id: 'g2', name: 'G2', children: [shape('c')] }],
-        },
-      ],
+      layers: createPcbLayerStack({
+        copper: [
+          shape('a'),
+          {
+            kind: 'group',
+            id: 'g',
+            name: 'G',
+            hidden: true,
+            children: [shape('b'), { kind: 'group', id: 'g2', name: 'G2', children: [shape('c')] }],
+          },
+        ],
+      }),
     };
     const history = { past: [], present: doc, future: [] } as HistoryState<DocState>;
     installTestBridge({
@@ -100,6 +102,8 @@ describe('layer tree bridge (#150)', () => {
       { id: 'c', type: 'shape', name: 'c', hidden: true },
     ]);
     expect(window.__zpdTest?.getLayerCount()).toBe(3);
+    expect(window.__zpdTest?.getMaterialLayer('a')).toMatchObject({ material: 'copper', color: 1 });
+    expect(Object.isFrozen(window.__zpdTest?.getMaterialLayer('a'))).toBe(true);
 
     // structural view: each node's OWN hidden flag, groups preserved
     expect(window.__zpdTest?.getLayerTree()).toEqual([

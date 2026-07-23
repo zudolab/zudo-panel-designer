@@ -43,7 +43,7 @@ test.afterEach(async ({ page }) => {
 async function importManufacturingFixture(page: Page): Promise<void> {
   await importPanelJson(page, MANUFACTURING_FIXTURE);
   await expect.poll(() => bridge(page).getPanelHp()).toBe(8);
-  await expect.poll(async () => (await bridge(page).getDoc()).layers.length).toBe(10);
+  await expect.poll(async () => await bridge(page).getLayerCount()).toBe(11);
 }
 
 async function waitForPreviewReady(page: Page): Promise<PreviewDebugSummary> {
@@ -220,8 +220,8 @@ test('@smoke 3D preview is lazy, physically faithful, interactive, and leak-free
   await expectSurfacePixel(page, 'metalness', 27, 32, [255, 255, 255, 255]);
   await expectSurfacePixel(page, 'baseColor', 33, 32, [21, 21, 21, 255]);
   await expectSurfacePixel(page, 'baseColor', 38, 32, [21, 21, 21, 255]);
-  await expectSurfacePixel(page, 'baseColor', 4, 40, [212, 175, 55, 255]);
-  await expectSurfacePixel(page, 'baseColor', 12, 40, [21, 21, 21, 255]); // even-odd hole
+  await expectSurfacePixel(page, 'baseColor', 4, 40, [21, 21, 21, 255]); // positive mask coverage
+  await expectSurfacePixel(page, 'baseColor', 12, 40, [212, 175, 55, 255]); // even-odd reveal
   await expectSurfacePixel(page, 'baseColor', 30, 55, [212, 175, 55, 255]); // rotated ellipse
 
   // Design-only/hidden/off-panel/editor furniture stays the black substrate.
@@ -379,7 +379,7 @@ test('@smoke 3D preview reload recovery restores the panel and starts a fresh re
   expect(navigationType).toBe('reload');
   await expect.poll(() => bridge(page).serialize()).toEqual(serializedBeforeReload);
   expect(await bridge(page).getPanelHp()).toBe(20);
-  expect((await bridge(page).getDoc()).layers).toHaveLength(10);
+  expect(await bridge(page).getLayerCount()).toBe(11);
 
   await page.getByRole('button', { name: 'Preview 3D' }).click();
   const ready = await waitForPreviewReady(page);
@@ -447,12 +447,9 @@ test('@smoke 3D preview refreshes font surfaces and reopens on current editor st
   await page.getByRole('combobox').first().selectOption('20');
   await expect.poll(() => bridge(page).getPanelHp()).toBe(20);
   await page.getByRole('button', { name: 'Select layer Gold base' }).click();
-  await page.getByTitle(/^white — silkscreen$/).click();
   await expect
-    .poll(async () =>
-      (await bridge(page).getDoc()).layers.find((layer) => layer.id === 'gold-base'),
-    )
-    .toMatchObject({ color: 2 });
+    .poll(async () => await bridge(page).getMaterialLayer('gold-base'))
+    .toMatchObject({ material: 'copper', color: 1 });
 
   await openPreviewFromCommandPalette(page);
   const reopened = await waitForPreviewReady(page);
@@ -461,9 +458,9 @@ test('@smoke 3D preview refreshes font surfaces and reopens on current editor st
     heightMm: PANEL_HEIGHT_MM,
     thicknessMm: PANEL_THICKNESS_MM,
   });
-  await expectSurfacePixel(page, 'baseColor', 4, 4, [242, 240, 233, 255], 101.3);
-  await expectSurfacePixel(page, 'metalness', 4, 4, [0, 0, 0, 255], 101.3);
-  await expectSurfacePixel(page, 'roughness', 4, 4, [214, 214, 214, 255], 101.3);
+  await expectSurfacePixel(page, 'baseColor', 4, 4, [212, 175, 55, 255], 101.3);
+  await expectSurfacePixel(page, 'metalness', 4, 4, [255, 255, 255, 255], 101.3);
+  await expectSurfacePixel(page, 'roughness', 4, 4, [61, 61, 61, 255], 101.3);
 
   await page.getByRole('button', { name: 'Close 3D preview' }).click();
   await expectPreviewDisposed(page);

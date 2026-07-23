@@ -16,7 +16,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import {
-  mapLeavesById,
+  mapPcbLeavesById,
   PANEL_HEIGHT_MM,
   panelWidthMm,
   translatePathLayer,
@@ -226,7 +226,17 @@ export function Editor() {
       openDialog,
       closeDialog,
     }),
-    [commit, replace, reset, beginGesture, abortGesture, undo, redo, readSelectedId, readSelectedIds],
+    [
+      commit,
+      replace,
+      reset,
+      beginGesture,
+      abortGesture,
+      undo,
+      redo,
+      readSelectedId,
+      readSelectedIds,
+    ],
   );
 
   // Clipboard (#74): Cmd/Ctrl+C/X/D/A (wired into the keydown fallback below)
@@ -450,7 +460,7 @@ export function Editor() {
       const { editableLeafIds } = resolveSelectionLeaves(tree, ids, projectFlatLayers(tree));
       // mapLeavesById nudges matching leaves at ANY depth and only leaves —
       // group nodes never carry x/y (structure + hidden only, see types.ts).
-      const layers = mapLeavesById(tree, editableLeafIds, (l) => {
+      const layers = mapPcbLeavesById(tree, editableLeafIds, (l) => {
         const patch =
           l.type === 'path' ? translatePathLayer(l, dx, dy) : { x: l.x + dx, y: l.y + dy };
         return { ...l, ...patch } as Layer;

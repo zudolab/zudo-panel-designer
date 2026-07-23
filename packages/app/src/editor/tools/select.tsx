@@ -9,7 +9,7 @@ import {
   findPcbNodeById,
   hitTestLayer,
   isGroupNode,
-  mapLeavesById,
+  mapPcbLeavesById,
   maximalSelectedRoots,
   mergeBboxes,
   movePathAnchor,
@@ -23,7 +23,6 @@ import {
   snapScalar,
   snapToGrid,
   translatePathLayer,
-  updateLeafById,
   type DocState,
   type Layer,
   type LayerNode,
@@ -323,7 +322,7 @@ function updateLayer(ctx: ToolContext, id: string, patch: Partial<Layer>, commit
     ...ctx.doc,
     // Recursive write (#150): patches the leaf wherever it sits in the tree —
     // a flat root-array map would silently no-op for a leaf nested in a group.
-    layers: updateLeafById(ctx.doc.layers, id, (l) => ({ ...l, ...patch }) as Layer),
+    layers: mapPcbLeavesById(ctx.doc.layers, [id], (l) => ({ ...l, ...patch }) as Layer),
   };
   if (commit) ctx.commit(next);
   else ctx.replace(next);
@@ -880,7 +879,7 @@ registerTool({
         // sits in `tree` (which already contains this event's Alt-clones).
         ctx.replace({
           ...ctx.doc,
-          layers: mapLeavesById(tree, [...patches.keys()], (l) => {
+          layers: mapPcbLeavesById(tree, [...patches.keys()], (l) => {
             const patch = patches.get(l.id);
             return patch ? ({ ...l, ...patch } as Layer) : l;
           }),
@@ -948,7 +947,11 @@ registerTool({
         // the tree — a flat root map would no-op for group-nested members.
         ctx.replace({
           ...ctx.doc,
-          layers: mapLeavesById(ctx.doc.layers, [...scaled.keys()], (l) => scaled.get(l.id) ?? l),
+          layers: mapPcbLeavesById(
+            ctx.doc.layers,
+            [...scaled.keys()],
+            (l) => scaled.get(l.id) ?? l,
+          ),
         });
         break;
       }

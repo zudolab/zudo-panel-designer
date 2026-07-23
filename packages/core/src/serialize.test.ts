@@ -119,6 +119,38 @@ describe('v1-v4 deterministic material migration', () => {
     guides: [],
   };
 
+  it.each([1, 2, 3, 4] as const)(
+    'migrates the exact v%s legacy fixture into the canonical material roots',
+    (version) => {
+      const doc = parsePanelConfig({
+        version,
+        app: 'zpd',
+        panel: { hp: 8 },
+        layers: [
+          shape(`gold-v${version}`, 1),
+          shape(`mask-v${version}`, 0),
+          shape(`silk-v${version}`, 2),
+        ],
+        guides:
+          version === 1
+            ? undefined
+            : [{ id: `guide-v${version}`, orientation: 'vertical', position: 4 }],
+      });
+      expect(
+        doc.layers.map((container) => ({ role: container.role, hidden: container.hidden })),
+      ).toEqual([
+        { role: 'copper', hidden: undefined },
+        { role: 'solder-mask', hidden: undefined },
+        { role: 'silkscreen', hidden: undefined },
+      ]);
+      expect(children(doc, 'copper')).toMatchObject([{ id: `gold-v${version}`, color: 1 }]);
+      expect(children(doc, 'solder-mask')).toMatchObject([{ id: `mask-v${version}`, color: 0 }]);
+      expect(children(doc, 'silkscreen')).toMatchObject([{ id: `silk-v${version}`, color: 2 }]);
+      expect(serializePanelConfig(doc).version).toBe(5);
+      expect(doc.guides).toHaveLength(version === 1 ? 0 : 1);
+    },
+  );
+
   it('partitions mixed groups, splits fill/stroke, preserves shells/order/state, and routes colorless nodes', () => {
     const doc = parsePanelConfig(legacy);
     expect(doc.layers.map((container) => container.role)).toEqual([

@@ -14,14 +14,14 @@
 //   unrotatable pattern in the selection must not displace the pivot of the
 //   content that actually rotates.
 import {
-  mapLeavesById,
+  mapPcbLeavesById,
   mergeBboxes,
   normalizeRect,
   rectCenter,
   rotatedRectAABB,
   rotateLayersAboutPivot,
   type Layer,
-  type LayerNode,
+  type PcbLayerStack,
   type Pt,
   type Rect,
 } from '@zpd/core';
@@ -51,7 +51,7 @@ export interface MultiRotateSession {
 // selection has no rotatable editable leaf with measurable bounds — the same
 // "nothing would change" condition under which no knob is drawn or grabbable.
 export function captureMultiRotateSession(
-  tree: LayerNode[],
+  tree: PcbLayerStack,
   selectedIds: readonly string[],
   flatLayers: readonly Layer[],
 ): MultiRotateSession | null {
@@ -88,10 +88,10 @@ export function captureMultiRotateSession(
 // the one apply path — the pointer gesture and #157's numeric input both
 // feed a delta through here.
 export function bakeMultiRotate(
-  tree: LayerNode[],
+  tree: PcbLayerStack,
   session: MultiRotateSession,
   deltaDeg: number,
-): LayerNode[] {
+): PcbLayerStack {
   // Delta 0 restores the EXACT captured snapshots: running the core bake at 0
   // would still normalize each rotation (undefined → 0, an inspector-entered
   // 33.34 → 33.3), so an out-and-back drag would not land on the byte-exact
@@ -106,7 +106,7 @@ export function bakeMultiRotate(
           deltaDeg,
         );
   const byId = new Map(rotated.map((l) => [l.id, l]));
-  return mapLeavesById(tree, session.leafIds, (l) => byId.get(l.id) ?? l);
+  return mapPcbLeavesById(tree, session.leafIds, (l) => byId.get(l.id) ?? l);
 }
 
 // Unwraps a raw pointer-angle offset across the atan2 ±180° branch cut: picks

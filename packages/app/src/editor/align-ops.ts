@@ -15,7 +15,7 @@
 import {
   alignLayers,
   distributeLayers,
-  mapLeavesById,
+  mapPcbLeavesById,
   MIN_ALIGN_SELECTION,
   MIN_DISTRIBUTE_SELECTION,
   normalizeRect,
@@ -84,9 +84,7 @@ export function eligibleLayers(doc: DocState, selectedIds: readonly string[]): N
   // descendant leaves (hidden — intrinsic or ancestor-folded — excluded, per
   // the shared "ops act on expanded editable leaves" rule). Identity for a
   // group-free, fully visible selection.
-  const editable = new Set(
-    resolveSelectionLeaves(doc.layers, selectedIds, layers).editableLeafIds,
-  );
+  const editable = new Set(resolveSelectionLeaves(doc.layers, selectedIds, layers).editableLeafIds);
   return layers.filter(
     (l): l is NonPatternLayer => editable.has(l.id) && l.type !== 'pattern' && hasGeometry(l),
   );
@@ -133,7 +131,7 @@ function applyResults(
   // tree — a flat root map would no-op for group-nested targets.
   ctx.commit({
     ...ctx.doc,
-    layers: mapLeavesById(ctx.doc.layers, [...patches.keys()], (l) => {
+    layers: mapPcbLeavesById(ctx.doc.layers, [...patches.keys()], (l) => {
       const patch = patches.get(l.id);
       return patch ? ({ ...l, ...patch } as Layer) : l;
     }),

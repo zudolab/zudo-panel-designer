@@ -12,24 +12,28 @@ order artifact. It is produced by `serializePanelConfig()` and consumed by
 
 ```json
 {
-  "version": 2,
+  "version": 5,
   "app": "zpd",
   "panel": { "hp": 12, "widthMm": 60.6, "heightMm": 128.5 },
   "palette": ["black", "gold", "white"],
-  "layers": [],
+  "layers": [
+    { "kind": "pcb-layer", "id": "pcb-layer-copper", "role": "copper", "children": [] },
+    { "kind": "pcb-layer", "id": "pcb-layer-solder-mask", "role": "solder-mask", "children": [] },
+    { "kind": "pcb-layer", "id": "pcb-layer-silkscreen", "role": "silkscreen", "children": [] }
+  ],
   "guides": []
 }
 ```
 
 | Field | Type | Notes |
 |---|---|---|
-| `version` | `2` | `PANEL_CONFIG_VERSION`. See [Versioning](#versioning) below. |
+| `version` | `5` | `PANEL_CONFIG_VERSION`. See [Versioning](#versioning) below. |
 | `app` | `"zpd"` | Fixed literal identifying the producing app. |
 | `panel.hp` | `number` | Panel width in Eurorack HP, from the live document (`doc.panelHp`). |
 | `panel.widthMm` | `number` | Derived from `hp` via `panelWidthMm()` — **advisory output**, not re-trusted on import (see below). |
 | `panel.heightMm` | `number` | `PANEL_HEIGHT_MM`, the fixed 3U Eurorack panel height (128.5mm). |
 | `palette` | `string[]` | The three fixed color names, in index order: `["black", "gold", "white"]`. |
-| `layers` | `Layer[]` | The document's layer stack, bottom to top. See [Layer fields](#layer-fields). |
+| `layers` | `PcbLayerContainer[]` | The fixed Copper, Solder mask, and Silkscreen containers in physical bottom-to-top order. |
 | `guides` | `Guide[]` | The document's ruler guides. Added in v2 (see [Versioning](#versioning)); see [Guide fields](#guide-fields). |
 
 :::note
@@ -40,6 +44,20 @@ downstream fab tool can read the file without recomputing dimensions from
 than trusting hand-edited values. `panel.hp` and `layers` are the
 authoritative source data.
 :::
+
+## Fixed material containers
+
+v5 persists exactly three fixed roots, in physical bottom-to-top order:
+Copper, Solder mask, then Silkscreen. Each has `kind: "pcb-layer"`, a stable
+`id`, a `role`, optional persisted `hidden`, and ordinary `children`. The UI
+shows the reverse top-to-bottom order. The container determines effective
+material—gold/HASL copper, black positive solder-mask coverage, or white
+silkscreen—so legacy child colors are normalized on import. Mask absence and
+even-odd holes reveal copper underneath.
+
+The roots are not ordinary groups: users cannot rename, delete, select, group,
+or reorder them. Ordinary groups can be nested under each root and artwork can
+move across roots to change material.
 
 ## Layer fields
 
@@ -138,16 +156,10 @@ user-configurable per document.
 
 ## Versioning
 
-`PANEL_CONFIG_VERSION` is currently `2`, and the `PanelConfig` TypeScript
-type pins `version: 2`. **v2** added the top-level `guides` array; v1 was the
-same envelope without it.
-
-The migration is deliberately **path-free**: `parsePanelConfig` does not read
-or branch on the incoming `version` field. Because every field defends itself
-individually, a v1 file (or any file missing `guides`, including one a user
-hand-edited) loads cleanly — `parseGuides` sees no array and yields `[]`, the
-same result the migration would produce. So there is no dedicated v1→v2
-upgrade step: an old file simply parses to a document with no guides. The
-`version` field is emitted for the human/order reader, not consumed by the
-parser — see [Defensive Parsing](./defensive-parsing.mdx) for why the parser
-is lenient by design rather than strict about the envelope shape.
+`PANEL_CONFIG_VERSION` is currently `5`, and `PanelConfig` pins `version: 5`.
+v1–v4 files used free root layers (v2 added `guides`); import deterministically
+partitions their paint into the v5 fixed material stack, preserving ordinary
+groups where possible and normalizing material from container membership. v5
+input is also repaired defensively if fixed-root metadata is missing,
+duplicated, or reordered. This is a versioned JSON migration, not a Gerber
+export format; Gerber output is a future possibility, not a current feature.
