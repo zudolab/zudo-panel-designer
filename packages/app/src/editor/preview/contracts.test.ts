@@ -361,7 +361,7 @@ describe('debug and accessibility contracts', () => {
     expect(copy.stageInstructions).toContain('plus and minus');
     expect(copy.stageInstructions).toContain('Reset');
     expect(copy.panelSummary).toContain('100 mm wide by 50 mm high by 2.5 mm thick');
-    expect(copy.panelSummary).toContain('exposed gold is metallic');
+    expect(copy.panelSummary).toContain('exposed copper with the gold/HASL finish is metallic');
   });
 });
 

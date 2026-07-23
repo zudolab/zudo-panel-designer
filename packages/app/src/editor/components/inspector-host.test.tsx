@@ -9,7 +9,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactElement } from 'react';
 import { cleanup, render, screen } from '@testing-library/react';
-import type { DocState, GroupNode, LayerNode, ShapeLayer } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  type DocState,
+  type GroupNode,
+  type LayerNode,
+  type ShapeLayer,
+} from '@zpd/core';
 import { registerInspector, unregisterInspector } from '../registry/inspectors';
 import type { InspectorProps, ToolContext } from '../types';
 import { InspectorHost } from './inspector-host';
@@ -68,30 +74,36 @@ describe('InspectorHost onChange (#150)', () => {
     const doc: DocState = {
       panelHp: 12,
       guides: [],
-      layers: [group('outer', [group('inner', [leaf, innerSibling])]), rootSibling],
+      layers: createPcbLayerStack({
+        copper: [group('outer', [group('inner', [leaf, innerSibling])]), rootSibling],
+      }),
     };
     const { ctx, commit } = stubCtx(doc);
     render(<InspectorHost ctx={ctx} layer={leaf} selectedIds={['deep']} />);
     expect(screen.getByTestId('mock-shape-inspector')).toBeTruthy();
 
-    lastInspectorProps().onChange({ x: 42 });
+    lastInspectorProps().onChange({ x: 42, color: 2 });
 
     expect(commit).toHaveBeenCalledTimes(1);
     const next = commit.mock.calls[0][0] as DocState;
-    const outer = next.layers[0] as GroupNode;
+    const outer = next.layers[0].children[0] as GroupNode;
     expect(outer.kind).toBe('group');
     const inner = outer.children[0] as GroupNode;
     expect(inner.kind).toBe('group');
-    expect((inner.children[0] as ShapeLayer).x).toBe(42);
+    expect(inner.children[0]).toMatchObject({ x: 42, color: 1 });
     // untouched nodes keep their identity — no unrelated churn
     expect(inner.children[1]).toBe(innerSibling);
-    expect(next.layers[1]).toBe(rootSibling);
+    expect(next.layers[0].children[1]).toBe(rootSibling);
   });
 
   it('routes commit:false through replace (drag/scrub), same recursive path', () => {
     registerInspector('shape', MockShapeInspector);
     const leaf = shape('deep');
-    const doc: DocState = { panelHp: 12, guides: [], layers: [group('g', [leaf])] };
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [group('g', [leaf])] }),
+    };
     const { ctx, commit, replace } = stubCtx(doc);
     render(<InspectorHost ctx={ctx} layer={leaf} selectedIds={['deep']} />);
 
@@ -100,6 +112,7 @@ describe('InspectorHost onChange (#150)', () => {
     expect(commit).not.toHaveBeenCalled();
     expect(replace).toHaveBeenCalledTimes(1);
     const next = replace.mock.calls[0][0] as DocState;
-    expect(((next.layers[0] as GroupNode).children[0] as ShapeLayer).width).toBe(33);
+    const groupNode = next.layers[0].children[0] as GroupNode;
+    expect((groupNode.children[0] as ShapeLayer).width).toBe(33);
   });
 });

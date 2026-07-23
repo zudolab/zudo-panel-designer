@@ -18,6 +18,7 @@ describe('PALETTE', () => {
 describe('paletteEntry', () => {
   it('looks up an entry by ColorIndex', () => {
     expect(paletteEntry(1).name).toBe('gold');
+    expect(paletteEntry(1).note).toBe('exposed copper (gold/HASL)');
   });
 });
 

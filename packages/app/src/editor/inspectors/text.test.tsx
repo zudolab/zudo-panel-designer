@@ -7,7 +7,7 @@
 // replaced.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { Pt, TextLayer } from '@zpd/core';
+import { createPcbLayerStack, type Pt, type TextLayer } from '@zpd/core';
 import type { ToolContext } from '../types';
 import './text';
 import { getInspector } from '../registry/inspectors';
@@ -29,7 +29,7 @@ afterEach(() => {
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    doc: { panelHp: 12, layers: [] },
+    doc: { panelHp: 12, guides: [], layers: createPcbLayerStack({ silkscreen: [baseLayer] }) },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     selectedIds: [],
@@ -100,12 +100,14 @@ describe('text inspector', () => {
     expect(select.value).toBe('sans-serif');
   });
 
-  it('round-trips color/size/position edits', () => {
+  it('shows the owning material without an object-level color control', () => {
     const onChange = vi.fn();
     render(<Inspector layer={baseLayer} onChange={onChange} ctx={stubCtx()} />);
 
-    fireEvent.click(screen.getByTitle(/white/i));
-    expect(onChange).toHaveBeenCalledWith({ color: 2 });
+    expect(screen.getByText('Silkscreen')).toBeTruthy();
+    expect(screen.queryByText('Color')).toBeNull();
+    expect(screen.queryByTitle(/white/i)).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('sorts starred favorites to the top of the dropdown and marks them with a star', () => {
