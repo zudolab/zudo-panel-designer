@@ -7,6 +7,7 @@
 // jsdom is also what the loading-dim block below needs for HTMLCanvasElement.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  createPcbLayerStack,
   mergeBboxes,
   PALETTE,
   rotatedRectAABB,
@@ -83,6 +84,204 @@ function shape(id: string, x: number, y: number, extra: Partial<ShapeLayer> = {}
     ...extra,
   };
 }
+
+describe('renderScene fixed-material composition (#166)', () => {
+  class SamplePath2D {
+    readonly subpaths: Array<Array<readonly [number, number]>> = [];
+    private current: Array<readonly [number, number]> = [];
+
+    moveTo(x: number, y: number): void {
+      if (this.current.length > 0) this.subpaths.push(this.current);
+      this.current = [[x, y]];
+    }
+
+    bezierCurveTo(
+      _c1x: number,
+      _c1y: number,
+      _c2x: number,
+      _c2y: number,
+      x: number,
+      y: number,
+    ): void {
+      this.current.push([x, y]);
+    }
+
+    closePath(): void {
+      if (this.current.length > 0) this.subpaths.push(this.current);
+      this.current = [];
+    }
+  }
+
+  const containsPath = (path: SamplePath2D, x: number, y: number): boolean => {
+    let crossings = 0;
+    for (const points of path.subpaths) {
+      let inside = false;
+      for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+        const [xi, yi] = points[i];
+        const [xj, yj] = points[j];
+        if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+          inside = !inside;
+        }
+      }
+      if (inside) crossings += 1;
+    }
+    return crossings % 2 === 1;
+  };
+
+  const samples = {
+    copper: [4, 4] as const,
+    mask: [10, 4] as const,
+    opening: [14, 8] as const,
+    silk: [26, 4] as const,
+    image: [42, 4] as const,
+  };
+
+  function renderSampled(hidden: { mask?: boolean; silk?: boolean } = {}) {
+    const stack = createPcbLayerStack({
+      copper: [
+        shape('copper', 2, 2, { width: 30, height: 20, color: 0 }),
+        {
+          id: 'image',
+          name: 'Reference image',
+          type: 'image',
+          src: 'data:image/png;base64,fixture',
+          x: 40,
+          y: 2,
+          width: 6,
+          height: 6,
+        },
+      ],
+      'solder-mask': [
+        {
+          id: 'mask',
+          name: 'Mask with opening',
+          type: 'path',
+          points: [
+            { x: 8, y: 2 },
+            { x: 32, y: 2 },
+            { x: 32, y: 22 },
+            { x: 8, y: 22 },
+          ],
+          extraSubpaths: [
+            [
+              { x: 12, y: 6 },
+              { x: 16, y: 6 },
+              { x: 16, y: 12 },
+              { x: 12, y: 12 },
+            ],
+          ],
+          closed: true,
+          fill: 2,
+          stroke: null,
+          strokeWidth: 0,
+        },
+      ],
+      silkscreen: [shape('silk', 24, 2, { width: 6, height: 6, color: 1 })],
+    });
+    if (hidden.mask) stack[1] = { ...stack[1], hidden: true };
+    if (hidden.silk) stack[2] = { ...stack[2], hidden: true };
+
+    const values = new Map(Object.keys(samples).map((name) => [name, 'transparent']));
+    const stateStack: Array<Record<string, unknown>> = [];
+    let state: Record<string, unknown> = {
+      fillStyle: '#000000',
+      strokeStyle: '#000000',
+      globalAlpha: 1,
+    };
+    let pendingRect: readonly number[] | null = null;
+    const paintRect = (rect: readonly number[], value: string) => {
+      for (const [name, point] of Object.entries(samples)) {
+        if (
+          point[0] > rect[0] &&
+          point[0] < rect[0] + rect[2] &&
+          point[1] > rect[1] &&
+          point[1] < rect[1] + rect[3]
+        ) {
+          values.set(name, value);
+        }
+      }
+    };
+    const context = new Proxy(
+      {},
+      {
+        get(_target, property: string) {
+          if (property in state) return state[property];
+          if (property === 'measureText') return () => ({ width: 0 });
+          return (...args: unknown[]) => {
+            if (property === 'save') stateStack.push({ ...state });
+            else if (property === 'restore') state = stateStack.pop() ?? state;
+            else if (property === 'beginPath') pendingRect = null;
+            else if (property === 'rect') pendingRect = args as number[];
+            else if (property === 'fillRect') {
+              paintRect(args as number[], String(state.fillStyle));
+            } else if (property === 'fill') {
+              if (args[0] instanceof SamplePath2D) {
+                for (const [name, point] of Object.entries(samples)) {
+                  if (containsPath(args[0], point[0], point[1])) {
+                    values.set(name, String(state.fillStyle));
+                  }
+                }
+              } else if (pendingRect) {
+                paintRect(pendingRect, String(state.fillStyle));
+              }
+            } else if (property === 'drawImage') {
+              paintRect(args.slice(1) as number[], 'bitmap');
+            }
+          };
+        },
+        set(_target, property: string, value: unknown) {
+          state[property] = value;
+          return true;
+        },
+      },
+    ) as unknown as CanvasRenderingContext2D;
+    const canvas = document.createElement('canvas');
+    canvas.width = 100;
+    canvas.height = 129;
+    canvas.getContext = vi.fn(() => context) as unknown as typeof canvas.getContext;
+    const image = {
+      complete: true,
+      naturalWidth: 1,
+    } as HTMLImageElement;
+
+    const originalPath2D = globalThis.Path2D;
+    (globalThis as { Path2D: typeof Path2D }).Path2D = SamplePath2D as unknown as typeof Path2D;
+    try {
+      renderScene(
+        canvas,
+        { layers: stack },
+        PANEL,
+        { pxPerMm: 1, offsetX: 0, offsetY: 0 },
+        {
+          selectedIds: [],
+          images: new Map([['image', image]]),
+          showNodes: false,
+          showOutsidePanel: false,
+          requestRepaint: vi.fn(),
+        },
+      );
+    } finally {
+      (globalThis as { Path2D: typeof Path2D }).Path2D = originalPath2D;
+    }
+    return values;
+  }
+
+  it('samples copper, positive mask, even-odd reveal, silk, hidden containers, and images', () => {
+    expect(Object.fromEntries(renderSampled())).toMatchObject({
+      copper: PALETTE[1].hex,
+      mask: PALETTE[0].hex,
+      opening: PALETTE[1].hex,
+      silk: PALETTE[2].hex,
+      image: 'bitmap',
+    });
+    expect(Object.fromEntries(renderSampled({ mask: true }))).toMatchObject({
+      mask: PALETTE[1].hex,
+    });
+    expect(Object.fromEntries(renderSampled({ silk: true }))).toMatchObject({
+      silk: PALETTE[0].hex,
+    });
+  });
+});
 
 describe('selectionBboxes', () => {
   it('returns one axis-aligned bbox per selected layer, in selection order', () => {

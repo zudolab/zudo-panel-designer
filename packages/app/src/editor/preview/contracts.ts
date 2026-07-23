@@ -367,6 +367,6 @@ export function createPreviewAccessibilityCopy(
   return Object.freeze({
     stageInstructions:
       'Drag to rotate. Use Pan to move the board, use the wheel, pinch, or plus and minus to zoom, and use Reset to restore the view.',
-    panelSummary: `PCB preview: ${dimensions.widthMm} mm wide by ${dimensions.heightMm} mm high by ${dimensions.thicknessMm} mm thick. Black soldermask and white silkscreen are matte; exposed gold is metallic.`,
+    panelSummary: `PCB preview: ${dimensions.widthMm} mm wide by ${dimensions.heightMm} mm high by ${dimensions.thicknessMm} mm thick. Black soldermask and white silkscreen are matte; exposed copper with the gold/HASL finish is metallic.`,
   });
 }

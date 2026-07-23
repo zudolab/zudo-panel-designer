@@ -4,8 +4,9 @@ import { patternByName } from '@zpd/patterns';
 import type { PatternParamDef } from '@zpd/patterns';
 import { registerInspector } from '../registry/inspectors';
 import { getDialog } from '../registry/dialogs';
-import { ActionButton, ColorPicker, Field, NumberField, Row } from '../components/inspector-ui';
+import { ActionButton, Field, MaterialField, NumberField, Row } from '../components/inspector-ui';
 import type { InspectorProps, ToolContext } from '../types';
+import { owningMaterialRole } from './material';
 
 // Keep committed sizes inside the renderer's draw guard (renderer.ts only
 // draws 0 < size <= MAX_PATTERN_SIZE_MM): an out-of-range inspector entry
@@ -13,8 +14,7 @@ import type { InspectorProps, ToolContext } from '../types';
 // boundary (serialize.ts) does. 0.1 is the grid step — the smallest size the
 // rest of the editor meaningfully distinguishes.
 const MIN_PATTERN_SIZE_MM = 0.1;
-const clampSize = (v: number) =>
-  Math.min(Math.max(v, MIN_PATTERN_SIZE_MM), MAX_PATTERN_SIZE_MM);
+const clampSize = (v: number) => Math.min(Math.max(v, MIN_PATTERN_SIZE_MM), MAX_PATTERN_SIZE_MM);
 
 // One slider = one undo entry per scrub. The gesture opens LAZILY on the first
 // value change (ctx.beginGesture snapshots the pre-scrub state as a single undo
@@ -65,6 +65,7 @@ function PatternParamSlider({
 
 function PatternInspector({ layer, onChange, ctx }: InspectorProps<PatternLayer>) {
   const gen = patternByName(layer.patternType);
+  const material = owningMaterialRole(ctx.doc.layers, layer.id);
   // Wave 5 (#12) registers a dialog with id 'pattern-picker' to swap the
   // pattern; until then this button just shows the current pattern, disabled.
   const pickerAvailable = getDialog('pattern-picker') !== undefined;
@@ -79,9 +80,7 @@ function PatternInspector({ layer, onChange, ctx }: InspectorProps<PatternLayer>
           {gen?.displayName ?? layer.patternType} — Browse…
         </ActionButton>
       </Row>
-      <Field label="Color">
-        <ColorPicker value={layer.color} onPick={(c) => c !== null && onChange({ color: c })} />
-      </Field>
+      <MaterialField role={material} />
       {/* Square geometry (#97) — NumberField commits are discrete edits, one
           undo entry each, matching the shape/image inspector conventions. */}
       <Field label="x (mm)">
@@ -123,7 +122,9 @@ function PatternInspector({ layer, onChange, ctx }: InspectorProps<PatternLayer>
           def={def}
           value={layer.params[def.key] ?? def.defaultValue}
           ctx={ctx}
-          onScrub={(v) => onChange({ params: { ...layer.params, [def.key]: v } }, { commit: false })}
+          onScrub={(v) =>
+            onChange({ params: { ...layer.params, [def.key]: v } }, { commit: false })
+          }
         />
       ))}
     </div>

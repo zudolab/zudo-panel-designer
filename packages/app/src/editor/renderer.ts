@@ -17,12 +17,14 @@ import {
   type ColorIndex,
   type Guide,
   type Layer,
+  type PcbLayerStack,
   type Pt,
   type Rect,
   type ResizeHandle,
 } from '@zpd/core';
 import { patternByName } from '@zpd/patterns';
 import type { Camera } from './camera';
+import { projectFlatLayers } from './flat-projection';
 import { guideScreenCoord, type GuideDraft } from './guides';
 import { outsidePanelRegion } from './outside-panel-region';
 import { getTextGeometry, reconcileTextGeometry } from './text-geometry';
@@ -489,12 +491,17 @@ export function reconcileImageCache(
 
 export function renderScene(
   canvas: HTMLCanvasElement,
-  doc: { layers: Layer[] },
+  doc: { layers: Layer[] | PcbLayerStack },
   panel: PanelDims,
   cam: Camera,
   extras: RenderExtras,
 ): void {
-  reconcileTextGeometry(doc.layers, extras.requestRepaint);
+  // Editor.tsx normally supplies the identity-stable flat fast path, while
+  // standalone callers may supply the persisted PCB stack. Normalize both at
+  // this boundary so painting, ghosts, text geometry, and chrome always share
+  // one effective-material array in physical bottom-to-top order.
+  const layers = projectFlatLayers(doc.layers);
+  reconcileTextGeometry(layers, extras.requestRepaint);
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   const dpr = window.devicePixelRatio || 1;
@@ -532,7 +539,7 @@ export function renderScene(
   // see outside-panel-region.ts for which layers are eligible.
   const outsideRegion = outsidePanelRegion(
     extras.showOutsidePanel,
-    doc.layers,
+    layers,
     { cssW, cssH },
     cam,
     panel,
@@ -577,7 +584,7 @@ export function renderScene(
   ctx.clip();
   ctx.translate(cam.offsetX, cam.offsetY);
   ctx.scale(cam.pxPerMm, cam.pxPerMm);
-  for (const layer of doc.layers) {
+  for (const layer of layers) {
     if (layer.hidden) continue;
     paintLayer(ctx, layer, layerPaintOptions);
   }
@@ -593,7 +600,7 @@ export function renderScene(
   drawGuides(ctx, cam, cssW, cssH, extras);
 
   // selection chrome — UNCLIPPED, in screen space
-  drawSelectionChrome(ctx, doc.layers, cam, extras);
+  drawSelectionChrome(ctx, layers, cam, extras);
 
   // active tool's draft preview hook (pen path in Wave 5, etc.)
   extras.renderDraft?.(makeDraftContext(ctx, cam, panel));

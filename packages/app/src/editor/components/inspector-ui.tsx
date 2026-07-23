@@ -1,6 +1,6 @@
 // Small shared building blocks for the built-in inspectors. Kept OUTSIDE the
 // globbed inspectors/ folder so it is never mistaken for a registering module.
-import { PALETTE, type ColorIndex } from '@zpd/core';
+import { PALETTE, pcbLayerDefinition, type ColorIndex, type PcbLayerRole } from '@zpd/core';
 import { useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -22,6 +22,32 @@ export function Row({ label, children }: { label: string; children: ReactNode })
       <span className="text-neutral-400">{label}</span>
       <span className="flex-1 max-w-[60%]">{children}</span>
     </div>
+  );
+}
+
+// Fixed-container membership is the material control. Inspectors expose that
+// fact as context, never as an object-level palette picker.
+export function MaterialField({ role }: { role: PcbLayerRole | null }) {
+  if (!role) {
+    return (
+      <Row label="Material">
+        <span className="text-neutral-500">Unassigned</span>
+      </Row>
+    );
+  }
+  const definition = pcbLayerDefinition(role);
+  const palette = PALETTE[definition.color];
+  return (
+    <Row label="Material">
+      <span className="flex items-center gap-1.5 text-neutral-300">
+        <span
+          aria-hidden="true"
+          className="h-3 w-3 shrink-0 rounded-full border border-neutral-600"
+          style={{ background: palette.hex }}
+        />
+        {definition.name}
+      </span>
+    </Row>
   );
 }
 
@@ -106,7 +132,10 @@ export function NumberField({
 // Full-width action button for an inspector's "open a dialog" affordance
 // (e.g. pattern Browse…, image Convert to vector…). disabled gets its own
 // dimmed style since these fire before their target dialog exists yet.
-export function ActionButton({ className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
+export function ActionButton({
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       type="button"

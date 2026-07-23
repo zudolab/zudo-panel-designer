@@ -2,7 +2,7 @@
 // PCB fabrication data is mm-based, so mm is the single storage space;
 // px exists only at the render boundary (mm -> screen px via the camera).
 
-export type ColorIndex = 0 | 1 | 2; // 0=black(soldermask) 1=gold(copper/ENIG) 2=white(silkscreen)
+export type ColorIndex = 0 | 1 | 2; // 0=black(soldermask) 1=gold(copper/HASL finish) 2=white(silkscreen)
 
 export interface LayerBase {
   id: string;

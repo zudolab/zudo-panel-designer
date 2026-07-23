@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  createPcbLayerStack,
   PALETTE,
   PANEL_HEIGHT_MM,
   PANEL_THICKNESS_MM,
@@ -23,6 +24,7 @@ import {
   type PreviewGenerationTicket,
 } from './contracts';
 import { representativeSurfaceMapDoc } from './surface-maps.fixtures';
+import { projectFlatLayers } from '../flat-projection';
 import {
   PCB_SURFACE_MATERIALS,
   createPreviewSurfaceMapGenerator,
@@ -232,6 +234,70 @@ function topRectFillAt(calls: readonly CanvasCall[], x: number, y: number): stri
   return style;
 }
 
+function pathContains(path: RecordingPath2D, x: number, y: number): boolean {
+  const polygons: Array<Array<readonly [number, number]>> = [];
+  let polygon: Array<readonly [number, number]> = [];
+  for (const command of path.commands) {
+    if (command.method === 'moveTo') {
+      if (polygon.length > 0) polygons.push(polygon);
+      polygon = [[command.args[0], command.args[1]]];
+    } else if (command.method === 'bezierCurveTo') {
+      polygon.push([command.args[4], command.args[5]]);
+    } else if (command.method === 'closePath' && polygon.length > 0) {
+      polygons.push(polygon);
+      polygon = [];
+    }
+  }
+  if (polygon.length > 0) polygons.push(polygon);
+
+  let crossings = 0;
+  for (const points of polygons) {
+    let inside = false;
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const [xi, yi] = points[i];
+      const [xj, yj] = points[j];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    if (inside) crossings += 1;
+  }
+  return crossings % 2 === 1;
+}
+
+function topMaterialAt(calls: readonly CanvasCall[], x: number, y: number): string | null {
+  let pendingRect: readonly number[] | null = null;
+  let style: string | null = null;
+  const contains = (rect: readonly number[]) =>
+    x > rect[0] && x < rect[0] + rect[2] && y > rect[1] && y < rect[1] + rect[3];
+  for (const call of calls) {
+    if (call.method === 'beginPath') pendingRect = null;
+    if (call.method === 'rect' && call.args.every((arg) => typeof arg === 'number')) {
+      pendingRect = call.args as number[];
+    }
+    if (
+      call.method === 'fillRect' &&
+      call.args.every((arg) => typeof arg === 'number') &&
+      contains(call.args as number[])
+    ) {
+      style = call.fillStyle;
+    }
+    if (call.method === 'fill' && call.args.length === 0 && pendingRect) {
+      if (contains(pendingRect)) style = call.fillStyle;
+      pendingRect = null;
+    }
+    if (
+      call.method === 'fill' &&
+      call.args[0] instanceof RecordingPath2D &&
+      call.args[1] === 'evenodd' &&
+      pathContains(call.args[0], x, y)
+    ) {
+      style = call.fillStyle;
+    }
+  }
+  return style;
+}
+
 const originalPath2D = globalThis.Path2D;
 
 beforeEach(() => {
@@ -290,6 +356,119 @@ describe('PCB surface material classification', () => {
 });
 
 describe('createPreviewSurfaceMapGenerator', () => {
+  it('composes fixed materials identically across base color and scalar maps', () => {
+    const artwork = {
+      copper: [
+        {
+          id: 'copper',
+          name: 'Copper',
+          type: 'shape' as const,
+          shape: 'rect' as const,
+          x: 2,
+          y: 2,
+          width: 30,
+          height: 20,
+          color: 0 as const, // stale on purpose
+        },
+        {
+          id: 'image',
+          name: 'Reference image',
+          type: 'image' as const,
+          src: 'data:image/png;base64,fixture',
+          x: 2,
+          y: 2,
+          width: 30,
+          height: 20,
+        },
+      ],
+      mask: [
+        {
+          id: 'mask',
+          name: 'Mask with opening',
+          type: 'path' as const,
+          points: [
+            { x: 8, y: 2 },
+            { x: 32, y: 2 },
+            { x: 32, y: 22 },
+            { x: 8, y: 22 },
+          ],
+          extraSubpaths: [
+            [
+              { x: 12, y: 6 },
+              { x: 16, y: 6 },
+              { x: 16, y: 12 },
+              { x: 12, y: 12 },
+            ],
+          ],
+          closed: true,
+          fill: 2 as const, // stale on purpose
+          stroke: null,
+          strokeWidth: 0,
+        },
+      ],
+      silk: [
+        {
+          id: 'silk',
+          name: 'Silk',
+          type: 'shape' as const,
+          shape: 'rect' as const,
+          x: 24,
+          y: 2,
+          width: 6,
+          height: 6,
+          color: 1 as const, // stale on purpose
+        },
+      ],
+    };
+    const generate = (hidden: { mask?: boolean; silk?: boolean } = {}) => {
+      const stack = createPcbLayerStack({
+        copper: artwork.copper,
+        'solder-mask': artwork.mask,
+        silkscreen: artwork.silk,
+      });
+      if (hidden.mask) stack[1] = { ...stack[1], hidden: true };
+      if (hidden.silk) stack[2] = { ...stack[2], hidden: true };
+      const recording = recordingCanvasFactory();
+      const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+      const snapshot = generator.generate({
+        doc: { panelHp: 8, layers: stack },
+        ticket: ticket(21),
+        preferredPixelsPerMm: 1,
+        maximumTextureSizePx: 512,
+      });
+      generator.close();
+      return snapshot;
+    };
+    const samples = [
+      { point: [4, 4] as const, material: 1 as const }, // copper only
+      { point: [10, 4] as const, material: 0 as const }, // mask over copper
+      { point: [14, 8] as const, material: 1 as const }, // even-odd opening
+      { point: [26, 4] as const, material: 2 as const }, // silk over mask
+    ];
+
+    const visible = generate();
+    for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
+      const canvas = visible.maps[mapName].source as unknown as RecordingCanvas;
+      for (const sample of samples) {
+        expect(topMaterialAt(canvas.calls, sample.point[0], sample.point[1])).toBe(
+          surfaceMapColorForPalette(mapName, sample.material),
+        );
+      }
+      expect(canvas.calls.some((call) => call.method === 'drawImage')).toBe(false);
+    }
+
+    const maskHidden = generate({ mask: true });
+    const silkHidden = generate({ silk: true });
+    for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
+      expect(
+        topMaterialAt((maskHidden.maps[mapName].source as unknown as RecordingCanvas).calls, 10, 4),
+      ).toBe(surfaceMapColorForPalette(mapName, 1));
+      expect(
+        topMaterialAt((silkHidden.maps[mapName].source as unknown as RecordingCanvas).calls, 26, 4),
+      ).toBe(surfaceMapColorForPalette(mapName, 0));
+    }
+  });
+
   it('sizes every map within the runtime cap and returns exact physical/orientation metadata', () => {
     const doc = representativeSurfaceMapDoc();
     const before = JSON.stringify(doc);
@@ -478,7 +657,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
     const session = openPreviewGenerationSession(1);
     const first = session.initialGeneration;
     const snapshot = generator.generate({
-      doc: { panelHp: 4, layers: [] },
+      doc: { panelHp: 4, layers: createPcbLayerStack() },
       ticket: first,
       maximumTextureSizePx: 128,
     });
@@ -511,7 +690,9 @@ describe('createPreviewSurfaceMapGenerator', () => {
     });
     const doc: Pick<DocState, 'panelHp' | 'layers'> = {
       panelHp: 4,
-      layers: [text('first', 'First Font'), text('second', 'Second Font')],
+      layers: createPcbLayerStack({
+        silkscreen: [text('first', 'First Font'), text('second', 'Second Font')],
+      }),
     };
     const onFontReadyRevision = vi.fn();
     const recording = recordingCanvasFactory();
@@ -559,12 +740,12 @@ describe('createPreviewSurfaceMapGenerator', () => {
     };
 
     generator.generate({
-      doc: { panelHp: 4, layers: [layer] },
+      doc: { panelHp: 4, layers: createPcbLayerStack({ silkscreen: [layer] }) },
       ticket: ticket(4),
       maximumTextureSizePx: 128,
     });
     generator.generate({
-      doc: { panelHp: 4, layers: [] },
+      doc: { panelHp: 4, layers: createPcbLayerStack() },
       ticket: ticket(5),
       maximumTextureSizePx: 128,
     });
@@ -601,7 +782,9 @@ describe('createPreviewSurfaceMapGenerator', () => {
     generator.generate({
       doc: {
         panelHp: 4,
-        layers: [layer('late', 'Late Font', 2), layer('closed', 'Closed Font', 12)],
+        layers: createPcbLayerStack({
+          silkscreen: [layer('late', 'Late Font', 2), layer('closed', 'Closed Font', 12)],
+        }),
       },
       ticket: ticket(6),
       maximumTextureSizePx: 128,
@@ -629,7 +812,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
 
     expect(() =>
       generator.generate({
-        doc: { panelHp: 4, layers: [] },
+        doc: { panelHp: 4, layers: createPcbLayerStack() },
         ticket: ticket(8),
         maximumTextureSizePx: 128,
       }),
@@ -640,7 +823,10 @@ describe('createPreviewSurfaceMapGenerator', () => {
 
 describe('fixture sanity', () => {
   it('keeps the simple overlap samples away from antialiased boundaries', () => {
-    const layers = representativeSurfaceMapDoc().layers.slice(0, 3) as ShapeLayer[];
+    const projected = projectFlatLayers(representativeSurfaceMapDoc().layers);
+    const layers = ['gold-base', 'black-over-gold', 'white-over-black'].map((id) =>
+      projected.find((layer) => layer.id === id)!,
+    ) as ShapeLayer[];
     expect(layers.map((layer) => layer.color)).toEqual([1, 0, 2]);
     expect(layers.every((layer) => layer.shape === 'rect' && !layer.rotation)).toBe(true);
   });
@@ -663,20 +849,25 @@ describe('flat projection parity (#150)', () => {
       color: 2,
     });
     const leaves = [rect('s1', 4), rect('s2', 20), rect('s3', 36)];
-    const flatDoc: DocState = { panelHp: 12, guides: [], layers: [...leaves] };
+    const flatDoc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ silkscreen: [...leaves] }),
+    };
     const groupedLayers: LayerNode[] = [
       leaves[0],
       {
         kind: 'group',
         id: 'g1',
         name: 'G1',
-        children: [
-          leaves[1],
-          { kind: 'group', id: 'g2', name: 'G2', children: [leaves[2]] },
-        ],
+        children: [leaves[1], { kind: 'group', id: 'g2', name: 'G2', children: [leaves[2]] }],
       },
     ];
-    const groupedDoc: DocState = { panelHp: 12, guides: [], layers: groupedLayers };
+    const groupedDoc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ silkscreen: groupedLayers }),
+    };
 
     const run = (doc: DocState) => {
       const recording = recordingCanvasFactory();
