@@ -3,7 +3,13 @@
 // DOM/canvas access, no id minting of its own (see BuildPathLayersOptions.makeId)
 // -- fully deterministic for identical inputs, so a live dialog preview can
 // call this on every keystroke of the color-mapping UI without side effects.
-import { snapToGrid, type ColorIndex, type PathLayer, type PathPoint } from '@zpd/core';
+import {
+  pcbLayerRoleForColor,
+  snapToGrid,
+  type ColorIndex,
+  type PathLayer,
+  type PathPoint,
+} from '@zpd/core';
 import type { IrContour, SvgAnalysis, SvgImportDiagnostic, SvgViewport } from './types';
 
 // MAX_TRACE_LAYERS precedent in svg-to-path-layers.ts -- same ceiling, but
@@ -177,22 +183,40 @@ export function buildPathLayers(
     }
   }
 
-  if (layers.length > MAX_LAYERS) {
+  // A fixed physical container cannot represent a path whose fill and stroke
+  // map to different materials. Preserve both source mappings by splitting
+  // that paint pair into independently routable ordinary paths; the SVG
+  // dialog's preview uses this exact output too.
+  const materialized = layers.flatMap((layer) => {
+    if (
+      layer.fill !== null &&
+      layer.stroke !== null &&
+      pcbLayerRoleForColor(layer.fill) !== pcbLayerRoleForColor(layer.stroke)
+    ) {
+      return [
+        { ...layer, stroke: null, strokeWidth: 0 },
+        { ...layer, id: opts.makeId('svg'), fill: null },
+      ];
+    }
+    return [layer];
+  });
+
+  if (materialized.length > MAX_LAYERS) {
     return fatal(
       'too-many-layers',
-      `SVG produces ${layers.length} layers, exceeding the ${MAX_LAYERS} import limit.`,
+      `SVG produces ${materialized.length} layers, exceeding the ${MAX_LAYERS} import limit.`,
     );
   }
 
   // A sane scale is not enough: extreme-but-finite source coordinates (an
   // overflowing transform composition, a huge stroke-width) still overflow to
   // Infinity/NaN once projected. Same refusal as the degenerate scale above.
-  if (!layers.every(isFiniteLayer)) {
+  if (!materialized.every(isFiniteLayer)) {
     return fatal(
       'non-finite-geometry',
       'SVG projects to non-finite coordinates and cannot be imported.',
     );
   }
 
-  return { ok: true, layers };
+  return { ok: true, layers: materialized };
 }

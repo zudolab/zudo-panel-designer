@@ -454,6 +454,31 @@ describe('buildPathLayers -- injected id purity/determinism', () => {
   });
 });
 
+describe('buildPathLayers -- material fan-out (#167)', () => {
+  it('splits differently-mapped fill and stroke into independently routable paths', () => {
+    const shape: IrShape = {
+      name: 'two-materials',
+      fillHex: '#111111',
+      strokeHex: '#222222',
+      strokeWidth: 1,
+      contours: [
+        { closed: true, points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }] },
+      ],
+    };
+    const result = buildPathLayers(
+      analysis({ shapes: [shape], sourceColors: ['#111111', '#222222'] }),
+      baseOpts({ colorMappings: { '#111111': GOLD, '#222222': RED } }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.layers).toHaveLength(2);
+    expect(result.layers).toEqual([
+      expect.objectContaining({ fill: GOLD, stroke: null, strokeWidth: 0 }),
+      expect.objectContaining({ fill: null, stroke: RED, strokeWidth: expect.any(Number) }),
+    ]);
+  });
+});
+
 describe('buildPathLayers -- serialize round trip', () => {
   it('produced layers survive a parsePanelConfig round trip', () => {
     const shapes: IrShape[] = [

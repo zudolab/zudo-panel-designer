@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createDefaultDoc,
   flattenLayerNodes,
+  insertPcbNode,
   isGroupNode,
   MAX_GROUP_DEPTH,
   type DocState,
@@ -249,6 +250,41 @@ describe('useClipboard — copy/cut', () => {
 
     act(() => result.current.handleCut());
     expect(ctx.commit).not.toHaveBeenCalled();
+  });
+});
+
+describe('useClipboard — v3 material envelope (#167)', () => {
+  it('round-trips mixed-material maximal roots without serializing PCB containers', () => {
+    const copper = { ...shapeLayer, id: 'v3-copper', color: 1 };
+    const silk = { ...textLayer, id: 'v3-silk', color: 2 };
+    let doc = createDefaultDoc();
+    doc = { ...doc, layers: insertPcbNode(doc.layers, 'copper', copper) };
+    doc = { ...doc, layers: insertPcbNode(doc.layers, 'silkscreen', silk) };
+    const ctx = createCtx(doc, [copper.id, silk.id]);
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const { result } = renderHook(() => useClipboard(ctx));
+
+    act(() => result.current.handleCopy());
+    const envelope = JSON.parse(writeText.mock.calls[0]![0]);
+    expect(envelope.version).toBe(3);
+    expect(envelope.layers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ material: 'copper', node: expect.objectContaining({ id: copper.id }) }),
+        expect.objectContaining({ material: 'silkscreen', node: expect.objectContaining({ id: silk.id }) }),
+      ]),
+    );
+    expect(envelope.layers.some((entry: { node: { kind?: string } }) => entry.node.kind === 'pcb-layer')).toBe(false);
+
+    act(() => dispatchPaste(window));
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const cloneRoles = ctx.selectedIds.map((id) => {
+      for (const container of ctx.doc.layers) {
+        if (flattenLayerNodes(container.children).some((node) => node.id === id)) return container.role;
+      }
+      return null;
+    });
+    expect(cloneRoles).toEqual(['copper', 'silkscreen']);
   });
 });
 

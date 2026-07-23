@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import './text'; // registers 'text' as a side effect
 import { getTool } from '../registry/tools';
 import { DEFAULT_FONT_FAMILY } from '../fonts';
-import type { DocState, Pt, TextLayer } from '@zpd/core';
+import { createDefaultDoc, type DocState, Pt, TextLayer } from '@zpd/core';
 import type { PanelDims, ToolContext, ToolPointerEvent } from '../types';
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
@@ -100,5 +100,16 @@ describe('text tool — click to place', () => {
     const committed = vi.mocked(ctx.commit).mock.calls[0][0];
     expect(committed.layers).toHaveLength(2);
     expect(committed.layers[0]).toBe(existing);
+  });
+});
+
+describe('text tool — material destination (#167)', () => {
+  it('places text inside Silkscreen rather than at the document root', () => {
+    const ctx = stubCtx(createDefaultDoc());
+    text.onPointerDown?.(ptr({ x: 12, y: 24 }), ctx);
+    const committed = vi.mocked(ctx.commit).mock.calls[0]![0];
+    expect(committed.layers[2].children).toEqual([
+      expect.objectContaining({ type: 'text', color: 2 }),
+    ]);
   });
 });

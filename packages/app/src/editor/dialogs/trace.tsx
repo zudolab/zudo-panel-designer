@@ -9,7 +9,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   rectCenter,
-  replaceNodeWithNodes,
+  deletePcbNodeById,
+  insertPcbNode,
+  pcbLayerRoleForColor,
   rotatePoint,
   type DocState,
   type ImageLayer,
@@ -55,19 +57,25 @@ export function bakeImageRotation(traced: PathLayer[], layer: ImageLayer): PathL
 }
 
 // Pure apply step, exported for unit tests: hides the source raster and
-// splices the traced vectors in DIRECTLY ABOVE it, inside its CURRENT parent
-// (#150 — replaceNodeWithNodes keeps a group-nested image's trace result in
-// the same group, where the old root findIndex/slice insert would have
-// mangled the root array for a nested source).
+// moves the source into hidden Copper design-reference storage, then routes
+// each traced vector to the physical material inferred from its palette fill.
+// The all-or-nothing local build keeps the user-visible operation atomic.
 export function insertTracedPaths(
   doc: DocState,
   source: ImageLayer,
   traced: PathLayer[],
 ): DocState {
-  return {
-    ...doc,
-    layers: replaceNodeWithNodes(doc.layers, source.id, [{ ...source, hidden: true }, ...traced]),
-  };
+  const withoutSource = deletePcbNodeById(doc.layers, source.id);
+  let layers = insertPcbNode(withoutSource, 'copper', { ...source, hidden: true });
+  if (layers === withoutSource) return doc;
+  for (const path of traced) {
+    const color = path.fill ?? path.stroke;
+    if (color === null) return doc;
+    const inserted = insertPcbNode(layers, pcbLayerRoleForColor(color), path);
+    if (inserted === layers) return doc;
+    layers = inserted;
+  }
+  return { ...doc, layers };
 }
 
 interface TraceDialogProps {
@@ -145,7 +153,7 @@ function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
     );
     if (traced.length === 0) return;
     // one commit = one undo entry: hide the source raster, insert the traced
-    // vectors directly above it (within its current parent), select the first
+    // vectors into their mapped material containers, select the first
     ctx.commit(insertTracedPaths(ctx.doc, layer, traced));
     ctx.select(traced[0].id);
     close();

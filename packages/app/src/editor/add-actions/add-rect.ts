@@ -1,4 +1,4 @@
-import { mintId, snapToGrid, type ShapeLayer } from '@zpd/core';
+import { insertPcbNode, mintId, snapToGrid, type ShapeLayer } from '@zpd/core';
 import { registerAddAction } from '../registry/add-actions';
 
 registerAddAction({
@@ -17,7 +17,7 @@ registerAddAction({
       height: 16,
       color: 1,
     };
-    ctx.commit({ ...ctx.doc, layers: [...ctx.doc.layers, layer] });
+    ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'copper', layer) });
     ctx.select(layer.id);
   },
 });

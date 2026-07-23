@@ -2,7 +2,7 @@
 // point, then hand off to select so the freshly placed text is immediately
 // draggable/resizable/editable — same "create, select, done" shape as
 // add-rect.ts's toolbar action, just driven by a canvas click instead.
-import { mintId, type TextLayer } from '@zpd/core';
+import { insertPcbNode, mintId, type TextLayer } from '@zpd/core';
 import { registerTool } from '../registry/tools';
 import { DEFAULT_FONT_FAMILY, ensureFont } from '../fonts';
 import type { ToolContext, ToolPointerEvent } from '../types';
@@ -31,7 +31,7 @@ registerTool({
       y: e.mm.y,
       color: 2, // white — the silkscreen layer this tool is meant for
     };
-    ctx.commit({ ...ctx.doc, layers: [...ctx.doc.layers, layer] });
+    ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'silkscreen', layer) });
     ctx.setActiveTool('select');
     ctx.select(layer.id);
     // The renderer's canonical geometry owns readiness invalidation.
