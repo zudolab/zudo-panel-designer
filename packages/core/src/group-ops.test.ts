@@ -11,6 +11,7 @@ import {
   findPcbNodeById,
   insertPcbNode,
   mapLeavesById,
+  mapPcbLeavesById,
   maxSubtreeDepth,
   maximalSelectedRoots,
   moveNodeToParent,
@@ -476,6 +477,17 @@ describe('mapLeavesById', () => {
   it('returns the same reference when none of the ids match', () => {
     const tree: LayerNode[] = [shape('a')];
     expect(mapLeavesById(tree, ['missing'], (leaf) => leaf)).toBe(tree);
+  });
+});
+
+describe('mapPcbLeavesById', () => {
+  it('updates matching leaves under their fixed material roots without touching containers', () => {
+    const stack = createPcbLayerStack({ copper: [shape('copper')], silkscreen: [shape('silk')] });
+    const next = mapPcbLeavesById(stack, ['silk'], (leaf) => ({ ...leaf, name: 'Silk' }));
+    expect(next[0]).toBe(stack[0]);
+    expect(next[1]).toBe(stack[1]);
+    expect(next[2]).not.toBe(stack[2]);
+    expect(next[2].children[0]).toMatchObject({ id: 'silk', name: 'Silk' });
   });
 });
 

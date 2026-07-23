@@ -27,10 +27,14 @@ export function bridge(page: Page) {
     getDoc: () => page.evaluate(() => window.__zpdTest!.getDoc()),
     getHistory: () => page.evaluate(() => window.__zpdTest!.getHistory()),
     getLayers: () => page.evaluate(() => window.__zpdTest!.getLayers()),
+    getMaterialLayers: () => page.evaluate(() => window.__zpdTest!.getMaterialLayers()),
+    getMaterialLayer: (id: string) =>
+      page.evaluate((layerId) => window.__zpdTest!.getMaterialLayer(layerId), id),
     // Raw tree structure (#150/#158's primary group-structure assertion
     // surface) — see ZpdTestLayerTreeNode in test-bridge.ts. Distinct from
     // getLayers() (the flat leaf projection) and getLayerCount() (leaf count).
     getLayerTree: () => page.evaluate(() => window.__zpdTest!.getLayerTree()),
+    getPcbLayerStack: () => page.evaluate(() => window.__zpdTest!.getPcbLayerStack()),
     getLayerCount: () => page.evaluate(() => window.__zpdTest!.getLayerCount()),
     getPanelHp: () => page.evaluate(() => window.__zpdTest!.getPanelHp()),
     getSelectedId: () => page.evaluate(() => window.__zpdTest!.getSelectedId()),

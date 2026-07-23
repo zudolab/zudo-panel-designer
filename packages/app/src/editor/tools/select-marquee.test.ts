@@ -13,7 +13,6 @@ import {
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
-  flattenLayerNodes,
   redo as coreRedo,
   replace as coreReplace,
   reset as coreReset,
@@ -30,6 +29,7 @@ import { normalizeSelectedIds } from '../selection';
 import type { DraftRenderContext, PanelDims, ToolContext, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
 import { projectFlatLayers } from '../flat-projection';
+import { canonicalDoc, type DocFixture } from '../test-doc';
 import { resetTextGeometryForTests, setTextMeasureForTests } from '../text-geometry';
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
@@ -59,14 +59,13 @@ const dotGrid: PatternLayer = {
   size: 128.5,
 };
 
-function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
-  let history: HistoryState<DocState> = createHistory(initialDoc);
+function makeHarness(initialFixture: DocFixture, camera: Camera = IDENTITY) {
+  let history: HistoryState<DocState> = createHistory(canonicalDoc(initialFixture));
   let selectedIds: readonly string[] = [];
   let beginGestureCalls = 0;
   let repaintCalls = 0;
 
-  const readSelectedIds = () =>
-    normalizeSelectedIds(selectedIds, flattenLayerNodes(history.present.layers));
+  const readSelectedIds = () => normalizeSelectedIds(selectedIds, history.present.layers);
   const readSelectedId = () => {
     const ids = readSelectedIds();
     return ids.length === 1 ? ids[0] : null;
@@ -93,7 +92,9 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
       return readSelectedId();
     },
     get selectedLayer() {
-      return flattenLayerNodes(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
+      return (
+        projectFlatLayers(history.present.layers).find((l) => l.id === readSelectedId()) ?? null
+      );
     },
     get flatLayers() {
       return projectFlatLayers(history.present.layers);
@@ -164,7 +165,8 @@ function makeHarness(initialDoc: DocState, camera: Camera = IDENTITY) {
     getBeginGestureCalls: () => beginGestureCalls,
     getRepaintCalls: () => repaintCalls,
     getSelectedIds: () => readSelectedIds(),
-    layerById: (id: string) => history.present.layers.find((l) => l.id === id) as Layer,
+    layerById: (id: string) =>
+      projectFlatLayers(history.present.layers).find((l) => l.id === id) as Layer,
   };
 }
 
@@ -279,7 +281,7 @@ describe('marquee hit math', () => {
 });
 
 describe('marquee gesture', () => {
-  const threeRects = (): DocState => ({
+  const threeRects = (): DocFixture => ({
     panelHp: 12,
     guides: [],
     layers: [dotGrid, rect('r1', 10, 10), rect('r2', 30, 10), rect('r3', 10, 40)],
@@ -396,7 +398,7 @@ describe('marquee gesture', () => {
 });
 
 describe('modifier clicks on layers', () => {
-  const doc = (): DocState => ({
+  const doc = (): DocFixture => ({
     panelHp: 12,
     guides: [],
     layers: [rect('r1', 10, 10), rect('r2', 30, 10)],
@@ -460,7 +462,7 @@ describe('click-vs-drag threshold (4 CSS px, client space)', () => {
 });
 
 describe('hover', () => {
-  const doc = (): DocState => ({
+  const doc = (): DocFixture => ({
     panelHp: 12,
     guides: [],
     layers: [rect('r1', 10, 10), rect('r2', 30, 10)],

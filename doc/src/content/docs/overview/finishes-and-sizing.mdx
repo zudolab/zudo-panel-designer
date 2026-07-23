@@ -16,6 +16,27 @@ A zpd panel is a real PCB, and its visual "colors" are actual fabrication layers
 
 This palette is fixed — there is no fourth color and no custom-color mode. See [The 3-color palette](../document-model/palette.mdx) for the exact color indexes and hex values used in the editor.
 
+## Fixed material stack
+
+The physical board is built bottom to top: **Copper → Solder mask →
+Silkscreen**. The Layers UI intentionally reads in the opposite visual
+direction, top to bottom: **Silkscreen → Solder mask → Copper**.
+
+Those three entries are fixed containers, not ordinary groups. They cannot be
+renamed, deleted, grouped, selected, or reordered. Ordinary nested groups
+still work inside a container, and moving artwork between containers changes
+its effective material. Copper is the requested gold/HASL finish, Solder mask
+is black, and Silkscreen is white—even if imported legacy children carry a
+misleading color field.
+
+Solder-mask artwork is **positive coverage**: painted mask covers copper;
+absence of mask and holes in an even-odd path reveal the copper below.
+
+<Info>
+This material model is groundwork for future Gerber output. zpd does not yet
+export Gerber files.
+</Info>
+
 ## Panel width: HP
 
 Panel width is specified in **HP**, the Eurorack-style horizontal-pitch unit. zpd does not compute width as a simple `HP * 5.08mm` multiple — real Takazudo Modular panels are undersized against that nominal pitch for mounting clearance, so each supported HP has its own measured width. See [Panel sizing](../document-model/panel-sizing.mdx) for the full width table.

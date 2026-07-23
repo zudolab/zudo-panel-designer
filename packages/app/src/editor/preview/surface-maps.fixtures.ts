@@ -32,6 +32,17 @@ export function representativeSurfaceMapDoc(): DocState {
           size: 12,
         },
         {
+          id: 'copper-reveal-base',
+          name: 'Copper under mask opening',
+          type: 'shape',
+          shape: 'rect',
+          x: 2,
+          y: 30,
+          width: 20,
+          height: 20,
+          color: 0, // deliberately stale
+        },
+        {
           id: 'rotated-ellipse',
           name: 'Rotated ellipse',
           type: 'shape',
@@ -89,22 +100,9 @@ export function representativeSurfaceMapDoc(): DocState {
           height: 12,
           color: 2, // deliberately stale
         },
-      ],
-      silkscreen: [
         {
-          id: 'white-over-black',
-          name: 'White over black',
-          type: 'shape',
-          shape: 'rect',
-          x: 12,
-          y: 12,
-          width: 4,
-          height: 4,
-          color: 0, // deliberately stale
-        },
-        {
-          id: 'evenodd-path',
-          name: 'Even-odd path with stroke',
+          id: 'mask-opening',
+          name: 'Positive mask with copper reveal',
           type: 'path',
           points: [
             { x: 2, y: 30 },
@@ -121,9 +119,22 @@ export function representativeSurfaceMapDoc(): DocState {
             ],
           ],
           closed: true,
-          fill: 0, // deliberately stale
+          fill: 2, // deliberately stale
           stroke: 1, // deliberately stale
           strokeWidth: 0.8,
+        },
+      ],
+      silkscreen: [
+        {
+          id: 'white-over-black',
+          name: 'White over black',
+          type: 'shape',
+          shape: 'rect',
+          x: 12,
+          y: 12,
+          width: 4,
+          height: 4,
+          color: 0, // deliberately stale
         },
         {
           id: 'rotated-text',

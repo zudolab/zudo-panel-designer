@@ -29,13 +29,14 @@ import { normalizeSelectedIds } from '../selection';
 import type { PanelDims, ToolContext, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
 import { projectFlatLayers } from '../flat-projection';
+import { canonicalDoc, type DocFixture } from '../test-doc';
 import { resetTextGeometryForTests } from '../text-geometry';
 
 const CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 }; // identity: screen px == mm
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
-function makeHarness(initialDoc: DocState) {
-  let history: HistoryState<DocState> = createHistory(initialDoc);
+function makeHarness(initialFixture: DocFixture) {
+  let history: HistoryState<DocState> = createHistory(canonicalDoc(initialFixture));
   let selectedIds: readonly string[] = [];
   let beginGestureCalls = 0;
 
@@ -62,7 +63,9 @@ function makeHarness(initialDoc: DocState) {
       return readSelectedId();
     },
     get selectedLayer() {
-      return projectFlatLayers(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
+      return (
+        projectFlatLayers(history.present.layers).find((l) => l.id === readSelectedId()) ?? null
+      );
     },
     get flatLayers() {
       return projectFlatLayers(history.present.layers);
@@ -153,7 +156,7 @@ const group = (id: string, children: LayerNode[], hidden = false): GroupNode => 
 });
 
 // G[a(10,10), b(50,40)] + ungrouped c(10,60)
-const groupedDoc = (): DocState => ({
+const groupedDoc = (): DocFixture => ({
   panelHp: 20,
   guides: [],
   layers: [group('G', [rectAt('a', 10, 10), rectAt('b', 50, 40)]), rectAt('c', 10, 60)],
@@ -176,7 +179,7 @@ describe('promotion click (#151)', () => {
   });
 
   it('a click on a leaf nested TWO levels down still promotes to the topmost group', () => {
-    const doc: DocState = {
+    const doc: DocFixture = {
       panelHp: 20,
       guides: [],
       layers: [group('outer', [group('inner', [rectAt('deep', 10, 10)])])],
@@ -207,7 +210,7 @@ describe('promotion click (#151)', () => {
     expect(leafById('a')).toMatchObject({ x: 10, y: 10 });
     expect(leafById('b')).toMatchObject({ x: 50, y: 40 });
     // the group SURVIVES the move — the write was tree-preserving
-    expect(isGroupNode(getHistory().present.layers[0])).toBe(true);
+    expect(isGroupNode(getHistory().present.layers[0].children[0]!)).toBe(true);
   });
 
   it('group-vs-equivalent-flat-selection move parity: the same shared snapped delta', () => {
@@ -376,7 +379,7 @@ describe('Alt-duplicate clones whole subtrees per maximal root (#151)', () => {
     select.onPointerMove?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx); // crossing: clone + move
     select.onPointerUp?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
 
-    const layers = getHistory().present.layers;
+    const layers = getHistory().present.layers[0].children;
     expect(layers).toHaveLength(3); // [G, G-clone, c]
     const original = layers[0] as GroupNode;
     const clone = layers[1] as GroupNode;
@@ -397,7 +400,7 @@ describe('Alt-duplicate clones whole subtrees per maximal root (#151)', () => {
     expect(getBeginGestureCalls()).toBe(1);
     expect(getHistory().past).toHaveLength(1);
     ctx.undo();
-    expect(getHistory().present.layers).toHaveLength(2);
+    expect(getHistory().present.layers[0].children).toHaveLength(2);
   });
 
   it('an overlapping [group, descendant] selection pre-collapses to maximal roots — ONE clone', () => {
@@ -408,7 +411,7 @@ describe('Alt-duplicate clones whole subtrees per maximal root (#151)', () => {
     select.onPointerMove?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
     select.onPointerUp?.(ptr({ x: 25, y: 20 }), ctx);
 
-    const layers = getHistory().present.layers;
+    const layers = getHistory().present.layers[0].children;
     expect(layers).toHaveLength(3); // [G, G-clone, c] — a was NOT cloned separately
     expect(layers.filter((n) => isGroupNode(n))).toHaveLength(2);
   });
@@ -421,7 +424,7 @@ describe('Alt-duplicate clones whole subtrees per maximal root (#151)', () => {
     select.onPointerMove?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
     select.onPointerUp?.(ptr({ x: 25, y: 20 }), ctx);
 
-    const g = getHistory().present.layers[0] as GroupNode;
+    const g = getHistory().present.layers[0].children[0] as GroupNode;
     expect(g.children).toHaveLength(3); // [a, a-clone, b] — clone directly above its source
     expect(g.children[0].id).toBe('a');
     const cloneId = g.children[1].id;
@@ -433,13 +436,13 @@ describe('Alt-duplicate clones whole subtrees per maximal root (#151)', () => {
 });
 
 describe('hidden groups swallow no grabs (#151)', () => {
-  const hiddenGroupDoc = (): DocState => ({
+  const hiddenGroupDoc = (): DocFixture => ({
     panelHp: 20,
     guides: [],
     layers: [group('H', [rectAt('e', 10, 10)], true), rectAt('c', 10, 60)],
   });
 
-  it('a click on a hidden group\'s leaf falls through to empty space', () => {
+  it("a click on a hidden group's leaf falls through to empty space", () => {
     const { ctx, getHistory } = makeHarness(hiddenGroupDoc());
     ctx.selectIds(['c']);
 
@@ -460,8 +463,8 @@ describe('hidden groups swallow no grabs (#151)', () => {
     expect(ctx.selectedIds).toEqual(['c']);
   });
 
-  it('a leaf UNDER a hidden group\'s leaf is hittable — the folded-hidden layer is transparent', () => {
-    const doc: DocState = {
+  it("a leaf UNDER a hidden group's leaf is hittable — the folded-hidden layer is transparent", () => {
+    const doc: DocFixture = {
       panelHp: 20,
       guides: [],
       layers: [rectAt('under', 10, 10), group('H', [rectAt('cover', 10, 10)], true)],
@@ -488,7 +491,7 @@ describe('pattern member of a selected group (#97 × #151)', () => {
       y: 0,
       size: 100,
     };
-    const doc: DocState = {
+    const doc: DocFixture = {
       panelHp: 20,
       guides: [],
       layers: [group('G', [pattern, rectAt('a', 10, 10)])],

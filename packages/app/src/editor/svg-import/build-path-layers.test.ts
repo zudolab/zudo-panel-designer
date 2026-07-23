@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PANEL_HP,
+  createPcbLayerStack,
   panelWidthMm,
   parsePanelConfig,
   serializePanelConfig,
@@ -11,6 +12,7 @@ import {
   type PathLayer,
 } from '@zpd/core';
 import { buildPathLayers, type BuildPathLayersOptions } from './build-path-layers';
+import { projectFlatLayers } from '../flat-projection';
 import type { IrShape, SvgAnalysis } from './types';
 
 function analysis(overrides: Partial<SvgAnalysis> = {}): SvgAnalysis {
@@ -311,11 +313,11 @@ describe('buildPathLayers -- paint mapping and stroke width', () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const layer = result.layers[0];
-    expect(layer.fill).toBe(RED);
-    expect(layer.stroke).toBe(GOLD);
+    expect(result.layers).toHaveLength(2);
+    expect(result.layers[0]).toMatchObject({ fill: RED, stroke: null, strokeWidth: 0 });
+    expect(result.layers[1]).toMatchObject({ fill: null, stroke: GOLD });
     const scale = Math.min((0.8 * 60) / 100, (0.5 * 128.5) / 100);
-    expect(layer.strokeWidth).toBeCloseTo(2 * scale, 9);
+    expect(result.layers[1].strokeWidth).toBeCloseTo(2 * scale, 9);
   });
 
   it('zeroes strokeWidth when stroke paint is null', () => {
@@ -462,7 +464,14 @@ describe('buildPathLayers -- material fan-out (#167)', () => {
       strokeHex: '#222222',
       strokeWidth: 1,
       contours: [
-        { closed: true, points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }] },
+        {
+          closed: true,
+          points: [
+            { x: 0, y: 0 },
+            { x: 10, y: 0 },
+            { x: 10, y: 10 },
+          ],
+        },
       ],
     };
     const result = buildPathLayers(
@@ -509,12 +518,18 @@ describe('buildPathLayers -- serialize round trip', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    const doc: DocState = { panelHp: DEFAULT_PANEL_HP, layers: result.layers, guides: [] };
+    const doc: DocState = {
+      panelHp: DEFAULT_PANEL_HP,
+      layers: createPcbLayerStack({
+        copper: result.layers.filter((layer) => layer.fill === GOLD || layer.stroke === GOLD),
+        'solder-mask': result.layers.filter((layer) => layer.fill === RED || layer.stroke === RED),
+      }),
+      guides: [],
+    };
     const serialized = serializePanelConfig(doc);
     const roundTripped = JSON.parse(JSON.stringify(serialized));
     const parsed = parsePanelConfig(roundTripped);
 
-    expect(parsed.layers).toHaveLength(result.layers.length);
-    expect(parsed.layers as PathLayer[]).toEqual(result.layers);
+    expect(projectFlatLayers(parsed.layers) as PathLayer[]).toEqual(projectFlatLayers(doc.layers));
   });
 });

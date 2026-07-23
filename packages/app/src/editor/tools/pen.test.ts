@@ -46,7 +46,7 @@ import {
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
-  flattenLayerNodes,
+  createPcbLayerStack,
   redo as coreRedo,
   replace as coreReplace,
   reset as coreReset,
@@ -65,14 +65,17 @@ const CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 }; // identity: scre
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
 function makeHarness(onActiveToolChange?: (id: string) => void) {
-  let history: HistoryState<DocState> = createHistory({ panelHp: 12, guides: [], layers: [] });
+  let history: HistoryState<DocState> = createHistory({
+    panelHp: 12,
+    guides: [],
+    layers: createPcbLayerStack(),
+  });
   let selectedIds: readonly string[] = [];
   let activeToolId = 'pen';
   let repaintCalls = 0;
 
   // Same derivation the Editor performs (see Editor.tsx / selection.ts).
-  const readSelectedIds = () =>
-    normalizeSelectedIds(selectedIds, flattenLayerNodes(history.present.layers));
+  const readSelectedIds = () => normalizeSelectedIds(selectedIds, history.present.layers);
   const readSelectedId = () => {
     const ids = readSelectedIds();
     return ids.length === 1 ? ids[0] : null;
@@ -95,7 +98,9 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
       return readSelectedId();
     },
     get selectedLayer() {
-      return flattenLayerNodes(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
+      return (
+        projectFlatLayers(history.present.layers).find((l) => l.id === readSelectedId()) ?? null
+      );
     },
     get flatLayers() {
       return projectFlatLayers(history.present.layers);
@@ -148,7 +153,8 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
     getSelectedId: () => readSelectedId(),
     getActiveToolId: () => activeToolId,
     getRepaintCalls: () => repaintCalls,
-    layerById: (id: string) => history.present.layers.find((l) => l.id === id) as PathLayer,
+    layerById: (id: string) =>
+      projectFlatLayers(history.present.layers).find((l) => l.id === id) as PathLayer,
   };
 }
 
@@ -359,11 +365,13 @@ describe('pen tool — hint root lifecycle and semantic rendering', () => {
 
     expect(first.getHistory().past).toHaveLength(0);
     expect(latest.getHistory().past).toHaveLength(1);
-    expect(latest.getHistory().present.layers[0]).toMatchObject({
+    expect(projectFlatLayers(latest.getHistory().present.layers)[0]).toMatchObject({
       type: 'path',
       closed: false,
     });
-    expect(latest.getSelectedId()).toBe(latest.getHistory().present.layers[0].id);
+    expect(latest.getSelectedId()).toBe(
+      projectFlatLayers(latest.getHistory().present.layers)[0]?.id,
+    );
     expect(latest.getActiveToolId()).toBe('select');
   });
 
@@ -465,7 +473,7 @@ describe('pen tool — gestures commit exactly one undo entry', () => {
     // so renderDraft/the hint bar stay in sync with the module-scope draft
     expect(getRepaintCalls()).toBe(4);
     expect(getHistory().past).toHaveLength(1); // one commit for the whole draw
-    expect(getHistory().present.layers).toHaveLength(1);
+    expect(projectFlatLayers(getHistory().present.layers)).toHaveLength(1);
     const layer = layerById(getSelectedId()!);
     expect(layer).toMatchObject({ closed: true, fill: 1, stroke: null });
     expect(layer.points).toHaveLength(3);

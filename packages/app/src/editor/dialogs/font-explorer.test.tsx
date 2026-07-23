@@ -5,6 +5,7 @@
 // pagination sentinel by hand. Card fonts therefore stay in their fallback
 // face — we assert wiring (filtering, paging, apply, favorites), not glyphs.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPcbLayerStack } from '@zpd/core';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { DocState, Pt, TextLayer } from '@zpd/core';
 import type { GoogleFontEntry } from '../data/google-fonts-types';
@@ -141,7 +142,11 @@ const textLayer: TextLayer = {
 };
 
 function renderDialog(overrides: Partial<ToolContext> = {}, close = vi.fn()) {
-  const doc: DocState = { panelHp: 12, guides: [], layers: [textLayer] };
+  const doc: DocState = {
+    panelHp: 12,
+    guides: [],
+    layers: createPcbLayerStack({ silkscreen: [textLayer] }),
+  };
   const ctx = stubCtx({ doc, ...overrides });
   const Dialog = getDialogComponent();
   render(<Dialog props={{ layerId: 't1' }} close={close} ctx={ctx} />);
@@ -305,7 +310,7 @@ describe('font-explorer dialog', () => {
 
       expect(ctx.commit).toHaveBeenCalledTimes(1);
       const nextDoc = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
-      expect(nextDoc.layers[0]).toMatchObject({ id: 't1', fontFamily: family });
+      expect(projectFlatLayers(nextDoc.layers)[0]).toMatchObject({ id: 't1', fontFamily: family });
       expect(ensureFontMock).toHaveBeenCalledWith(family, 'Hello');
       expect(ctx.requestRepaint).not.toHaveBeenCalled();
       expect(close).toHaveBeenCalledTimes(1);
@@ -319,7 +324,7 @@ describe('font-explorer dialog', () => {
       const doc: DocState = {
         panelHp: 12,
         guides: [],
-        layers: [{ ...textLayer, fontFamily: 'ABeeZee' }],
+        layers: createPcbLayerStack({ silkscreen: [{ ...textLayer, fontFamily: 'ABeeZee' }] }),
       };
       const ctx = stubCtx({ doc });
       const close = vi.fn();
@@ -343,7 +348,7 @@ describe('font-explorer dialog', () => {
       const doc: DocState = {
         panelHp: 12,
         guides: [],
-        layers: [{ ...textLayer, fontFamily: 'ABeeZee' }],
+        layers: createPcbLayerStack({ silkscreen: [{ ...textLayer, fontFamily: 'ABeeZee' }] }),
       };
       const Dialog = getDialogComponent();
       render(<Dialog props={{ layerId: 't1' }} close={vi.fn()} ctx={stubCtx({ doc })} />);

@@ -103,7 +103,7 @@ describe('legacy autosave promotion', () => {
     const originalSetItem = window.localStorage.setItem.bind(window.localStorage);
     vi.spyOn(window.localStorage.__proto__, 'setItem').mockImplementation((key, value) => {
       if (key === DOC_STORAGE_KEY) throw new DOMException('full', 'QuotaExceededError');
-      originalSetItem(key, value);
+      if (typeof key === 'string' && typeof value === 'string') originalSetItem(key, value);
     });
 
     expect(readDoc()).toBeNull();

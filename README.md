@@ -34,6 +34,22 @@ there too but dispatched by their own dedicated code.
 Full behavior is covered in the
 [doc site](https://doc-zudo-panel-designer.takazudomodular.com/).
 
+## PCB material layers
+
+Every document has three fixed fabrication containers. Physically they build
+from bottom to top as **Copper → Solder mask → Silkscreen**; the Layers UI
+shows that same stack top to bottom as **Silkscreen → Solder mask → Copper**.
+Container membership, rather than an object's old color field, determines the
+effective finish: Copper is exposed **gold/HASL** copper, Solder mask is black,
+and Silkscreen is white. Solder-mask artwork is positive coverage; omitted
+areas and even-odd path holes reveal copper beneath it.
+
+The three roots cannot be renamed, deleted, grouped, selected, or reordered.
+Ordinary groups remain available inside each material and objects can move
+between containers to change material. Panel JSON is v5; older v1–v4 files
+migrate into the fixed stack on import. This is a foundation for future Gerber
+output—zpd does not currently export Gerbers.
+
 ## Monorepo layout
 
 - `packages/core` (`@zpd/core`) — document model, geometry/ops/history. No UI.

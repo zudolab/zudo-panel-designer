@@ -10,6 +10,7 @@
 // against the real package); defaultParams is mocked since the fake
 // generators aren't in the real registry it looks up.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPcbLayerStack } from '@zpd/core';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { DocState, Pt } from '@zpd/core';
 import type { PanelPatternGenerator } from '@zpd/patterns';
@@ -91,7 +92,7 @@ afterEach(() => {
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    doc: { panelHp: 12, guides: [], layers: [] },
+    doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     selectedIds: [],
@@ -120,7 +121,7 @@ function getPatternPickerDialog() {
 }
 
 function renderDialog(overrides: Partial<ToolContext> = {}, close = vi.fn()) {
-  const doc: DocState = { panelHp: 12, guides: [], layers: [] };
+  const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
   const ctx = stubCtx({ doc, ...overrides });
   const Dialog = getPatternPickerDialog();
   const view = render(<Dialog props={{}} close={close} ctx={ctx} />);

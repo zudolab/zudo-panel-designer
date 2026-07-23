@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import '../registry';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPcbLayerStack } from '@zpd/core';
+import { projectFlatLayers } from '../flat-projection';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { DocState, Pt } from '@zpd/core';
 import { closeDialog, openDialog } from '../registry/dialogs';
@@ -16,7 +18,7 @@ afterEach(() => {
 // Returns a CommandContext: Header only reads the ToolContext subset, but
 // DialogHost's ctx prop is CommandContext, so the shared stub must satisfy it.
 function stubCtx(overrides: Partial<CommandContext> = {}): CommandContext {
-  const doc: DocState = { panelHp: 12, guides: [], layers: [] };
+  const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
   return {
     doc,
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
@@ -140,6 +142,6 @@ describe('Header', () => {
     const [nextDoc] = (ctx.reset as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(nextDoc.panelHp).toBe(12); // DEFAULT_PANEL_HP
     expect(ctx.selectIds).toHaveBeenCalledWith([]);
-    expect(ctx.evictImageCache).toHaveBeenCalledWith(nextDoc.layers);
+    expect(ctx.evictImageCache).toHaveBeenCalledWith(projectFlatLayers(nextDoc.layers));
   });
 });

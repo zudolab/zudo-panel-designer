@@ -11,16 +11,16 @@
 // handler, before the Editor's live doc ref has synced, so eager filtering
 // would wrongly drop the fresh id (same staleness rule the existing live-ref
 // getters already follow — see Editor.tsx).
-import { walkLayerNodes, type LayerNode } from '@zpd/core';
+import { walkPcbLayerNodes, type PcbLayerStack } from '@zpd/core';
 
 export function normalizeSelectedIds(
   ids: readonly string[],
-  nodes: readonly LayerNode[],
+  stack: PcbLayerStack,
 ): readonly string[] {
   if (ids.length === 0) return [];
   const wanted = new Set(ids);
   const result: string[] = [];
-  walkLayerNodes(nodes as LayerNode[], (node) => {
+  walkPcbLayerNodes(stack, (node) => {
     if (wanted.has(node.id)) result.push(node.id);
   });
   return result;

@@ -4,19 +4,44 @@
 // pointer lifecycle is covered in tools/select-multi-rotate.test.ts.
 import { describe, expect, it } from 'vitest';
 import {
+  createPcbLayerStack,
   flattenLayerNodes,
   type GroupNode,
   type Layer,
   type LayerNode,
   type PathLayer,
+  type PcbLayerStack,
   type ShapeLayer,
 } from '@zpd/core';
 import {
-  bakeMultiRotate,
-  captureMultiRotateSession,
+  bakeMultiRotate as bakePcbMultiRotate,
+  captureMultiRotateSession as capturePcbMultiRotateSession,
   snapRotateDelta,
   unwrapRotateDelta,
 } from './multi-rotate';
+import { projectFlatLayers } from './flat-projection';
+
+function pcb(tree: LayerNode[] | PcbLayerStack): PcbLayerStack {
+  return tree.length === 3 && tree.every((node) => 'kind' in node && node.kind === 'pcb-layer')
+    ? (tree as PcbLayerStack)
+    : createPcbLayerStack({ copper: tree as LayerNode[] });
+}
+
+function captureMultiRotateSession(
+  tree: LayerNode[] | PcbLayerStack,
+  ids: readonly string[],
+  flat: readonly Layer[],
+) {
+  return capturePcbMultiRotateSession(pcb(tree), ids, flat);
+}
+
+function bakeMultiRotate(
+  tree: LayerNode[] | PcbLayerStack,
+  session: NonNullable<ReturnType<typeof capturePcbMultiRotateSession>>,
+  delta: number,
+): PcbLayerStack {
+  return bakePcbMultiRotate(pcb(tree), session, delta);
+}
 
 const shape = (id: string, x: number, y: number, extra: Partial<ShapeLayer> = {}): ShapeLayer => ({
   id,
@@ -127,7 +152,7 @@ describe('bakeMultiRotate (#152 re-bake-from-start)', () => {
 
   it('orbits each member center about the frozen pivot and folds the delta into rotation', () => {
     const session = capture();
-    const baked = flattenLayerNodes(bakeMultiRotate(tree, session, 90));
+    const baked = projectFlatLayers(bakeMultiRotate(tree, session, 90));
     // a: center (15,15) about pivot (25,15) by 90° cw → (25, 5) → x 20, y 0.
     expect(baked[0]).toMatchObject({ id: 'a', rotation: 90 });
     expect((baked[0] as ShapeLayer).x).toBeCloseTo(20);
@@ -157,13 +182,13 @@ describe('bakeMultiRotate (#152 re-bake-from-start)', () => {
     const t: LayerNode[] = [shape('a', 10, 10), shape('b', 30, 10, { rotation: 33.34 })];
     const session = captureMultiRotateSession(t, ['a', 'b'], flattenLayerNodes(t))!;
     const forward = bakeMultiRotate(t, session, 137.2);
-    expect(bakeMultiRotate(forward, session, 0)).toEqual(t);
+    expect(bakeMultiRotate(forward, session, 0)).toEqual(pcb(t));
   });
 
   it('bakes a path by rotating its point geometry (no rotation field invented)', () => {
     const t: LayerNode[] = [path('p'), shape('a', 10, 20)];
     const session = captureMultiRotateSession(t, ['p', 'a'], flattenLayerNodes(t))!;
-    const baked = flattenLayerNodes(bakeMultiRotate(t, session, 90));
+    const baked = projectFlatLayers(bakeMultiRotate(t, session, 90));
     const p = baked[0] as PathLayer;
     expect('rotation' in p).toBe(false);
     expect(p.points[0].x).not.toBeCloseTo(10); // geometry actually moved
@@ -172,7 +197,7 @@ describe('bakeMultiRotate (#152 re-bake-from-start)', () => {
   it('leaves a selected pattern member completely unchanged', () => {
     const t: LayerNode[] = [pattern('g', 0, 0, 100), shape('a', 10, 10)];
     const session = captureMultiRotateSession(t, ['g', 'a'], flattenLayerNodes(t))!;
-    const baked = flattenLayerNodes(bakeMultiRotate(t, session, 45));
+    const baked = projectFlatLayers(bakeMultiRotate(t, session, 45));
     expect(baked[0]).toEqual(flattenLayerNodes(t)[0]);
   });
 
@@ -189,8 +214,8 @@ describe('bakeMultiRotate (#152 re-bake-from-start)', () => {
       ['G'],
       flattenLayerNodes(groupedTree),
     )!;
-    expect(flattenLayerNodes(bakeMultiRotate(groupedTree, groupSession, 67.5))).toEqual(
-      flattenLayerNodes(bakeMultiRotate(flatTree, flatSession, 67.5)),
+    expect(projectFlatLayers(bakeMultiRotate(groupedTree, groupSession, 67.5))).toEqual(
+      projectFlatLayers(bakeMultiRotate(flatTree, flatSession, 67.5)),
     );
   });
 });

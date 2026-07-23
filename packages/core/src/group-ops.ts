@@ -441,6 +441,25 @@ export function mapLeavesById(
   return mapLeavesByIdSet(tree, new Set(ids), mapper);
 }
 
+// Fixed PCB roots are structural containers, not editable ordinary groups.
+// This companion keeps document writes inside their children while preserving
+// the ordinary-tree mapper above for fragments and clipboard payloads.
+export function mapPcbLeavesById(
+  stack: PcbLayerStack,
+  ids: readonly string[],
+  mapper: (leaf: Layer) => Layer,
+): PcbLayerStack {
+  if (ids.length === 0) return stack;
+  let touched = false;
+  const next = stack.map((container) => {
+    const children = mapLeavesById(container.children, ids, mapper);
+    if (children === container.children) return container;
+    touched = true;
+    return { ...container, children };
+  });
+  return (touched ? next : stack) as PcbLayerStack;
+}
+
 function mapLeavesByIdSet(
   tree: LayerNode[],
   wanted: ReadonlySet<string>,
