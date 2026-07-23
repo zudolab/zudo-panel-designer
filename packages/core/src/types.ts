@@ -99,6 +99,28 @@ export interface GroupNode {
 
 export type LayerNode = Layer | GroupNode;
 
+export type PcbLayerRole = 'copper' | 'solder-mask' | 'silkscreen';
+
+// The three physical material roots are structural document containers, not
+// ordinary groups. They deliberately have a distinct discriminator and no
+// mutable name/material metadata. Core constants are the authority for those
+// fields; persistence only stores role, hidden, and ordinary children.
+export interface PcbLayerContainer<R extends PcbLayerRole = PcbLayerRole> {
+  kind: 'pcb-layer';
+  id: `pcb-layer-${R}`;
+  role: R;
+  children: LayerNode[];
+  hidden?: boolean;
+}
+
+// Persisted bottom-to-top physical order. Runtime parsing/factories enforce
+// this tuple even when serialized input is missing, duplicated, or reordered.
+export type PcbLayerStack = [
+  PcbLayerContainer<'copper'>,
+  PcbLayerContainer<'solder-mask'>,
+  PcbLayerContainer<'silkscreen'>,
+];
+
 export type GuideOrientation = 'horizontal' | 'vertical';
 
 // A ruler guide: an infinite straight line in document space.
@@ -115,7 +137,7 @@ export interface Guide {
 
 export interface DocState {
   panelHp: number;
-  layers: LayerNode[]; // bottom -> top (index 0 renders first); flatten to Layer[] at read boundaries
+  layers: PcbLayerStack;
   // Required (never optional): read sites stay clean (no `doc.guides ?? []`),
   // and the serialization boundary owns backward-compat (old configs -> []).
   guides: Guide[];
