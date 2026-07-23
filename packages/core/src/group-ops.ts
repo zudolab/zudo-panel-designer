@@ -13,9 +13,16 @@
 // Reference shape: pgen's packages/core/src/layer-group-ops.ts, minus its
 // opacity/positionOffset/locked/colorTweak concerns — zpd groups are
 // structure + `hidden` only (see GroupNode in types.ts).
-import { isGroupNode } from './layer-nodes';
+import { isGroupNode, MAX_GROUP_DEPTH, normalizeLayerNodeMaterial } from './layer-nodes';
 import { cloneLayer } from './layer-ops';
-import type { GroupNode, Layer, LayerNode } from './types';
+import type {
+  GroupNode,
+  Layer,
+  LayerNode,
+  PcbLayerContainer,
+  PcbLayerRole,
+  PcbLayerStack,
+} from './types';
 import { mintId } from './types';
 
 // ─── Read helpers ───────────────────────────────────────────────────────────
@@ -27,7 +34,11 @@ export interface FoundNode {
   pathIds: string[];
 }
 
-export function findNodeById(tree: LayerNode[], id: string, pathIds: string[] = []): FoundNode | null {
+export function findNodeById(
+  tree: LayerNode[],
+  id: string,
+  pathIds: string[] = [],
+): FoundNode | null {
   for (const node of tree) {
     if (node.id === id) return { node, pathIds };
     if (isGroupNode(node)) {
@@ -212,7 +223,11 @@ export interface GroupNodesResult {
 // The new group is inserted AT THE TOP LEVEL, at the top-level slot of the
 // first selected root in DFS order (i.e. bottommost in z of the selection).
 // Selected roots keep their relative DFS order as the new group's children.
-export function groupNodes(tree: LayerNode[], ids: readonly string[], name: string): GroupNodesResult {
+export function groupNodes(
+  tree: LayerNode[],
+  ids: readonly string[],
+  name: string,
+): GroupNodesResult {
   const rootIds = maximalSelectedRoots(tree, ids);
   if (rootIds.length === 0) return { tree, group: null };
 
@@ -385,7 +400,11 @@ export function renameById(tree: LayerNode[], id: string, name: string): LayerNo
 // Group structure is preserved; if `id` resolves to a group node the tree is
 // returned unchanged (this op is scoped to leaves). Returns the SAME `tree`
 // reference when `id` is not found or resolves to a group.
-export function updateLeafById(tree: LayerNode[], id: string, updater: (leaf: Layer) => Layer): LayerNode[] {
+export function updateLeafById(
+  tree: LayerNode[],
+  id: string,
+  updater: (leaf: Layer) => Layer,
+): LayerNode[] {
   let touched = false;
   const next: LayerNode[] = [];
   for (const node of tree) {
@@ -410,7 +429,11 @@ export function updateLeafById(tree: LayerNode[], id: string, updater: (leaf: La
 // Batch form of updateLeafById: applies `mapper` to every leaf whose id is in
 // `ids`, anywhere in the tree, in one pass. Returns the SAME `tree` reference
 // when `ids` is empty or none of them match a leaf.
-export function mapLeavesById(tree: LayerNode[], ids: readonly string[], mapper: (leaf: Layer) => Layer): LayerNode[] {
+export function mapLeavesById(
+  tree: LayerNode[],
+  ids: readonly string[],
+  mapper: (leaf: Layer) => Layer,
+): LayerNode[] {
   if (ids.length === 0) return tree;
   // Built once here, not per recursive call (codex review, #148) — a tree
   // with many groups would otherwise reconstruct the same Set at every
@@ -449,7 +472,11 @@ function mapLeavesByIdSet(
 // trace needs to insert generated path layers beside the source image
 // inside its parent (group or top level). Returns the SAME `tree` reference
 // when `id` is not found.
-export function replaceNodeWithNodes(tree: LayerNode[], id: string, nodes: LayerNode[]): LayerNode[] {
+export function replaceNodeWithNodes(
+  tree: LayerNode[],
+  id: string,
+  nodes: LayerNode[],
+): LayerNode[] {
   let touched = false;
   const next: LayerNode[] = [];
   for (const node of tree) {
@@ -469,4 +496,252 @@ export function replaceNodeWithNodes(tree: LayerNode[], id: string, nodes: Layer
     next.push(node);
   }
   return touched ? next : tree;
+}
+
+// ─── Fixed PCB-stack operations ────────────────────────────────────────────
+
+export interface FoundPcbNode extends FoundNode {
+  role: PcbLayerRole;
+  container: PcbLayerContainer;
+}
+
+export function findPcbNodeById(stack: PcbLayerStack, id: string): FoundPcbNode | null {
+  for (const container of stack) {
+    const found = findNodeById(container.children, id);
+    if (found) return { ...found, role: container.role, container };
+  }
+  return null;
+}
+
+export function getPcbLayer(stack: PcbLayerStack, role: PcbLayerRole): PcbLayerContainer {
+  return stack.find((container) => container.role === role)!;
+}
+
+function replacePcbChildren(
+  stack: PcbLayerStack,
+  role: PcbLayerRole,
+  children: LayerNode[],
+): PcbLayerStack {
+  const index = stack.findIndex((container) => container.role === role);
+  const current = stack[index];
+  if (current.children === children) return stack;
+  const next = stack.slice() as PcbLayerStack;
+  next[index] = { ...current, children } as PcbLayerStack[typeof index];
+  return next;
+}
+
+function collectNodeIds(node: LayerNode, ids: string[]): void {
+  ids.push(node.id);
+  if (isGroupNode(node)) {
+    for (const child of node.children) collectNodeIds(child, ids);
+  }
+}
+
+function canAdmitPcbNodes(
+  stack: PcbLayerStack,
+  nodes: readonly LayerNode[],
+  excludedIds: ReadonlySet<string> = new Set(),
+): boolean {
+  const used = new Set<string>(stack.map((container) => container.id));
+  for (const container of stack) {
+    walkExisting(container.children);
+  }
+  function walkExisting(tree: LayerNode[]): void {
+    for (const node of tree) {
+      if (!excludedIds.has(node.id)) used.add(node.id);
+      if (isGroupNode(node)) walkExisting(node.children);
+    }
+  }
+  for (const node of nodes) {
+    const incoming: string[] = [];
+    collectNodeIds(node, incoming);
+    for (const id of incoming) {
+      if (used.has(id)) return false;
+      used.add(id);
+    }
+  }
+  return true;
+}
+
+function fitsGroupDepth(node: LayerNode, ancestorGroups: number): boolean {
+  if (!isGroupNode(node)) return true;
+  return ancestorGroups + maxSubtreeDepth(node) - 1 <= MAX_GROUP_DEPTH;
+}
+
+export function insertPcbNode(
+  stack: PcbLayerStack,
+  role: PcbLayerRole,
+  node: LayerNode,
+  parentId: string | null = null,
+  index = Number.MAX_SAFE_INTEGER,
+): PcbLayerStack {
+  const container = getPcbLayer(stack, role);
+  const parent = parentId === null ? null : findNodeById(container.children, parentId);
+  if (parentId !== null && (!parent || !isGroupNode(parent.node))) return stack;
+  const ancestorGroups = parent ? parent.pathIds.length + 1 : 0;
+  if (!fitsGroupDepth(node, ancestorGroups)) return stack;
+  if (!canAdmitPcbNodes(stack, [node])) return stack;
+  const normalized = normalizeLayerNodeMaterial(node, role);
+  const children = insertNodeAt(container.children, normalized, parentId, index);
+  return replacePcbChildren(stack, role, children);
+}
+
+export function deletePcbNodeById(stack: PcbLayerStack, id: string): PcbLayerStack {
+  const found = findPcbNodeById(stack, id);
+  if (!found) return stack;
+  return replacePcbChildren(stack, found.role, deleteNodeById(found.container.children, id));
+}
+
+export function updatePcbNodeById(
+  stack: PcbLayerStack,
+  id: string,
+  updater: (node: LayerNode) => LayerNode,
+): PcbLayerStack {
+  const found = findPcbNodeById(stack, id);
+  if (!found) return stack;
+  const replace = (tree: LayerNode[]): LayerNode[] => {
+    let changed = false;
+    const next = tree.map((node) => {
+      if (node.id === id) {
+        const updated = normalizeLayerNodeMaterial(updater(node), found.role);
+        if (updated === node) return node;
+        if (!fitsGroupDepth(updated, found.pathIds.length)) return node;
+        const removedIds: string[] = [];
+        collectNodeIds(node, removedIds);
+        if (!canAdmitPcbNodes(stack, [updated], new Set(removedIds))) return node;
+        changed = true;
+        return updated;
+      }
+      if (isGroupNode(node)) {
+        const children = replace(node.children);
+        if (children !== node.children) {
+          changed = true;
+          return { ...node, children };
+        }
+      }
+      return node;
+    });
+    return changed ? next : tree;
+  };
+  return replacePcbChildren(stack, found.role, replace(found.container.children));
+}
+
+export function replacePcbNodeWithNodes(
+  stack: PcbLayerStack,
+  id: string,
+  nodes: LayerNode[],
+): PcbLayerStack {
+  const found = findPcbNodeById(stack, id);
+  if (!found) return stack;
+  const normalized = nodes.map((node) => normalizeLayerNodeMaterial(node, found.role));
+  if (normalized.length === 1 && normalized[0] === found.node) return stack;
+  if (normalized.some((node) => !fitsGroupDepth(node, found.pathIds.length))) return stack;
+  const removedIds: string[] = [];
+  collectNodeIds(found.node, removedIds);
+  if (!canAdmitPcbNodes(stack, normalized, new Set(removedIds))) return stack;
+  return replacePcbChildren(
+    stack,
+    found.role,
+    replaceNodeWithNodes(found.container.children, id, normalized),
+  );
+}
+
+export function movePcbNode(
+  stack: PcbLayerStack,
+  id: string,
+  targetRole: PcbLayerRole,
+  parentId: string | null,
+  index: number,
+): PcbLayerStack {
+  const found = findPcbNodeById(stack, id);
+  if (!found) return stack;
+
+  const target = getPcbLayer(stack, targetRole);
+  if (parentId !== null) {
+    const targetParent = findNodeById(target.children, parentId);
+    if (!targetParent || !isGroupNode(targetParent.node)) return stack;
+    if (isGroupNode(found.node) && findNodeById([found.node], parentId)) return stack;
+  }
+  const targetParent = parentId === null ? null : findNodeById(target.children, parentId);
+  const ancestorGroups = targetParent ? targetParent.pathIds.length + 1 : 0;
+  if (!fitsGroupDepth(found.node, ancestorGroups)) return stack;
+
+  if (found.role === targetRole) {
+    const moved = moveNodeToParent(found.container.children, id, parentId, index);
+    return replacePcbChildren(stack, found.role, moved);
+  }
+
+  const sourceChildren = deleteNodeById(found.container.children, id);
+  const afterRemoval = replacePcbChildren(stack, found.role, sourceChildren);
+  return insertPcbNode(afterRemoval, targetRole, found.node, parentId, index);
+}
+
+export interface ClonePcbNodeResult {
+  stack: PcbLayerStack;
+  node: LayerNode | null;
+}
+
+export function clonePcbNode(
+  stack: PcbLayerStack,
+  id: string,
+  parentId?: string | null,
+  index?: number,
+): ClonePcbNodeResult {
+  const found = findPcbNodeById(stack, id);
+  if (!found) return { stack, node: null };
+  const node = cloneNodeWithFreshIds(found.node);
+  const sourceLocation = locateNode(found.container.children, id);
+  const destinationParent = parentId === undefined ? (sourceLocation?.parentId ?? null) : parentId;
+  const destinationIndex =
+    index ?? (sourceLocation ? sourceLocation.index + 1 : Number.MAX_SAFE_INTEGER);
+  return {
+    stack: insertPcbNode(stack, found.role, node, destinationParent, destinationIndex),
+    node,
+  };
+}
+
+export interface GroupPcbNodesResult {
+  stack: PcbLayerStack;
+  group: GroupNode | null;
+}
+
+export function groupPcbNodes(
+  stack: PcbLayerStack,
+  ids: readonly string[],
+  name: string,
+): GroupPcbNodesResult {
+  const roots = ids.map((id) => findPcbNodeById(stack, id)).filter((found) => found !== null);
+  if (roots.length === 0) return { stack, group: null };
+  const role = roots[0].role;
+  if (roots.some((found) => found.role !== role)) return { stack, group: null };
+  const container = getPcbLayer(stack, role);
+  const maximalIds = maximalSelectedRoots(container.children, ids);
+  if (
+    maximalIds.some((id) => {
+      const node = findNodeById(container.children, id)?.node;
+      return node ? maxSubtreeDepth(node) > MAX_GROUP_DEPTH : false;
+    })
+  ) {
+    return { stack, group: null };
+  }
+  const grouped = groupNodes(container.children, ids, name);
+  return {
+    stack: replacePcbChildren(stack, role, grouped.tree),
+    group: grouped.group,
+  };
+}
+
+export function ungroupPcbNode(stack: PcbLayerStack, id: string): PcbLayerStack {
+  const found = findPcbNodeById(stack, id);
+  if (!found || !isGroupNode(found.node)) return stack;
+  return replacePcbChildren(stack, found.role, ungroupGroupById(found.container.children, id));
+}
+
+export function togglePcbLayerHidden(stack: PcbLayerStack, role: PcbLayerRole): PcbLayerStack {
+  const index = stack.findIndex((container) => container.role === role);
+  if (index < 0) return stack;
+  const next = stack.slice() as PcbLayerStack;
+  const container = stack[index];
+  next[index] = { ...container, hidden: !container.hidden } as PcbLayerStack[typeof index];
+  return next;
 }

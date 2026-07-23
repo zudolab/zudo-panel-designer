@@ -15,15 +15,36 @@ export type {
   PathLayer,
   PathPoint,
   PatternLayer,
+  PcbLayerContainer,
+  PcbLayerRole,
+  PcbLayerStack,
   ShapeLayer,
   TextLayer,
 } from './types';
 export { mintId } from './types';
 
-export { flattenLayerNodes, isGroupNode, MAX_GROUP_DEPTH, walkLayerNodes } from './layer-nodes';
+export {
+  flattenLayerNodes,
+  isGroupNode,
+  MAX_GROUP_DEPTH,
+  normalizeLayerMaterial,
+  normalizeLayerNodeMaterial,
+  projectPcbLayerStack,
+  walkLayerNodes,
+  walkPcbLayerNodes,
+} from './layer-nodes';
 
-export type { PaletteEntry } from './palette';
-export { PALETTE, paletteEntry } from './palette';
+export type { PaletteEntry, PcbLayerDefinition } from './palette';
+export {
+  createPcbLayerContainer,
+  createPcbLayerStack,
+  PALETTE,
+  paletteEntry,
+  PCB_LAYER_DEFINITIONS,
+  PCB_LAYER_ROLES,
+  pcbLayerDefinition,
+  pcbLayerRoleForColor,
+} from './palette';
 
 export type { PanelSize } from './panel-sizes';
 export {
@@ -34,9 +55,11 @@ export {
   panelWidthMm,
 } from './panel-sizes';
 
-export type { PanelConfig, TryParsePanelConfigResult } from './serialize';
+export type { MaterialLayerNode, PanelConfig, TryParsePanelConfigResult } from './serialize';
 export {
   PANEL_CONFIG_VERSION,
+  parseLayerNodeFragment,
+  parseLegacyLayerFragment,
   parsePanelConfig,
   serializePanelConfig,
   tryParsePanelConfig,

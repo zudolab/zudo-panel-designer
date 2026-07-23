@@ -6,14 +6,19 @@
 // Design goals (matching the reference):
 // - Never throws. writeDoc()/readDoc() absorb every error and return a
 //   tagged result or null; boot must never crash on a corrupt payload.
-// - readDoc() parses via serialize.ts's defensive parsePanelConfig, which
-//   itself never throws — a garbage `config` field yields the default doc
-//   rather than propagating an exception.
-import { parsePanelConfig, serializePanelConfig, type DocState } from '@zpd/core';
+// - readDoc() validates both envelopes before parsing. Unsupported/corrupt
+//   source bytes are retained and protected from generated-default autosave.
+import {
+  PANEL_CONFIG_VERSION,
+  serializePanelConfig,
+  tryParsePanelConfig,
+  type DocState,
+} from '@zpd/core';
 import { getStorage } from './safe-storage';
 
-export const DOC_STORAGE_KEY = 'zpd.doc.v1';
-export const DOC_STORAGE_VERSION = 1;
+export const DOC_STORAGE_KEY = 'zpd.doc.v2';
+export const LEGACY_DOC_STORAGE_KEY = 'zpd.doc.v1';
+export const DOC_STORAGE_VERSION = 2;
 
 export type WriteDocFailureReason = 'quota' | 'unavailable' | 'error';
 export type WriteDocResult = { ok: true } | { ok: false; reason: WriteDocFailureReason };
@@ -24,13 +29,46 @@ interface StoredDocPayload {
   config: unknown;
 }
 
+let protectedEntry: { key: string; raw: string } | null = null;
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 // SSR-safe read of the stored document. Returns null when there is no stored
-// entry, storage is unavailable, or the stored value is corrupt/unparseable —
-// the caller falls back to createDemoDoc() in every one of those cases.
+// entry, storage is unavailable, or the stored value is corrupt/unparseable.
+function readPayload(raw: string, expectedEnvelopeVersion: number): DocState | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (
+    !isPlainObject(parsed) ||
+    parsed.version !== expectedEnvelopeVersion ||
+    parsed.config === undefined
+  ) {
+    return null;
+  }
+  const config = parsed.config;
+  if (!isPlainObject(config)) return null;
+  if (expectedEnvelopeVersion === DOC_STORAGE_VERSION && config.version !== PANEL_CONFIG_VERSION) {
+    return null;
+  }
+  if (
+    expectedEnvelopeVersion === 1 &&
+    (typeof config.version !== 'number' ||
+      !Number.isInteger(config.version) ||
+      config.version < 1 ||
+      config.version >= PANEL_CONFIG_VERSION)
+  ) {
+    return null;
+  }
+  const result = tryParsePanelConfig(config);
+  return result.ok ? result.doc : null;
+}
+
 export function readDoc(): DocState | null {
   const storage = getStorage();
   if (!storage) return null;
@@ -41,24 +79,33 @@ export function readDoc(): DocState | null {
   } catch {
     return null;
   }
-  if (!raw) return null;
+  if (raw !== null) {
+    const doc = readPayload(raw, DOC_STORAGE_VERSION);
+    if (!doc) {
+      protectedEntry = { key: DOC_STORAGE_KEY, raw };
+      console.warn('[doc-store] Corrupt or unsupported payload at', DOC_STORAGE_KEY);
+    }
+    return doc;
+  }
 
-  let parsed: unknown;
+  let legacyRaw: string | null;
   try {
-    parsed = JSON.parse(raw);
+    legacyRaw = storage.getItem(LEGACY_DOC_STORAGE_KEY);
   } catch {
-    console.warn('[doc-store] Corrupt payload (invalid JSON) at', DOC_STORAGE_KEY);
+    return null;
+  }
+  if (legacyRaw === null) return null;
+  const legacyDoc = readPayload(legacyRaw, 1);
+  if (!legacyDoc) {
+    protectedEntry = { key: LEGACY_DOC_STORAGE_KEY, raw: legacyRaw };
+    console.warn('[doc-store] Corrupt or unsupported payload at', LEGACY_DOC_STORAGE_KEY);
     return null;
   }
 
-  if (!isPlainObject(parsed) || parsed.config === undefined) {
-    console.warn('[doc-store] Corrupt or unrecognised payload shape at', DOC_STORAGE_KEY);
-    return null;
-  }
-
-  // parsePanelConfig never throws — a malformed config field falls through
-  // to per-field defaults rather than sinking the whole boot.
-  return parsePanelConfig(parsed.config);
+  // Promotion is transactional from the reader's point of view: only expose
+  // the migrated document after its v5 envelope was persisted successfully.
+  const promoted = writeDoc(legacyDoc);
+  return promoted.ok ? legacyDoc : null;
 }
 
 // Persist the given document. Never throws — returns a tagged result so the
@@ -68,6 +115,16 @@ export function writeDoc(doc: DocState): WriteDocResult {
   const storage = getStorage();
   if (!storage) {
     return { ok: false, reason: 'unavailable' };
+  }
+  if (protectedEntry) {
+    try {
+      if (storage.getItem(protectedEntry.key) === protectedEntry.raw) {
+        return { ok: false, reason: 'error' };
+      }
+      protectedEntry = null;
+    } catch {
+      return { ok: false, reason: 'error' };
+    }
   }
 
   const payload: StoredDocPayload = {
@@ -107,6 +164,8 @@ export function clearDoc(): void {
   if (!storage) return;
   try {
     storage.removeItem(DOC_STORAGE_KEY);
+    storage.removeItem(LEGACY_DOC_STORAGE_KEY);
+    protectedEntry = null;
   } catch {
     // ignore
   }
