@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createPcbLayerStack } from '@zpd/core';
 import type { DocState, Guide } from '@zpd/core';
 import type { Camera } from './camera';
 import {
@@ -28,7 +29,7 @@ const v = (position: number, extra: Partial<Guide> = {}): Guide => ({
   ...extra,
 });
 
-const baseDoc = (guides: Guide[]): DocState => ({ panelHp: 12, layers: [], guides });
+const baseDoc = (guides: Guide[]): DocState => ({ panelHp: 12, layers: createPcbLayerStack(), guides });
 
 describe('guideScreenCoord', () => {
   it('maps a horizontal guide to a screen y (position*pxPerMm + offsetY)', () => {

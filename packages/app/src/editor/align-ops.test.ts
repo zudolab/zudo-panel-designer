@@ -5,7 +5,7 @@
 // silently re-hardcode 2/3 and drift from core's alignLayers/distributeLayers.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  flattenLayerNodes,
+  createPcbLayerStack,
   MIN_ALIGN_SELECTION,
   MIN_DISTRIBUTE_SELECTION,
   type DocState,
@@ -61,7 +61,11 @@ describe('rotated text uses canonical loaded bounds for alignment (#111)', () =>
       rotation: 90,
       color: 1,
     };
-    let doc: DocState = { panelHp: 20, guides: [], layers: [text] };
+    let doc: DocState = {
+      panelHp: 20,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [text] }),
+    };
     const commit = vi.fn((next: DocState) => {
       doc = next;
     });
@@ -77,7 +81,7 @@ describe('rotated text uses canonical loaded bounds for alignment (#111)', () =>
       requestRepaint: vi.fn(),
     } as unknown as ToolContext;
 
-    reconcileTextGeometry(flattenLayerNodes(doc.layers));
+    reconcileTextGeometry(projectFlatLayers(doc.layers));
     const aligned = layerAlignRect(text);
     expect(aligned.id).toBe(text.id);
     expect(aligned.x).toBeCloseTo(20);
@@ -86,12 +90,12 @@ describe('rotated text uses canonical loaded bounds for alignment (#111)', () =>
     expect(aligned.h).toBeCloseTo(60);
 
     applyAlign(ctx, [text.id], 'center-h', 'panel');
-    expect((doc.layers[0] as TextLayer).x).toBe(20);
-    expect((doc.layers[0] as TextLayer).y).toBe(20);
+    expect((projectFlatLayers(doc.layers)[0] as TextLayer).x).toBe(20);
+    expect((projectFlatLayers(doc.layers)[0] as TextLayer).y).toBe(20);
 
     applyAlign(ctx, [text.id], 'middle-v', 'panel');
-    expect((doc.layers[0] as TextLayer).x).toBe(20);
-    expect((doc.layers[0] as TextLayer).y).toBe(40);
+    expect((projectFlatLayers(doc.layers)[0] as TextLayer).x).toBe(20);
+    expect((projectFlatLayers(doc.layers)[0] as TextLayer).y).toBe(40);
     expect(commit).toHaveBeenCalledTimes(2);
   });
 });

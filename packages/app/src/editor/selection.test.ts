@@ -3,7 +3,7 @@
 // so these tests pin the contract — de-dupe, stale-id filtering, and
 // deterministic DOCUMENT order.
 import { describe, expect, it } from 'vitest';
-import type { Layer, LayerNode, ShapeLayer } from '@zpd/core';
+import { createPcbLayerStack, type Layer, type LayerNode, type ShapeLayer } from '@zpd/core';
 import { nextListSelection, normalizeSelectedIds } from './selection';
 
 function shape(id: string): ShapeLayer {
@@ -21,32 +21,33 @@ function shape(id: string): ShapeLayer {
 }
 
 const LAYERS: Layer[] = [shape('a'), shape('b'), shape('c'), shape('d')];
+const STACK = createPcbLayerStack({ copper: LAYERS });
 
 describe('normalizeSelectedIds', () => {
   it('de-duplicates repeated ids', () => {
-    expect(normalizeSelectedIds(['b', 'b', 'b'], LAYERS)).toEqual(['b']);
-    expect(normalizeSelectedIds(['a', 'b', 'a'], LAYERS)).toEqual(['a', 'b']);
+    expect(normalizeSelectedIds(['b', 'b', 'b'], STACK)).toEqual(['b']);
+    expect(normalizeSelectedIds(['a', 'b', 'a'], STACK)).toEqual(['a', 'b']);
   });
 
   it('filters ids not present in the doc (stale after a delete/undo)', () => {
-    expect(normalizeSelectedIds(['a', 'ghost', 'c'], LAYERS)).toEqual(['a', 'c']);
-    expect(normalizeSelectedIds(['ghost'], LAYERS)).toEqual([]);
+    expect(normalizeSelectedIds(['a', 'ghost', 'c'], STACK)).toEqual(['a', 'c']);
+    expect(normalizeSelectedIds(['ghost'], STACK)).toEqual([]);
   });
 
   it('returns DOCUMENT order, not click order', () => {
-    expect(normalizeSelectedIds(['d', 'a', 'c'], LAYERS)).toEqual(['a', 'c', 'd']);
-    expect(normalizeSelectedIds(['c', 'a', 'd'], LAYERS)).toEqual(['a', 'c', 'd']);
+    expect(normalizeSelectedIds(['d', 'a', 'c'], STACK)).toEqual(['a', 'c', 'd']);
+    expect(normalizeSelectedIds(['c', 'a', 'd'], STACK)).toEqual(['a', 'c', 'd']);
   });
 
   it('is deterministic for the same set regardless of input permutation', () => {
-    const expected = normalizeSelectedIds(['a', 'b', 'd'], LAYERS);
-    expect(normalizeSelectedIds(['d', 'b', 'a'], LAYERS)).toEqual(expected);
-    expect(normalizeSelectedIds(['b', 'd', 'a', 'b'], LAYERS)).toEqual(expected);
+    const expected = normalizeSelectedIds(['a', 'b', 'd'], STACK);
+    expect(normalizeSelectedIds(['d', 'b', 'a'], STACK)).toEqual(expected);
+    expect(normalizeSelectedIds(['b', 'd', 'a', 'b'], STACK)).toEqual(expected);
   });
 
   it('handles the empty selection and the empty doc', () => {
-    expect(normalizeSelectedIds([], LAYERS)).toEqual([]);
-    expect(normalizeSelectedIds(['a'], [])).toEqual([]);
+    expect(normalizeSelectedIds([], STACK)).toEqual([]);
+    expect(normalizeSelectedIds(['a'], createPcbLayerStack())).toEqual([]);
   });
 
   // #151: the selection may hold GROUP ids — they survive normalization and
@@ -58,13 +59,14 @@ describe('normalizeSelectedIds', () => {
       { kind: 'group', id: 'G', name: 'G', children: [shape('b'), shape('c')] },
       shape('d'),
     ];
-    expect(normalizeSelectedIds(['d', 'c', 'G', 'a'], tree)).toEqual(['a', 'G', 'c', 'd']);
-    expect(normalizeSelectedIds(['G'], tree)).toEqual(['G']);
-    expect(normalizeSelectedIds(['staleGroup', 'b'], tree)).toEqual(['b']);
+    const stack = createPcbLayerStack({ copper: tree });
+    expect(normalizeSelectedIds(['d', 'c', 'G', 'a'], stack)).toEqual(['a', 'G', 'c', 'd']);
+    expect(normalizeSelectedIds(['G'], stack)).toEqual(['G']);
+    expect(normalizeSelectedIds(['staleGroup', 'b'], stack)).toEqual(['b']);
   });
 
   it('passes a single valid id through unchanged (the 0/1 status quo)', () => {
-    expect(normalizeSelectedIds(['b'], LAYERS)).toEqual(['b']);
+    expect(normalizeSelectedIds(['b'], STACK)).toEqual(['b']);
   });
 });
 
@@ -75,7 +77,9 @@ describe('nextListSelection', () => {
   const shift = { shift: true, meta: false };
 
   it('plain click selects exactly one and sets the anchor', () => {
-    expect(nextListSelection({ selectedIds: ['a', 'b'], anchorId: 'a' }, ORDER, 'c', plain)).toEqual({
+    expect(
+      nextListSelection({ selectedIds: ['a', 'b'], anchorId: 'a' }, ORDER, 'c', plain),
+    ).toEqual({
       selectedIds: ['c'],
       anchorId: 'c',
     });
@@ -89,10 +93,12 @@ describe('nextListSelection', () => {
   });
 
   it('meta-click on a selected id toggles it off', () => {
-    expect(nextListSelection({ selectedIds: ['a', 'c'], anchorId: 'c' }, ORDER, 'a', meta)).toEqual({
-      selectedIds: ['c'],
-      anchorId: 'a',
-    });
+    expect(nextListSelection({ selectedIds: ['a', 'c'], anchorId: 'c' }, ORDER, 'a', meta)).toEqual(
+      {
+        selectedIds: ['c'],
+        anchorId: 'a',
+      },
+    );
   });
 
   it('shift-click selects the document-order range from the anchor, inclusive', () => {
@@ -133,7 +139,10 @@ describe('nextListSelection', () => {
 
   it('shift wins over meta when both modifiers are held', () => {
     expect(
-      nextListSelection({ selectedIds: ['a'], anchorId: 'a' }, ORDER, 'c', { shift: true, meta: true }),
+      nextListSelection({ selectedIds: ['a'], anchorId: 'a' }, ORDER, 'c', {
+        shift: true,
+        meta: true,
+      }),
     ).toEqual({ selectedIds: ['a', 'b', 'c'], anchorId: 'a' });
   });
 });

@@ -4,8 +4,10 @@
 // never fires Image onload/onerror for a data: URL — so the natural-size
 // probe is stubbed here to drive the async decode deterministically.
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPcbLayerStack } from '@zpd/core';
 import type { Pt } from '@zpd/core';
 import { importImageFile } from './import-image';
+import { projectFlatLayers } from './flat-projection';
 import type { ToolContext } from './types';
 
 function stubImageProbe(naturalWidth: number, naturalHeight: number) {
@@ -43,7 +45,7 @@ afterEach(() => {
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    doc: { panelHp: 12, guides: [], layers: [] },
+    doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     selectedIds: [],
@@ -79,9 +81,11 @@ describe('importImageFile', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(committed.layers).toHaveLength(1);
+    const layers = projectFlatLayers(committed.layers);
+    expect(layers).toHaveLength(1);
 
-    const layer = committed.layers[0];
+    const layer = layers[0];
+    if (layer?.type !== 'image') throw new Error('expected imported image layer');
     // regression parity with the pre-extraction add-image add-action: same
     // shape, same scale-to-fit math (maxW = 60*0.8 = 48, maxH = 128.5*0.5 =
     // 64.25; scale = min(48/400, 64.25/200, 1) = 0.12).
@@ -111,14 +115,17 @@ describe('importImageFile', () => {
       height: 5,
       color: 1 as const,
     };
-    const ctx = stubCtx({ doc: { panelHp: 12, guides: [], layers: [existing] } });
+    const ctx = stubCtx({
+      doc: { panelHp: 12, guides: [], layers: createPcbLayerStack({ copper: [existing] }) },
+    });
     const file = new File(['bytes'], 'a.png', { type: 'image/png' });
 
     await importImageFile(file, ctx);
 
     const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(committed.layers).toHaveLength(2);
-    expect(committed.layers[0]).toBe(existing);
+    const layers = projectFlatLayers(committed.layers);
+    expect(layers).toHaveLength(2);
+    expect(layers[0]).toBe(existing);
   });
 
   it('never grows an image beyond its natural size (scale caps at 1)', async () => {
@@ -128,7 +135,10 @@ describe('importImageFile', () => {
 
     await importImageFile(file, ctx);
 
-    const layer = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0].layers[0];
+    const layer = projectFlatLayers(
+      (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0].layers,
+    )[0];
+    if (layer?.type !== 'image') throw new Error('expected imported image layer');
     expect(layer.width).toBe(10);
     expect(layer.height).toBe(10);
   });

@@ -5,7 +5,13 @@
 // logic has its own behavioral tests (svg-import/route-import-file.test.ts)
 // and replaceDoc has its own (replace-doc.test.ts).
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PANEL_CONFIG_VERSION, serializePanelConfig, type DocState, type Pt } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  PANEL_CONFIG_VERSION,
+  serializePanelConfig,
+  type DocState,
+  type Pt,
+} from '@zpd/core';
 import { confirmDialog } from './components/confirm-dialog-api';
 import { importDroppedFile, importJsonFile, isImportableImageFile } from './import';
 import { replaceDoc } from './replace-doc';
@@ -24,7 +30,7 @@ afterEach(() => {
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    doc: { panelHp: 12, guides: [], layers: [] },
+    doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     selectedIds: [],
@@ -67,7 +73,7 @@ describe('isImportableImageFile', () => {
     expect(isImportableImageFile(jsonFile({}))).toBe(false);
   });
 
-  it('accepts a file with no extension and no MIME type, deferring to classifyImportFile\'s content sniff (#143)', () => {
+  it("accepts a file with no extension and no MIME type, deferring to classifyImportFile's content sniff (#143)", () => {
     expect(isImportableImageFile(new File([''], 'clipboard-blob', { type: '' }))).toBe(true);
   });
 
@@ -105,7 +111,7 @@ describe('importDroppedFile — dispatch by type', () => {
 
   it('routes a .json file into the JSON import path', async () => {
     const ctx = stubCtx();
-    const doc: DocState = { panelHp: 6, guides: [], layers: [] };
+    const doc: DocState = { panelHp: 6, guides: [], layers: createPcbLayerStack() };
     const file = jsonFile(serializePanelConfig(doc));
     vi.mocked(confirmDialog).mockResolvedValue(true);
 
@@ -117,7 +123,7 @@ describe('importDroppedFile — dispatch by type', () => {
 
   it('routes a .json file with an empty MIME type into the JSON import path, not the image path (codex-caught regression)', async () => {
     const ctx = stubCtx();
-    const doc: DocState = { panelHp: 6, guides: [], layers: [] };
+    const doc: DocState = { panelHp: 6, guides: [], layers: createPcbLayerStack() };
     const file = new File([JSON.stringify(serializePanelConfig(doc))], 'panel.json', { type: '' });
     vi.mocked(confirmDialog).mockResolvedValue(true);
 
@@ -143,7 +149,7 @@ describe('importDroppedFile — dispatch by type', () => {
 describe('importJsonFile — strict validation, confirm-gated replace', () => {
   it('imports a valid panel config after confirming, and shows a success toast', async () => {
     const ctx = stubCtx();
-    const doc: DocState = { panelHp: 6, guides: [], layers: [] };
+    const doc: DocState = { panelHp: 6, guides: [], layers: createPcbLayerStack() };
     vi.mocked(confirmDialog).mockResolvedValue(true);
 
     await importJsonFile(jsonFile(serializePanelConfig(doc)), ctx);
@@ -159,7 +165,7 @@ describe('importJsonFile — strict validation, confirm-gated replace', () => {
 
   it('does not replace the doc when the user cancels the confirm dialog', async () => {
     const ctx = stubCtx();
-    const doc: DocState = { panelHp: 6, guides: [], layers: [] };
+    const doc: DocState = { panelHp: 6, guides: [], layers: createPcbLayerStack() };
     vi.mocked(confirmDialog).mockResolvedValue(false);
 
     await importJsonFile(jsonFile(serializePanelConfig(doc)), ctx);
@@ -184,7 +190,10 @@ describe('importJsonFile — strict validation, confirm-gated replace', () => {
   it('rejects a config from a different app, with the reason in the toast', async () => {
     const ctx = stubCtx();
 
-    await importJsonFile(jsonFile({ app: 'other-app', version: PANEL_CONFIG_VERSION, layers: [] }), ctx);
+    await importJsonFile(
+      jsonFile({ app: 'other-app', version: PANEL_CONFIG_VERSION, layers: createPcbLayerStack() }),
+      ctx,
+    );
 
     expect(toastError).toHaveBeenCalledWith(
       'Could not import panel JSON',

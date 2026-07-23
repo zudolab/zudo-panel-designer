@@ -13,6 +13,7 @@ import {
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
+  createPcbLayerStack,
   redo as coreRedo,
   replace as coreReplace,
   reset as coreReset,
@@ -167,7 +168,11 @@ const group = (id: string, children: LayerNode[]): GroupNode => ({
   children,
 });
 
-const doc = (layers: LayerNode[]): DocState => ({ panelHp: 20, guides: [], layers });
+const doc = (layers: LayerNode[]): DocState => ({
+  panelHp: 20,
+  guides: [],
+  layers: createPcbLayerStack({ copper: layers }),
+});
 
 // a(10,10)+b(30,10), both 10×10 → combined bbox (10,10)-(40,20), pivot
 // (25,15), knob 20px above the top-center: (25, -10). Identity camera, so the

@@ -6,7 +6,13 @@
 // the actual tracing math is covered DOM-free in svg-to-path-layers.test.ts.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { createPcbLayerStack, type DocState, type ImageLayer, type PathLayer, type Pt } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  type DocState,
+  type ImageLayer,
+  type PathLayer,
+  type Pt,
+} from '@zpd/core';
 import { bakeImageRotation, insertTracedPaths } from './trace';
 import { DialogHost } from '../components/dialog-host';
 import { closeDialog, getDialog, openDialog } from '../registry/dialogs';
@@ -21,7 +27,7 @@ afterEach(() => {
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   const ctx = {
-    doc: { panelHp: 12, guides: [], layers: [] },
+    doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     selectedIds: [],
@@ -200,7 +206,9 @@ describe('trace dialog', () => {
   });
 
   it('mounts against a real image layer without crashing', () => {
-    const ctx = stubCtx({ doc: { panelHp: 12, guides: [], layers: [IMAGE_LAYER] } });
+    const ctx = stubCtx({
+      doc: { panelHp: 12, guides: [], layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }) },
+    });
     const Dialog = getDialog('trace')!.component;
     render(<Dialog props={{ layerId: 'img-1' }} close={vi.fn()} ctx={ctx} />);
 
@@ -210,7 +218,7 @@ describe('trace dialog', () => {
   });
 
   it('shows a fallback + Close when the layer id no longer exists, without crashing', () => {
-    const ctx = stubCtx({ doc: { panelHp: 12, guides: [], layers: [] } });
+    const ctx = stubCtx({ doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() } });
     const Dialog = getDialog('trace')!.component;
     const close = vi.fn();
     render(<Dialog props={{ layerId: 'missing' }} close={close} ctx={ctx} />);
@@ -223,8 +231,10 @@ describe('trace dialog', () => {
   it.each([
     ['an existing image', [IMAGE_LAYER], 'img-1'],
     ['a missing image', [], 'missing'],
-  ])('is named through DialogHost for %s', (_label, layers, layerId) => {
-    const ctx = stubCtx({ doc: { panelHp: 12, guides: [], layers } });
+  ])('is named through DialogHost for %s', (_label, images, layerId) => {
+    const ctx = stubCtx({
+      doc: { panelHp: 12, guides: [], layers: createPcbLayerStack({ copper: images }) },
+    });
     render(<DialogHost ctx={ctx as CommandContext} />);
 
     act(() => openDialog('trace', { layerId }));

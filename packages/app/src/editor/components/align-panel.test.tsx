@@ -15,14 +15,15 @@ import {
 } from '@zpd/core';
 import type { PanelDims, ToolContext } from '../types';
 import { projectFlatLayers } from '../flat-projection';
+import { canonicalDoc, type DocFixture } from '../test-doc';
 import { AlignPanel } from './align-panel';
 
 afterEach(cleanup);
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
-function makeHarness(initialDoc: DocState) {
-  let history: HistoryState<DocState> = createHistory(initialDoc);
+function makeHarness(initialFixture: DocFixture) {
+  let history: HistoryState<DocState> = createHistory(canonicalDoc(initialFixture));
   const ctx = {
     get doc() {
       return history.present;
@@ -40,7 +41,8 @@ function makeHarness(initialDoc: DocState) {
   return {
     ctx,
     getHistory: () => history,
-    layerById: (id: string) => history.present.layers.find((l) => l.id === id) as Layer,
+    layerById: (id: string) =>
+      projectFlatLayers(history.present.layers).find((l) => l.id === id) as Layer,
   };
 }
 
