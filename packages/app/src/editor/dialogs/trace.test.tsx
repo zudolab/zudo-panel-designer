@@ -6,7 +6,7 @@
 // the actual tracing math is covered DOM-free in svg-to-path-layers.test.ts.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { DocState, GroupNode, ImageLayer, PathLayer, Pt } from '@zpd/core';
+import { createPcbLayerStack, type DocState, type ImageLayer, type PathLayer, type Pt } from '@zpd/core';
 import { bakeImageRotation, insertTracedPaths } from './trace';
 import { DialogHost } from '../components/dialog-host';
 import { closeDialog, getDialog, openDialog } from '../registry/dialogs';
@@ -233,10 +233,7 @@ describe('trace dialog', () => {
   });
 });
 
-// #150: the apply step must splice the traced vectors BESIDE the source image
-// within its CURRENT parent — nested images included — instead of the old
-// root-array findIndex/slice, which mangled the root for a nested source.
-describe('insertTracedPaths (#150)', () => {
+describe('insertTracedPaths — material partitioning (#167)', () => {
   const tracedPath = (id: string): PathLayer => ({
     id,
     name: id,
@@ -248,43 +245,20 @@ describe('insertTracedPaths (#150)', () => {
     strokeWidth: 0,
   });
 
-  it('hides the source and inserts the traced paths directly above it at the root', () => {
-    const below = { ...IMAGE_LAYER, id: 'below' };
-    const above = { ...IMAGE_LAYER, id: 'above' };
-    const doc: DocState = { panelHp: 12, guides: [], layers: [below, IMAGE_LAYER, above] };
-    const next = insertTracedPaths(doc, IMAGE_LAYER, [tracedPath('p1'), tracedPath('p2')]);
-    expect(next.layers.map((l) => l.id)).toEqual(['below', 'img-1', 'p1', 'p2', 'above']);
-    expect((next.layers[1] as ImageLayer).hidden).toBe(true);
-    // untouched siblings keep identity
-    expect(next.layers[0]).toBe(below);
-    expect(next.layers[4]).toBe(above);
-  });
-
-  it('inserts beside a group-nested image within its parent, leaving the root intact', () => {
-    const sibling = { ...IMAGE_LAYER, id: 'sibling' };
-    const rootLayer = { ...IMAGE_LAYER, id: 'root-layer' };
+  it('keeps a hidden Copper reference and routes output by palette material', () => {
     const doc: DocState = {
       panelHp: 12,
       guides: [],
-      layers: [
-        rootLayer,
-        {
-          kind: 'group',
-          id: 'outer',
-          name: 'outer',
-          children: [
-            { kind: 'group', id: 'inner', name: 'inner', children: [IMAGE_LAYER, sibling] },
-          ],
-        },
-      ],
+      layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }),
     };
-    const next = insertTracedPaths(doc, IMAGE_LAYER, [tracedPath('p1')]);
-    expect(next.layers[0]).toBe(rootLayer);
-    const outer = next.layers[1] as GroupNode;
-    expect(outer.kind).toBe('group');
-    const inner = outer.children[0] as GroupNode;
-    expect(inner.children.map((l) => l.id)).toEqual(['img-1', 'p1', 'sibling']);
-    expect((inner.children[0] as ImageLayer).hidden).toBe(true);
-    expect(inner.children[2]).toBe(sibling);
+    const next = insertTracedPaths(doc, IMAGE_LAYER, [
+      tracedPath('gold'),
+      { ...tracedPath('white'), fill: 2 },
+    ]);
+    expect(next.layers[0].children).toEqual([
+      expect.objectContaining({ id: 'img-1', hidden: true }),
+      expect.objectContaining({ id: 'gold' }),
+    ]);
+    expect(next.layers[2].children).toEqual([expect.objectContaining({ id: 'white' })]);
   });
 });

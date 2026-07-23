@@ -16,7 +16,16 @@
 //   data:image/svg+xml…> because there is no such equivalence to preserve
 //   there).
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { buildPath2D, mintId, PALETTE, pathBbox, type ColorIndex, type PathLayer } from '@zpd/core';
+import {
+  buildPath2D,
+  insertPcbNode,
+  mintId,
+  PALETTE,
+  pathBbox,
+  pcbLayerRoleForColor,
+  type ColorIndex,
+  type PathLayer,
+} from '@zpd/core';
 import { registerDialog } from '../registry/dialogs';
 import { toastError, toastSuccess } from '../registry/toasts';
 import { importImageFile } from '../import-image';
@@ -220,8 +229,17 @@ function SvgImportDialog({ props, close, ctx }: DialogProps<SvgImportDialogProps
     // The trial build above already proved these exact inputs succeed; this
     // only defends against buildPathLayers somehow disagreeing with itself.
     if (!result.ok) return;
-    // One commit = one undo entry, same atomic pattern as trace.tsx:83-103.
-    ctx.commit({ ...ctx.doc, layers: [...ctx.doc.layers, ...result.layers] });
+    // One commit = one undo entry. Source-color mappings now select physical
+    // PCB destinations, so a multicolor SVG fans out across fixed containers.
+    let layers = ctx.doc.layers;
+    for (const layer of result.layers) {
+      const color = layer.fill ?? layer.stroke;
+      if (color === null) return;
+      const inserted = insertPcbNode(layers, pcbLayerRoleForColor(color), layer);
+      if (inserted === layers) return;
+      layers = inserted;
+    }
+    ctx.commit({ ...ctx.doc, layers });
     ctx.selectIds(result.layers.map((layer) => layer.id));
     toastSuccess(`Imported ${result.layers.length} shape${result.layers.length === 1 ? '' : 's'}`);
     close();
@@ -327,7 +345,11 @@ function SvgImportDialog({ props, close, ctx }: DialogProps<SvgImportDialogProps
                 >
                   {PALETTE.map((entry) => (
                     <option key={entry.index} value={entry.index}>
-                      {entry.name}
+                      {entry.name === 'black'
+                        ? 'Solder mask'
+                        : entry.name === 'gold'
+                          ? 'Copper'
+                          : 'Silkscreen'}
                     </option>
                   ))}
                 </select>

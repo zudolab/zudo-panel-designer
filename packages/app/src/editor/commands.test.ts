@@ -6,7 +6,16 @@
 // effect by rendering <App/>).
 import './registry';
 import { describe, expect, it, vi } from 'vitest';
-import { MAX_GROUP_DEPTH, type DocState, type GroupNode, type LayerNode, type Pt, type ShapeLayer, type TextLayer } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  MAX_GROUP_DEPTH,
+  type DocState,
+  type GroupNode,
+  type LayerNode,
+  type Pt,
+  type ShapeLayer,
+  type TextLayer,
+} from '@zpd/core';
 import { downloadPanelConfig } from './download';
 import {
   allCommands,
@@ -707,6 +716,23 @@ describe('Group/Ungroup do not collide with any other dispatchable chord (#155)'
     const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
     const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true, shiftKey: true }), ctx);
     expect(match?.id).toBe('edit-ungroup');
+  });
+});
+
+describe('fixed material command boundaries (#167)', () => {
+  it('disables mixed-material grouping without committing a phantom history entry', () => {
+    const copper = rect('copper', 0, 0);
+    const silk = { ...rect('silk', 20, 0), color: 2 };
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [copper], silkscreen: [silk] }),
+    };
+    const ctx = stubCommandCtx({ doc, selectedIds: [copper.id, silk.id] });
+    const groupCommand = allCommands().find((command) => command.id === 'edit-group')!;
+    expect(groupCommand.isEnabled(ctx)).toBe(false);
+    groupCommand.run(ctx);
+    expect(ctx.commit).not.toHaveBeenCalled();
   });
 });
 

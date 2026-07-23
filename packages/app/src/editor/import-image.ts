@@ -3,7 +3,7 @@
 // panel), ONE commit, select the new layer. Extracted from add-actions/
 // add-image.ts (behavior-identical) so the clipboard-paste and drop-import
 // subs can share it instead of re-deriving the scale-to-fit math.
-import { mintId, snapToGrid, type ImageLayer } from '@zpd/core';
+import { insertPcbNode, mintId, snapToGrid, type ImageLayer } from '@zpd/core';
 import type { ToolContext } from './types';
 
 export function importImageFile(file: File, ctx: ToolContext): Promise<void> {
@@ -26,7 +26,7 @@ export function importImageFile(file: File, ctx: ToolContext): Promise<void> {
           width: snapToGrid(probe.naturalWidth * scale),
           height: snapToGrid(probe.naturalHeight * scale),
         };
-        ctx.commit({ ...ctx.doc, layers: [...ctx.doc.layers, layer] });
+        ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'copper', layer) });
         ctx.select(layer.id);
         resolve();
       };

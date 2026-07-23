@@ -5,8 +5,8 @@
 // path node editing all live here; a later wave refines this ONE file without
 // touching the registry.
 import {
-  cloneNodeWithFreshIds,
-  findNodeById,
+  clonePcbNode,
+  findPcbNodeById,
   hitTestLayer,
   isGroupNode,
   mapLeavesById,
@@ -16,7 +16,6 @@ import {
   movePathHandle,
   rectCenter,
   rectsIntersect,
-  replaceNodeWithNodes,
   resizeRotatedRect,
   rotatedRectAABB,
   scaleLayer,
@@ -526,6 +525,18 @@ function mapCloneLeafIds(source: LayerNode, clone: LayerNode, into: Map<string, 
   }
 }
 
+// Fixed PCB containers are structural roots, so collapse selections inside
+// each material independently. This preserves Alt-drag's old maximal-root
+// rule without ever treating a container itself as an ordinary node.
+function maximalPcbSelectedRoots(tree: DocState['layers'], ids: readonly string[]): string[] {
+  return tree.flatMap((container) =>
+    maximalSelectedRoots(
+      container.children,
+      ids.filter((id) => findPcbNodeById(tree, id)?.role === container.role),
+    ),
+  );
+}
+
 // Multi-resize grab (#52): corner handles on the combined bbox start a uniform
 // group scale. multiResizeBbox (renderer.ts) is the shared eligibility gate,
 // so exactly the handles the chrome draws are grabbable here. The gate and the
@@ -784,13 +795,15 @@ registerTool({
             // directly above its source, in its own parent.
             const leafIdMap = new Map<string, string>();
             const cloneRootIds: string[] = [];
-            for (const rootId of maximalSelectedRoots(tree, ctx.selectedIds)) {
-              const found = findNodeById(tree, rootId);
+            for (const rootId of maximalPcbSelectedRoots(tree, ctx.selectedIds)) {
+              const found = findPcbNodeById(tree, rootId);
               if (!found) continue;
-              const clone = cloneNodeWithFreshIds(found.node);
+              const cloned = clonePcbNode(tree, rootId);
+              const clone = cloned.node;
+              if (!clone || cloned.stack === tree) continue;
               cloneRootIds.push(clone.id);
               mapCloneLeafIds(found.node, clone, leafIdMap);
-              tree = replaceNodeWithNodes(tree, rootId, [found.node, clone]);
+              tree = cloned.stack;
             }
             // Re-target the drag to the clone leaves — the originals stay
             // put. The clone starts at its source's geometry, so keeping
