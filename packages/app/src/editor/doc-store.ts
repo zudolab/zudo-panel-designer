@@ -116,7 +116,11 @@ export function writeDoc(doc: DocState): WriteDocResult {
   if (!storage) {
     return { ok: false, reason: 'unavailable' };
   }
-  if (protectedEntry) {
+  // A protected current entry is the exact destination this function would
+  // overwrite, so keep refusing while those bytes remain. A protected legacy
+  // entry lives under a separate rollback key: writing v2 cannot replace it,
+  // and must remain available so subsequent real user work can autosave.
+  if (protectedEntry?.key === DOC_STORAGE_KEY) {
     try {
       if (storage.getItem(protectedEntry.key) === protectedEntry.raw) {
         return { ok: false, reason: 'error' };

@@ -37,7 +37,7 @@ function ctx(): ToolContext {
 describe('path inspector material controls (#166)', () => {
   it('uses independent enabled controls and always enables with the owning material', () => {
     const onChange = vi.fn();
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx()} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={ctx()} />);
 
     expect(screen.getByText('Copper')).toBeTruthy();
     expect(screen.queryByTitle(/gold|black|white/i)).toBeNull();
@@ -51,7 +51,7 @@ describe('path inspector material controls (#166)', () => {
 
   it('preserves stroke width and closed controls independently of material', () => {
     const onChange = vi.fn();
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx()} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={ctx()} />);
 
     fireEvent.change(screen.getByLabelText('stroke w (mm)'), { target: { value: '1.2' } });
     fireEvent.blur(screen.getByLabelText('stroke w (mm)'));

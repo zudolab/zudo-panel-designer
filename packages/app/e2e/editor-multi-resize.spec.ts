@@ -16,8 +16,7 @@ const CORNER = { x: 52, y: 62 };
 const ANCHOR = { x: 8, y: 14 };
 
 async function shapeById(page: Page, id: string): Promise<ShapeLayer> {
-  const doc = await bridge(page).getDoc();
-  return doc.layers.find((l) => l.id === id) as ShapeLayer;
+  return (await bridge(page).getMaterialLayer(id)) as ShapeLayer;
 }
 
 // Select demo-rect, Shift-click demo-ellipse into the selection, then drag the
@@ -30,7 +29,7 @@ async function selectBothAndDragSeCorner(page: Page): Promise<void> {
   await page.keyboard.down('Shift');
   await page.mouse.click(ellipseCenter.x, ellipseCenter.y);
   await page.keyboard.up('Shift');
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-ellipse', 'demo-rect']);
 
   const start = await toScreenPoint(page, CORNER);
   const end = await toScreenPoint(page, {

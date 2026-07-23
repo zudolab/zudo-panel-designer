@@ -62,7 +62,7 @@ const Inspector = getInspector('pattern')!;
 describe('pattern inspector — slider scrub == one undo entry', () => {
   it('shows Copper as read-only material context without a color picker', () => {
     const onChange = vi.fn();
-    render(<Inspector layer={layer} onChange={onChange} ctx={stubCtx()} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={stubCtx()} />);
 
     expect(screen.getByText('Copper')).toBeTruthy();
     expect(screen.queryByText('Color')).toBeNull();
@@ -73,7 +73,7 @@ describe('pattern inspector — slider scrub == one undo entry', () => {
   it('opens the gesture once per scrub and streams every input as commit:false', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={ctx} />);
 
     const pitch = screen.getAllByRole('slider')[0];
 
@@ -96,7 +96,7 @@ describe('pattern inspector — slider scrub == one undo entry', () => {
   it('opens a fresh gesture for the next scrub after release', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={ctx} />);
 
     const pitch = screen.getAllByRole('slider')[0];
 
@@ -116,7 +116,7 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
   it('commits x, y, and size as discrete edits', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={ctx} />);
 
     const xField = screen.getByLabelText('x (mm)');
     fireEvent.change(xField, { target: { value: '12' } });
@@ -139,7 +139,7 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
   it('clamps size into the renderer draw-guard range (0 < size <= MAX_PATTERN_SIZE_MM)', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={ctx} />);
 
     const sizeField = screen.getByLabelText('size (mm)');
     fireEvent.change(sizeField, { target: { value: '5000' } });
@@ -155,7 +155,12 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
     const onChange = vi.fn();
     const ctx = stubCtx(); // panel 60 × 128.5
     render(
-      <Inspector layer={{ ...layer, x: 20, y: 30, size: 12 }} onChange={onChange} ctx={ctx} />,
+      <Inspector
+        layer={{ ...layer, x: 20, y: 30, size: 12 }}
+        materialRole="copper"
+        onChange={onChange}
+        ctx={ctx}
+      />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Cover panel' }));
@@ -170,7 +175,14 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
     const cover = patternCoverGeometry({ widthMm: 60, heightMm: 128.5 });
-    render(<Inspector layer={{ ...layer, ...cover }} onChange={onChange} ctx={ctx} />);
+    render(
+      <Inspector
+        layer={{ ...layer, ...cover }}
+        materialRole="copper"
+        onChange={onChange}
+        ctx={ctx}
+      />,
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Cover panel' }));
     expect(onChange).not.toHaveBeenCalled();
@@ -180,7 +192,12 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
     render(
-      <Inspector layer={{ ...layer, size: MAX_PATTERN_SIZE_MM }} onChange={onChange} ctx={ctx} />,
+      <Inspector
+        layer={{ ...layer, size: MAX_PATTERN_SIZE_MM }}
+        materialRole="copper"
+        onChange={onChange}
+        ctx={ctx}
+      />,
     );
 
     const sizeField = screen.getByLabelText('size (mm)');

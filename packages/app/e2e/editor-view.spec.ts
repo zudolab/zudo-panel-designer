@@ -8,7 +8,13 @@
 // data can.
 import { PANEL_HEIGHT_MM, panelWidthMm } from '@zpd/core';
 import { expect, type Page, test } from '@playwright/test';
-import { bridge, countPixelsDiffering, openEditor, readCanvasRegion, toScreenPoint } from './helpers';
+import {
+  bridge,
+  countPixelsDiffering,
+  openEditor,
+  readCanvasRegion,
+  toScreenPoint,
+} from './helpers';
 
 // Matches renderer.ts's WORKSPACE_BG ('#26282c').
 const BACKGROUND_RGB: [number, number, number] = [38, 40, 44];
@@ -26,7 +32,9 @@ async function readCanvasPixel(
   screenPt: { x: number; y: number },
 ): Promise<[number, number, number, number]> {
   return page.evaluate(({ x, y }) => {
-    const canvas = document.querySelector('[data-testid="editor-canvas"]') as HTMLCanvasElement | null;
+    const canvas = document.querySelector(
+      '[data-testid="editor-canvas"]',
+    ) as HTMLCanvasElement | null;
     if (!canvas) throw new Error('editor-canvas not found');
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2d context unavailable');
@@ -62,7 +70,7 @@ test('@smoke show-outside-panel toggle ghosts off-panel shapes and the pattern s
   // off-panel on both x sides, so its off-panel margin now GHOSTS (dimmed dot
   // grid) — but never past the square's own edge, generator overscan or not.
   // Region scans, not single pixels: dot-grid paint has gaps (see helpers.ts).
-  const pattern = (await bridge(page).getDoc()).layers.find((l) => l.type === 'pattern');
+  const pattern = (await bridge(page).getMaterialLayers()).find((l) => l.type === 'pattern');
   if (pattern?.type !== 'pattern') throw new Error('expected the default pattern layer');
   const midY = PANEL_HEIGHT_MM / 2;
   // Inside the square, left of the panel; -9mm ≈ -39px at the fitted zoom, so
@@ -78,7 +86,9 @@ test('@smoke show-outside-panel toggle ghosts off-panel shapes and the pattern s
     await toScreenPoint(page, { x: pattern.x - 12, y: midY - 5 }),
     await toScreenPoint(page, { x: pattern.x - 5, y: midY + 5 }),
   ] as const;
-  const ghostCount = async (region: readonly [{ x: number; y: number }, { x: number; y: number }]) =>
+  const ghostCount = async (
+    region: readonly [{ x: number; y: number }, { x: number; y: number }],
+  ) =>
     countPixelsDiffering(
       await readCanvasRegion(page, region[0], region[1]),
       BACKGROUND_RGB,
@@ -96,7 +106,7 @@ test('@smoke show-outside-panel toggle ghosts off-panel shapes and the pattern s
   await page.getByLabel('Add rectangle').click();
   const rectId = await bridge(page).getSelectedId();
   expect(rectId).not.toBeNull();
-  const rectBefore = (await bridge(page).getDoc()).layers.find((l) => l.id === rectId);
+  const rectBefore = await bridge(page).getMaterialLayer(rectId!);
   if (rectBefore?.type !== 'shape') throw new Error('expected a shape layer to be selected');
 
   const dragStart = await toScreenPoint(page, {
@@ -113,7 +123,7 @@ test('@smoke show-outside-panel toggle ghosts off-panel shapes and the pattern s
   await page.mouse.move(dragEnd.x, dragEnd.y, { steps: 8 });
   await page.mouse.up();
 
-  const rectAfter = (await bridge(page).getDoc()).layers.find((l) => l.id === rectId);
+  const rectAfter = await bridge(page).getMaterialLayer(rectId!);
   if (rectAfter?.type !== 'shape') throw new Error('rect layer disappeared during drag');
   expect(rectAfter.x).toBeGreaterThan(panelWmm); // sanity: fully off-panel now
 

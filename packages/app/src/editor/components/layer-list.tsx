@@ -61,7 +61,18 @@ function layerColorIndex(layer: Layer): ColorIndex {
 
 export interface LayerListProps {
   ctx: ToolContext;
+  // The committed render-time stack. Production always supplies this from
+  // Sidebar; the fallback keeps isolated component harnesses concise.
+  stack?: PcbLayerStack;
   selectedIds: readonly string[];
+}
+
+// Editor's window keydown handler owns Space as temporary pan whenever the
+// event reaches it. Native buttons need an un-cancelled Space keydown to emit
+// their click, so activation stays local while retaining the browser's native
+// Enter/Space button behavior.
+function keepButtonActivationLocal(event: KeyboardEvent<HTMLButtonElement>): void {
+  if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
 }
 
 // ─── Visible-row traversal (#153) ───────────────────────────────────────
@@ -140,9 +151,12 @@ function collectDescendantIds(stack: PcbLayerStack, id: string): Set<string> {
   return out;
 }
 
-export function LayerList({ ctx, selectedIds }: LayerListProps) {
-  const stack = ctx.doc.layers;
-  const flatById = useMemo(() => new Map(ctx.flatLayers.map((l) => [l.id, l])), [ctx.flatLayers]);
+export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerListProps) {
+  const stack = committedStack ?? ctx.doc.layers;
+  const flatById = useMemo(
+    () => new Map(projectPcbLayerStack(stack).map((layer) => [layer.id, layer])),
+    [stack],
+  );
 
   // Expand/collapse (#153): session-only, keyed by STABLE node id (never
   // array index — index keys remount and drop state when order changes).
@@ -540,7 +554,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
       // Keep the editor's window-level shortcut handler from turning Space
       // into temporary pan mode. Do not preventDefault: the button's native
       // Enter/Space click must remain the selection activation path.
-      event.stopPropagation();
+      keepButtonActivationLocal(event);
       return;
     }
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
@@ -901,6 +915,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
                 aria-label={collapsed ? `Expand ${definition.name}` : `Collapse ${definition.name}`}
                 aria-expanded={!collapsed}
                 onClick={() => toggleMaterialCollapsed(container.role)}
+                onKeyDown={keepButtonActivationLocal}
                 className="flex min-h-6 min-w-6 items-center justify-center rounded-sm text-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
               >
                 <span aria-hidden="true">{collapsed ? '▶' : '▼'}</span>
@@ -923,6 +938,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
                   container.hidden ? `Show ${definition.name}` : `Hide ${definition.name}`
                 }
                 onClick={() => toggleMaterialVisibility(container.role)}
+                onKeyDown={keepButtonActivationLocal}
                 className="min-h-6 min-w-6 rounded-sm text-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
               >
                 {container.hidden ? '🚫' : '👁'}

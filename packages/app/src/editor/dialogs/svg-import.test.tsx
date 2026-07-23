@@ -10,8 +10,7 @@
 // unmissable.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { Pt } from '@zpd/core';
-import { PALETTE } from '@zpd/core';
+import { createPcbLayerStack, PALETTE, projectPcbLayerStack, type Pt } from '@zpd/core';
 import './svg-import';
 // The real OKLab-distance matcher the dialog seeds mapping rows with — see
 // nearest-palette-color.test.ts for its own coverage; this file only needs
@@ -39,7 +38,7 @@ afterEach(() => {
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    doc: { panelHp: 12, guides: [], layers: [] },
+    doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     selectedIds: [],
@@ -249,9 +248,10 @@ describe('svg-import dialog', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     const committed = vi.mocked(ctx.commit).mock.calls[0][0];
-    expect(committed.layers).toHaveLength(1);
+    const imported = projectPcbLayerStack(committed.layers);
+    expect(imported).toHaveLength(1);
     expect(ctx.selectIds).toHaveBeenCalledTimes(1);
-    expect(ctx.selectIds).toHaveBeenCalledWith(committed.layers.map((l) => l.id));
+    expect(ctx.selectIds).toHaveBeenCalledWith(imported.map((layer) => layer.id));
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledTimes(1);
   });

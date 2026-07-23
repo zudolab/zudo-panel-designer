@@ -52,7 +52,7 @@ Crucially, the strips are **fixed in layout** — they occupy static 20px gutter
 2. Fill the workspace background behind the panel.
 3. Draw a drop shadow + solid black fill for the panel rect, in screen space.
 4. When **Show content outside the panel** is on, run the [off-panel ghost pass](#the-off-panel-ghost-pass) — the layer content that spills past the panel edge, dimmed, drawn *before* the clipped pass below into a disjoint exterior region.
-5. **One `setTransform`-equivalent for the whole layer pass**: `ctx.save()`, clip to the panel rect, `ctx.translate(offsetX, offsetY)`, `ctx.scale(pxPerMm, pxPerMm)` — from this point until the matching `ctx.restore()`, **1 canvas unit = 1mm**, matching the pattern generators' own coordinate contract (see [Patterns → Generator contract](../patterns/generator-contract.mdx)). Every non-hidden layer is drawn once, in array order (later layers on top), inside this single transform.
+5. **One `setTransform`-equivalent for the whole layer pass**: `ctx.save()`, clip to the panel rect, `ctx.translate(offsetX, offsetY)`, `ctx.scale(pxPerMm, pxPerMm)` — from this point until the matching `ctx.restore()`, **1 canvas unit = 1mm**, matching the pattern generators' own coordinate contract (see [Patterns → Generator contract](../patterns/generator-contract.mdx)). `projectPcbLayerStack()` flattens visible ordinary children in physical Copper → Solder mask → Silkscreen order, folds ancestor/container visibility, and forces each non-null paint to its owning material before every projected leaf is drawn.
 6. Restore, then stroke the panel outline in screen space.
 7. Draw the [guides](./guides.mdx) — thin lines across the whole viewport, above the layer content and below the selection chrome.
 8. Draw **unclipped** selection chrome (a dashed bbox per selected layer, a combined bbox when more than one is selected, and resize/rotate handles plus path node anchors/handles only when exactly one layer is selected).
@@ -62,13 +62,13 @@ Crucially, the strips are **fixed in layout** — they occupy static 20px gutter
 
 `drawLayer()` switches on `layer.type` inside the mm-space transform:
 
-- **shape** — `ctx.rect`/`ctx.ellipse` filled with the layer's palette color. Ellipse radii are `Math.abs()`'d because `ctx.ellipse` throws `IndexSizeError` on a negative radius, while a negative width/height is otherwise a valid (mirrored) rect the way the `rect` branch already handles it.
+- **shape** — `ctx.rect`/`ctx.ellipse` filled with the projected owning material. Ellipse radii are `Math.abs()`'d because `ctx.ellipse` throws `IndexSizeError` on a negative radius, while a negative width/height is otherwise a valid (mirrored) rect the way the `rect` branch already handles it.
 - **pattern** — looked up by `patternType` in `PATTERN_GENERATORS`. The layer's own `x`/`y`/`size` square gets its own nested transform first — `ctx.save()`, `ctx.translate(x, y)`, clip to `(0,0)`–`(size,size)` as a separate clip op composed with whatever clip the caller holds, `ctx.restore()` after — and the generator's `draw()` is called inside that with `widthMm`/`heightMm` set to `size` (see [Patterns → Generator contract](../patterns/generator-contract.mdx)), so it draws in object-local square space, not panel space. A pattern is only actually drawn when its `size` is finite, positive, and within `MAX_PATTERN_SIZE_MM` — a malformed or absurd size (a hand-edited import, say) is silently skipped rather than spinning a generator's draw loop over an unbounded span.
-- **path** — built into a `Path2D` (`buildPath2D`, from `@zpd/core`), filled with the `evenodd` rule when closed (so traced holes/islands stay holes — see [Image tracing](./image-tracing.mdx#pipeline-overview)), then stroked if a stroke color/width is set.
+- **path** — built into a `Path2D` (`buildPath2D`, from `@zpd/core`), filled with the `evenodd` rule when closed (so holes stay holes and solder-mask openings reveal copper), then stroked if stroke is enabled and its width is set. Both paints use the projected owning material.
 - **text** — `ensureFont()` is called fire-and-forget on every draw; if the real face isn't loaded yet, the browser's fallback face is drawn immediately, and once the font resolves the next requested repaint (from the tool or inspector that changed it) picks up the real glyphs. Multi-line content is split on `\n` with a 1.25× line-height.
 - **image** — draws the cached `<img>` if it's loaded, otherwise a dashed placeholder outline (images are decoded/cached by `Editor.tsx`'s asset-loading effect, keyed by layer id).
 
-A rotated `shape`/`text` layer is rotated around its own bbox center via `ctx.translate`/`ctx.rotate`/`ctx.translate` before the type-specific draw runs; `path`/`pattern`/`image` layers have no rotation field.
+A rotated `shape`/`text`/`image` layer is rotated around its own bbox center via `ctx.translate`/`ctx.rotate`/`ctx.translate` before the type-specific draw runs; `path` and `pattern` layers have no rotation field.
 
 ## The off-panel ghost pass
 

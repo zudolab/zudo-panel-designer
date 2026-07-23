@@ -6,10 +6,19 @@ import { useId, useState, type ReactNode } from 'react';
 export interface CollapsibleSectionProps {
   title: string | ReactNode;
   defaultOpen?: boolean;
+  // Keep stateful children mounted while the section is closed. Hidden
+  // content remains outside layout/the accessibility tree, but local UI state
+  // (for example the Layers tree's session-only collapse sets) survives.
+  keepMounted?: boolean;
   children: ReactNode;
 }
 
-export function CollapsibleSection({ title, defaultOpen = true, children }: CollapsibleSectionProps) {
+export function CollapsibleSection({
+  title,
+  defaultOpen = true,
+  keepMounted = false,
+  children,
+}: CollapsibleSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
   const contentId = useId();
 
@@ -29,8 +38,8 @@ export function CollapsibleSection({ title, defaultOpen = true, children }: Coll
           <span aria-hidden="true">{open ? '▾' : '▸'}</span>
         </button>
       </h2>
-      {open && (
-        <div id={contentId} className="px-3 py-2">
+      {(open || keepMounted) && (
+        <div id={contentId} hidden={!open} className="px-3 py-2">
           {children}
         </div>
       )}

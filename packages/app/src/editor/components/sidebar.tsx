@@ -81,8 +81,8 @@ export function Sidebar({
           </label>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Layers">
-          <LayerList ctx={ctx} selectedIds={selectedIds} />
+        <CollapsibleSection title="Layers" keepMounted>
+          <LayerList ctx={ctx} stack={doc.layers} selectedIds={selectedIds} />
         </CollapsibleSection>
 
         <CollapsibleSection title="Align & Distribute">
@@ -97,7 +97,7 @@ export function Sidebar({
                 nothing for a single-leaf or all-non-rotatable selection, so
                 it composes ahead of InspectorHost without an empty gap. */}
             <RotateSelectionPanel ctx={ctx} doc={doc} selectedIds={selectedIds} />
-            <InspectorHost ctx={ctx} layer={selectedLayer} selectedIds={selectedIds} />
+            <InspectorHost ctx={ctx} doc={doc} layer={selectedLayer} selectedIds={selectedIds} />
           </div>
         </CollapsibleSection>
       </div>

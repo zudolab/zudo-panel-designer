@@ -6,7 +6,6 @@ import { registerInspector } from '../registry/inspectors';
 import { getDialog } from '../registry/dialogs';
 import { ActionButton, Field, MaterialField, NumberField, Row } from '../components/inspector-ui';
 import type { InspectorProps, ToolContext } from '../types';
-import { owningMaterialRole } from './material';
 
 // Keep committed sizes inside the renderer's draw guard (renderer.ts only
 // draws 0 < size <= MAX_PATTERN_SIZE_MM): an out-of-range inspector entry
@@ -63,9 +62,8 @@ function PatternParamSlider({
   );
 }
 
-function PatternInspector({ layer, onChange, ctx }: InspectorProps<PatternLayer>) {
+function PatternInspector({ layer, materialRole, onChange, ctx }: InspectorProps<PatternLayer>) {
   const gen = patternByName(layer.patternType);
-  const material = owningMaterialRole(ctx.doc.layers, layer.id);
   // Wave 5 (#12) registers a dialog with id 'pattern-picker' to swap the
   // pattern; until then this button just shows the current pattern, disabled.
   const pickerAvailable = getDialog('pattern-picker') !== undefined;
@@ -80,7 +78,7 @@ function PatternInspector({ layer, onChange, ctx }: InspectorProps<PatternLayer>
           {gen?.displayName ?? layer.patternType} — Browse…
         </ActionButton>
       </Row>
-      <MaterialField role={material} />
+      <MaterialField role={materialRole} />
       {/* Square geometry (#97) — NumberField commits are discrete edits, one
           undo entry each, matching the shape/image inspector conventions. */}
       <Field label="x (mm)">

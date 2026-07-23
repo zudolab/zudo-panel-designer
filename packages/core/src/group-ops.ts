@@ -469,8 +469,9 @@ function mapLeavesByIdSet(
   const next: LayerNode[] = [];
   for (const node of tree) {
     if (!isGroupNode(node) && wanted.has(node.id)) {
-      touched = true;
-      next.push(mapper(node));
+      const mapped = mapper(node);
+      if (mapped !== node) touched = true;
+      next.push(mapped);
       continue;
     }
     if (isGroupNode(node)) {
@@ -713,8 +714,10 @@ export function clonePcbNode(
   const destinationParent = parentId === undefined ? (sourceLocation?.parentId ?? null) : parentId;
   const destinationIndex =
     index ?? (sourceLocation ? sourceLocation.index + 1 : Number.MAX_SAFE_INTEGER);
+  const next = insertPcbNode(stack, found.role, node, destinationParent, destinationIndex);
+  if (next === stack) return { stack, node: null };
   return {
-    stack: insertPcbNode(stack, found.role, node, destinationParent, destinationIndex),
+    stack: next,
     node,
   };
 }

@@ -19,7 +19,7 @@ interface InspectorProps<L extends Layer = Layer> {
 
 `onChange` はレイヤーにパッチを当て、その結果をドキュメント履歴へ流し込みます。
 
-- `commit: true`（**デフォルト**） — 個別の編集がそれ自体で 1 つの undo エントリになります。数値フィールドの blur/Enter、色の選択、チェックボックスの切り替えなどに使います。
+- `commit: true`（**デフォルト**） — 個別の編集がそれ自体で 1 つの undo エントリになります。数値フィールドの blur/Enter、チェックボックスの切り替えなどに使います。
 - `commit: false` — 変更はコミットではなく *ストリーミング* されます（`ctx.replace`）。スライダーのドラッグのような連続的な入力向けです。呼び出し側は事前に `ctx.beginGesture()` で 1 つの undo エントリを開いておくことが前提で、以降の `commit: false` の呼び出しはすべて、ジェスチャーが終わるまで同じエントリにまとめられます。
 
 レイヤーの型にインスペクタが登録されていない場合、`InspectorHost` はクラッシュせず、単純に「No inspector registered」というメッセージを表示します。これにより、拡張を段階的に追加している途中の状態でも描画が壊れません。
@@ -30,22 +30,22 @@ interface InspectorProps<L extends Layer = Layer> {
 
 - `Field` / `Row` — ラベル付きの行（`<label>` か、単なる `<div>` か。コントロールがボタンのときは、`<label>` だとボタンのアクセシブルネームを奪ってしまうため `Row` を使います）。
 - `NumberField` — 個別の編集（blur、Enter、または矢印キー 1 回のステップ）ごとにちょうど 1 つの undo エントリをコミットする数値入力。フォーカス中はローカルのドラフト文字列を保持するため、"250" と入力しても 0 / 2 / 25 とコミットしながら崩れていくことはなく、空や `NaN` のドラフトは 0 をコミットするのではなく直前の有効な値に戻ります。
-- `ColorPicker` — `PALETTE` の各エントリ（黒/金/白）ごとに 1 つのスウォッチボタン。加えて、`allowNone` が指定されているときは「none」（`∅`）スウォッチが付きます（パスインスペクタの塗り/ストロークで使われ、それぞれ null になり得ます）。
+- `MaterialField` — 選択オブジェクトを所有する固定コンテナを、読み取り専用のスウォッチとラベルで表示します。マテリアル変更は Layers でオブジェクトを移動して行い、オブジェクトごとのカラーピッカーは使いません。
 - `ActionButton` — インスペクタの「ダイアログを開く」操作のための全幅ボタン（例: パターンの Browse…、画像の Convert to vector…）。
 
 ## 組み込みインスペクタ
 
 | Layer type | File | Fields |
 |---|---|---|
-| `shape` | `inspectors/shape.tsx` | 色、x、y、幅、高さ、回転（°） |
-| `text` | `inspectors/text.tsx` | テキスト内容、フォント、色、サイズ（mm）、x、y、回転（°） |
-| `path` | `inspectors/path.tsx` | 塗り（または none）、ストローク（または none）、ストローク幅（mm）、閉じているか |
+| `shape` | `inspectors/shape.tsx` | マテリアル（読み取り専用）、x、y、幅、高さ、回転（°） |
+| `text` | `inspectors/text.tsx` | テキスト内容、フォント、マテリアル（読み取り専用）、サイズ（mm）、x、y、回転（°） |
+| `path` | `inspectors/path.tsx` | マテリアル（読み取り専用）、塗り有効、ストローク有効、ストローク幅（mm）、閉じているか |
 | `image` | `inspectors/image.tsx` | x、y、幅、高さ、「Convert to vector…」 |
-| `pattern` | `inspectors/pattern.tsx` | 「Browse…」（パターンピッカー）、色、x、y、size（mm）、「Cover panel」、パターンのパラメータごとに 1 つのスライダー |
+| `pattern` | `inspectors/pattern.tsx` | 「Browse…」（パターンピッカー）、マテリアル（読み取り専用）、x、y、size（mm）、「Cover panel」、パターンのパラメータごとに 1 つのスライダー |
 
 ### Shape
 
-矩形/楕円レイヤーには、位置・サイズ・回転のフィールドと `ColorPicker` が付きます。ジオメトリのフィールドはすべて素の `NumberField` です。選択ツールのリサイズハンドルが書き込むのと同じフィールドなので、ハンドルをドラッグしても幅を入力しても、まったく同じパッチが生成されます。
+矩形/楕円レイヤーは所有マテリアルを表示し、位置・サイズ・回転のフィールドを持ちます。ジオメトリのフィールドはすべて素の `NumberField` です。選択ツールのリサイズハンドルが書き込むのと同じフィールドなので、ハンドルをドラッグしても幅を入力しても、まったく同じパッチが生成されます。
 
 ### Text
 
@@ -53,7 +53,7 @@ interface InspectorProps<L extends Layer = Layer> {
 
 ### Path
 
-塗りとストロークはそれぞれ `allowNone` 付きの `ColorPicker` を使います。パスは塗りのみ（ペンツールやトレースで作られた閉じた形状）にも、ストロークのみ（開いたパス）にもなり得るためです。ノード/ハンドルの位置はここでは編集 **できません**。これらはキャンバス上で選択ツールのドラッグによって直接編集します（Alt で対称ハンドルの制約を解除）。インスペクタはこの点をキャプションで注記します。
+所有マテリアルは読み取り専用です。**Fill enabled** と **Stroke enabled** により、塗りのみ、ストロークのみ、両方、どちらもなしを保持できます。有効な paint は所有マテリアルへ強制されます。ノード/ハンドルの位置はここでは編集 **できません**。これらはキャンバス上で選択ツールのドラッグによって直接編集します（Alt で対称ハンドルの制約を解除）。インスペクタはこの点をキャプションで注記します。
 
 ### Image
 
@@ -61,7 +61,7 @@ interface InspectorProps<L extends Layer = Layer> {
 
 ### Pattern
 
-現在のパターンの表示名を、[パターンピッカー](./add-actions-and-dialogs.mdx)を開く **Browse…** ボタン（そのダイアログが登録されていなければ無効）の背後に表示し、`ColorPicker`、正方形のジオメトリ、そしてパターンが宣言する `PatternParamDef` ごとに 1 つの `<input type="range">` を表示します（[パターン → ジェネレータ契約](../patterns/generator-contract.mdx)を参照）。
+現在のパターンの表示名を、[パターンピッカー](./add-actions-and-dialogs.mdx)を開く **Browse…** ボタン（そのダイアログが登録されていなければ無効）の背後に表示し、読み取り専用の所有マテリアル、正方形のジオメトリ、そしてパターンが宣言する `PatternParamDef` ごとに 1 つの `<input type="range">` を表示します（[パターン → ジェネレータ契約](../patterns/generator-contract.mdx)を参照）。
 
 `pattern` レイヤーは移動可能な **正方形** です——`x`、`y`、`size`（mm）はすべて、shape/image インスペクタと同じ素の `NumberField` です。[パターンの正方形がキャンバス上でドラッグできるようになって](./tools.mdx#組み込みツール-選択ツール（v）-パターンの正方形)以降のことです。`size` はコミット時に `[0.1, MAX_PATTERN_SIZE_MM]` にクランプされます（`@zpd/core` の `MAX_PATTERN_SIZE_MM` は、ジェネレータが法外なスパンでループしてしまわないための DoS ガードです。[レンダリングとカメラ](./rendering-and-camera.mdx)を参照）。クランプ後に値が変わらないコミットはスキップされるため、範囲外の数値を入力して黙ってクランプされて戻っても、幽霊のような undo エントリが書き込まれることはありません。ジオメトリのフィールドの下にある **Cover panel** ボタンは、正方形を `patternCoverGeometry()`——どんなアスペクト比でもパネルを覆う、元の配置——へ中心とサイズを戻します。これも同じ no-op ガード付きです（`x`／`y`／`size` が変わらないクリックは、何もコミットしません）。
 

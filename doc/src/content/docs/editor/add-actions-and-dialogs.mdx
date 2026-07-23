@@ -25,7 +25,7 @@ interface AddAction {
 | Add rectangle | `add-actions/add-rect.ts` | Commits a new `shape` layer (rect) sized/positioned relative to the panel, selects it. |
 | Add ellipse | `add-actions/add-ellipse.ts` | Same as above, `shape: 'ellipse'`. |
 | Add pattern… | `add-actions/add-pattern.ts` | Opens the [pattern picker dialog](#dialogs-built-in-dialogs-pattern-picker-dialog) with no props — the dialog itself adds the layer once a pattern is chosen. |
-| Add image… | `add-actions/add-image.ts` | Opens a transient `<input type="file">`, reads the file as a data URL, probes its natural size to fit the panel (max 80% width / 50% height), then commits an `image` layer. |
+| Add image… | `add-actions/add-image.ts` | Opens a transient `<input type="file">` and sends the file through the shared classifier. Raster content is fitted to the panel and committed as an `image`; SVG within the vector-size cap opens the vector/material import dialog, while oversized SVG uses the raster fallback. |
 
 Add rectangle/ellipse both snap their initial geometry to the 0.1mm grid and cap their default width at `min(20mm, panelWidth/2)` so a freshly added shape is never larger than the panel it lands on.
 
@@ -55,6 +55,7 @@ Because the store lives outside React (`openDialog`/`closeDialog` in `registry/d
 | `command-palette` | `dialogs/command-palette.tsx` | `⌘/Ctrl+Shift+K`. |
 | `font-explorer` | `dialogs/font-explorer.tsx` | Text inspector's **Browse Google Fonts…** button, or the command palette's *Browse Google Fonts* command. |
 | `pattern-picker` | `dialogs/pattern-picker.tsx` | Pattern inspector's **Browse…**, or the **Add pattern…** add-action. |
+| `svg-import` | `dialogs/svg-import.tsx` | SVG within the vector-size cap, selected through **Add image…**, drop import, or clipboard paste. Oversized SVG uses the raster fallback instead. |
 | `trace` | `dialogs/trace.tsx` | Image inspector's **Convert to vector…**. |
 | `confirm-dialog` | `components/confirm-dialog.tsx` | Any code path needing a Confirm/Cancel gate before a destructive action — e.g. New panel and JSON import both replace the whole document. Core infra, not a Wave-5 extension: it self-registers via a direct import in `dialog-host.tsx` rather than the `dialogs/*` auto-discovery glob. |
 
@@ -73,7 +74,7 @@ Browses the full 1,942-family Google Fonts catalog with search, category filters
 A responsive grid of pattern thumbnails, one card per entry in `PATTERN_GENERATORS` (see [Patterns → Built-in catalog](../patterns/built-in-patterns.mdx)), each rendered with `renderPatternThumb`. It opens two ways, both resolving to a single `ctx.commit()` (one undo entry) before closing:
 
 - **With `{ layerId }`** (from the pattern inspector) — clicking a card swaps that existing pattern layer's `patternType` and resets its `params` to the new pattern's defaults.
-- **With no props** (from the Add pattern… add-action) — clicking a card creates a brand-new pattern layer on top of the stack and selects it.
+- **With no props** (from the Add pattern… add-action) — clicking a card creates a brand-new pattern layer in the Copper container and selects it.
 
 Each thumbnail is drawn with a `useLayoutEffect` (not `useEffect`) so it's sized and painted before the browser's first paint frame — otherwise the `<canvas>` would flash its default 300×150 box for one frame and the grid would visibly jump.
 
@@ -81,7 +82,7 @@ With the catalog grown to dozens of patterns, the dialog no longer renders every
 
 #### Trace dialog
 
-The image-to-vector workflow — see [Image tracing](./image-tracing.mdx) for the full pipeline it drives. In outline: it decodes the source image layer, downscales and traces it to an SVG (debounced 250ms after any option change), previews that SVG in an `<img>` (never `dangerouslySetInnerHTML`, so a hostile trace result can't execute embedded script), and on **Apply** converts the SVG into `PathLayer`s, inserts them directly above the source image, hides the source image (rather than deleting it — it stays as a hidden design-time reference), and selects the first traced layer. All of that is one `ctx.commit()`.
+The image-to-vector workflow — see [Image tracing](./image-tracing.mdx) for the full pipeline it drives. In outline: it decodes the source image layer, downscales and traces it to an SVG (debounced 250ms after any option change), previews that SVG in an `<img>` (never `dangerouslySetInnerHTML`, so a hostile trace result can't execute embedded script), and on **Apply** converts the SVG into `PathLayer`s. The source image is reinserted as a hidden design-time reference in Copper, while each traced path is routed to the material container mapped from its palette paint; the first traced layer is selected. All of that is one `ctx.commit()`.
 
 Trace options exposed in the dialog: a **3-color palette** toggle (quantize straight to the fixed panel palette vs. a free 2–8 color count), **min shape outline** (drops small traced regions below this pixel threshold), and **blur radius** (pre-blur before tracing, to smooth noisy source rasters).
 

@@ -67,7 +67,7 @@ All five layer types share a base shape plus type-specific fields.
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | `string` | Stable layer id. Minted via `mintId('layer')` if missing on import. |
+| `id` | `string` | Stable layer id. Missing/empty ids receive a deterministic type/group fallback on import; collisions receive stable numeric suffixes. |
 | `name` | `string` | Display name. Defaults to `""` if missing. |
 | `hidden` | `boolean` (optional) | Omitted while a layer has never been hidden. Once its visibility is toggled, the field is written explicitly — including `false` after an even number of toggles — since the toggle op flips whatever value is already there. |
 | `type` | `'shape' \| 'pattern' \| 'path' \| 'text' \| 'image'` | Discriminates the fields below. |
@@ -87,6 +87,7 @@ All five layer types share a base shape plus type-specific fields.
 |---|---|---|
 | `patternType` | `string` | Free-form identifier (e.g. `"dot-grid"`). Kept verbatim even if unrecognized — core has no dependency on the patterns registry that would validate it. |
 | `params` | `Record<string, number>` | Pattern-specific numeric parameters (e.g. `pitch`, `radius`). |
+| `x`, `y`, `size` | `number` | Position and side length of the movable square, in millimeters. |
 | `color` | `0 \| 1 \| 2` | |
 
 ### `path`
@@ -125,6 +126,7 @@ All five layer types share a base shape plus type-specific fields.
 |---|---|---|
 | `src` | `string` | A data URL. Design-time reference only — a raster cannot be manufactured; the final panel uses the vector layers traced from it. |
 | `x`, `y`, `width`, `height` | `number` | Millimeters. |
+| `rotation` | `number` (optional) | Degrees clockwise around the bbox center. |
 
 ## Guide fields
 
@@ -132,21 +134,23 @@ Each entry in the `guides` array is a ruler guide — a reference line, not a la
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | `string` | Stable guide id. Minted via `mintId('guide')` if missing on import. |
+| `id` | `string` | Stable guide id. Generated and collision-repaired deterministically if missing or duplicated on import. |
 | `orientation` | `'horizontal' \| 'vertical'` | Required. A `horizontal` guide is the line `y = position`; a `vertical` guide is `x = position`. An entry with any other value is **dropped** on import (a guide with no valid axis can't plant a line). |
 | `position` | `number` | The line's coordinate in millimeters. Required and finite; an entry with a missing/non-finite `position` is **dropped** rather than defaulted to `0`. |
 | `hidden` | `boolean` (optional) | Omitted unless set. A hidden guide renders faintly and never snaps. |
 
 ## ColorIndex + palette
 
-Every layer's `color` (and a `path` layer's `fill`/`stroke`) is a
-`ColorIndex`: `0`, `1`, or `2`. The index maps to a fixed 3-color panel
-finish, defined once in `packages/core/src/palette.ts`:
+Every layer's compatibility `color` field (and a `path` layer's
+`fill`/`stroke` enablement) uses a `ColorIndex`: `0`, `1`, or `2`. In v5 the
+owning fixed container is authoritative and normalizes every non-null paint
+field to its material index. The mapping is defined once in
+`packages/core/src/palette.ts`:
 
 | Index | Name | Meaning |
 |---|---|---|
-| `0` | `black` | Soldermask |
-| `1` | `gold` | Exposed copper (ENIG-plated) |
+| `0` | `black` | Solder mask |
+| `1` | `gold` | Exposed copper with the product's HASL finish |
 | `2` | `white` | Silkscreen |
 
 The `palette` array in the envelope (`["black", "gold", "white"]`) is these

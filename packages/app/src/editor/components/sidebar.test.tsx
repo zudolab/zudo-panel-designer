@@ -4,7 +4,9 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import {
   createPcbLayerStack,
   projectPcbLayerStack as projectFlatLayers,
+  type GroupNode,
   type Guide,
+  type LayerNode,
   type ShapeLayer,
 } from '@zpd/core';
 import type { ToolContext } from '../types';
@@ -29,9 +31,20 @@ const GUIDES: Guide[] = [
   { id: 'guide-v1', orientation: 'vertical', position: 4, hidden: true },
 ];
 
-function stubCtx() {
+const GROUP: GroupNode = {
+  kind: 'group',
+  id: 'group-1',
+  name: 'Artwork',
+  children: [LAYER],
+};
+
+function stubCtx(copperChildren: LayerNode[] = [LAYER]) {
   const commit = vi.fn();
-  const doc = { panelHp: 12, layers: createPcbLayerStack({ copper: [LAYER] }), guides: GUIDES };
+  const doc = {
+    panelHp: 12,
+    layers: createPcbLayerStack({ copper: copperChildren }),
+    guides: GUIDES,
+  };
   const ctx = {
     doc,
     selectedIds: [],
@@ -45,8 +58,11 @@ function stubCtx() {
   return { ctx, doc, commit };
 }
 
-function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
-  const { ctx, doc } = stubCtx();
+function renderSidebar(
+  overrides: Partial<Parameters<typeof Sidebar>[0]> = {},
+  copperChildren?: LayerNode[],
+) {
+  const { ctx, doc } = stubCtx(copperChildren);
   const onShowGuidesChange = vi.fn();
   render(
     <Sidebar
@@ -102,5 +118,38 @@ describe('Sidebar — guides are view furniture, not layers', () => {
   it('removes the redundant standalone fixed palette card', () => {
     renderSidebar();
     expect(screen.queryByRole('button', { name: /Palette \(fixed\)/ })).toBeNull();
+  });
+});
+
+describe('Sidebar — Layers section lifecycle', () => {
+  it('renders the committed doc stack immediately even when the live ctx ref is one render behind', () => {
+    const moved: ShapeLayer = { ...LAYER, id: 'moved', name: 'Moved to silk', color: 2 };
+    const committedDoc = {
+      panelHp: 12,
+      layers: createPcbLayerStack({ silkscreen: [moved] }),
+      guides: GUIDES,
+    };
+
+    renderSidebar({ doc: committedDoc });
+
+    expect(screen.getByText('Moved to silk')).toBeTruthy();
+    expect(screen.queryByText('Rect')).toBeNull();
+  });
+
+  it('preserves material and group collapse state while the outer section is closed', () => {
+    renderSidebar({}, [GROUP]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Artwork' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Copper' }));
+
+    const layersToggle = screen.getByRole('button', { name: 'Layers' });
+    fireEvent.click(layersToggle);
+    expect(layersToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'Expand Copper' })).toBeNull();
+
+    fireEvent.click(layersToggle);
+    expect(screen.getByRole('button', { name: 'Expand Copper' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Copper' }));
+    expect(screen.getByRole('button', { name: 'Expand Artwork' })).toBeTruthy();
   });
 });

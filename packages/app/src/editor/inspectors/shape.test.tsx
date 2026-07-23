@@ -33,7 +33,7 @@ describe('shape inspector material context (#166)', () => {
       },
     } as unknown as ToolContext;
 
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+    render(<Inspector layer={layer} materialRole="solder-mask" onChange={onChange} ctx={ctx} />);
 
     expect(screen.getByText('Solder mask')).toBeTruthy();
     expect(screen.queryByText('Color')).toBeNull();

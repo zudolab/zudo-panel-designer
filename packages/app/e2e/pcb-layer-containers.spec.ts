@@ -4,7 +4,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
-import { bridge, importPanelJson, MOD, openEditor } from './helpers';
+import { bridge, dragLayerRowAfter, importPanelJson, MOD, openEditor } from './helpers';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MANUFACTURING_FIXTURE = path.join(__dirname, 'fixtures', 'preview-manufacturing.json');
@@ -57,7 +57,7 @@ test('@smoke fixed PCB containers preserve material, persistence, and physical o
 
   // Default creations route by tool kind, regardless of their legacy palette
   // value. The fixture itself supplies a deterministic stale-color proof.
-  await page.getByTitle('Add rectangle').click();
+  await page.getByLabel('Add rectangle').click();
   const rectId = await bridge(page).getSelectedId();
   expect(rectId).not.toBeNull();
   expect(await bridge(page).getMaterialLayer(rectId!)).toMatchObject({
@@ -86,9 +86,7 @@ test('@smoke fixed PCB containers preserve material, persistence, and physical o
 
   // Real HTML5 DnD moves ordinary artwork across roots. Membership changes
   // immediately, then undo/redo restores both material and placement.
-  const goldRow = page.getByRole('button', { name: 'Select layer Gold base' }).locator('..');
-  const silkTail = page.locator('[data-material-role="silkscreen"] ul');
-  await goldRow.dragTo(silkTail);
+  await dragLayerRowAfter(page, 'Gold base', 'White over black');
   await expect
     .poll(async () => (await bridge(page).getMaterialLayer('gold-base'))?.material)
     .toBe('silkscreen');
@@ -112,4 +110,5 @@ test('@smoke fixed PCB containers preserve material, persistence, and physical o
     'solder-mask',
     'silkscreen',
   ]);
+  expect((await bridge(page).getMaterialLayer('gold-base'))?.material).toBe('silkscreen');
 });

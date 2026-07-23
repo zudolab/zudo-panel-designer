@@ -22,6 +22,73 @@ export async function openEditor(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__zpdTest !== undefined);
 }
 
+// Playwright's locator.dragTo() targets the destination's pre-drag center.
+// Layer-list rows add a live drop affordance during dragover, so that shortcut
+// can finish without delivering a legal drop to the intended row. Dispatch
+// the browser's HTML5 DnD sequence with one shared DataTransfer instead. This
+// still exercises the production dragstart/dragover/drop handlers; it never
+// writes through the read-only test bridge.
+export async function dragLayerRowAfter(
+  page: Page,
+  sourceName: string,
+  targetName: string,
+): Promise<void> {
+  await page.evaluate(
+    ({ sourceName, targetName }) => {
+      const rowFor = (name: string): HTMLLIElement => {
+        const button = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+          (candidate) => candidate.getAttribute('aria-label') === `Select layer ${name}`,
+        );
+        const row = button?.closest<HTMLLIElement>('li[draggable="true"]');
+        if (!row) throw new Error(`draggable layer row not found: ${name}`);
+        return row;
+      };
+
+      const source = rowFor(sourceName);
+      const target = rowFor(targetName);
+      const dataTransfer = new DataTransfer();
+      source.dispatchEvent(
+        new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer }),
+      );
+
+      const rect = target.getBoundingClientRect();
+      const position = {
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height * 0.75,
+      };
+      target.dispatchEvent(
+        new DragEvent('dragenter', {
+          ...position,
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+        }),
+      );
+      const accepted = !target.dispatchEvent(
+        new DragEvent('dragover', {
+          ...position,
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+        }),
+      );
+      if (!accepted) throw new Error(`layer row rejected drop: ${sourceName} -> ${targetName}`);
+      target.dispatchEvent(
+        new DragEvent('drop', {
+          ...position,
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+        }),
+      );
+      source.dispatchEvent(
+        new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer }),
+      );
+    },
+    { sourceName, targetName },
+  );
+}
+
 export function bridge(page: Page) {
   return {
     getDoc: () => page.evaluate(() => window.__zpdTest!.getDoc()),

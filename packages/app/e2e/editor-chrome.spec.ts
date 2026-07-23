@@ -38,7 +38,7 @@ test('@smoke sidebar sections collapse and expand independently', async ({ page 
 
   await layers.click();
   await expect(layers).toHaveAttribute('aria-expanded', 'false');
-  await expect(content).toHaveCount(0);
+  await expect(content).toBeHidden();
 
   await layers.click();
   await expect(layers).toHaveAttribute('aria-expanded', 'true');

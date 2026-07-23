@@ -70,7 +70,9 @@ const Inspector = getInspector('text')!;
 describe('text inspector', () => {
   it('round-trips multi-line content edits into the layer patch', () => {
     const onChange = vi.fn();
-    render(<Inspector layer={baseLayer} onChange={onChange} ctx={stubCtx()} />);
+    render(
+      <Inspector layer={baseLayer} materialRole="silkscreen" onChange={onChange} ctx={stubCtx()} />,
+    );
 
     const textarea = screen.getByDisplayValue('Hello');
     fireEvent.change(textarea, { target: { value: 'Line one\nLine two' } });
@@ -81,7 +83,7 @@ describe('text inspector', () => {
   it('lists the curated fonts and commits a font change as one undo entry', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
-    render(<Inspector layer={baseLayer} onChange={onChange} ctx={ctx} />);
+    render(<Inspector layer={baseLayer} materialRole="silkscreen" onChange={onChange} ctx={ctx} />);
 
     const select = screen.getByDisplayValue('Oswald') as HTMLSelectElement;
     const optionFamilies = Array.from(select.options).map((o) => o.value);
@@ -94,7 +96,9 @@ describe('text inspector', () => {
 
   it('keeps a non-curated fontFamily selectable instead of silently swapping it', () => {
     const layer: TextLayer = { ...baseLayer, fontFamily: 'sans-serif' };
-    render(<Inspector layer={layer} onChange={vi.fn()} ctx={stubCtx()} />);
+    render(
+      <Inspector layer={layer} materialRole="silkscreen" onChange={vi.fn()} ctx={stubCtx()} />,
+    );
 
     const select = screen.getByDisplayValue('sans-serif') as HTMLSelectElement;
     expect(select.value).toBe('sans-serif');
@@ -102,7 +106,9 @@ describe('text inspector', () => {
 
   it('shows the owning material without an object-level color control', () => {
     const onChange = vi.fn();
-    render(<Inspector layer={baseLayer} onChange={onChange} ctx={stubCtx()} />);
+    render(
+      <Inspector layer={baseLayer} materialRole="silkscreen" onChange={onChange} ctx={stubCtx()} />,
+    );
 
     expect(screen.getByText('Silkscreen')).toBeTruthy();
     expect(screen.queryByText('Color')).toBeNull();
@@ -112,7 +118,9 @@ describe('text inspector', () => {
 
   it('sorts starred favorites to the top of the dropdown and marks them with a star', () => {
     toggleFontFavorite('Bebas Neue');
-    render(<Inspector layer={baseLayer} onChange={vi.fn()} ctx={stubCtx()} />);
+    render(
+      <Inspector layer={baseLayer} materialRole="silkscreen" onChange={vi.fn()} ctx={stubCtx()} />,
+    );
 
     const select = screen.getByDisplayValue('Oswald') as HTMLSelectElement;
     // No non-curated guard option for this layer, so the first option is the
@@ -123,7 +131,7 @@ describe('text inspector', () => {
 
   it('opens the Font Explorer dialog with the layer id from the Browse button', () => {
     const ctx = stubCtx();
-    render(<Inspector layer={baseLayer} onChange={vi.fn()} ctx={ctx} />);
+    render(<Inspector layer={baseLayer} materialRole="silkscreen" onChange={vi.fn()} ctx={ctx} />);
 
     fireEvent.click(screen.getByRole('button', { name: /browse google fonts/i }));
     expect(ctx.openDialog).toHaveBeenCalledWith('font-explorer', { layerId: 't1' });

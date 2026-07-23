@@ -3,7 +3,13 @@ title: Fonts
 sidebar_position: 10
 ---
 
-Text layers are rendered as physical silkscreen printing, not a monitor — so the font picker isn't "whatever's installed." It's a two-tier system: a small **curated** dropdown chosen for legibility at silkscreen sizes and printing tolerances (`fonts.ts`), plus an opt-in **Google Fonts Explorer** modal (`dialogs/font-explorer.tsx`) for anyone who wants to reach past the curated set into the full public catalog.
+Text defaults to the Silkscreen container, so the curated font picker emphasizes
+legibility at silkscreen sizes and printing tolerances rather than "whatever is
+installed." A text layer can still be moved to Copper or Solder mask, whose
+container then controls its effective material. The picker itself is a
+two-tier system: a small **curated** dropdown (`fonts.ts`), plus an opt-in
+**Google Fonts Explorer** modal (`dialogs/font-explorer.tsx`) for anyone who
+wants to reach past the curated set into the full public catalog.
 
 ## Self-hosted, no CDN
 

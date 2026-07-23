@@ -2,14 +2,12 @@ import { pcbLayerDefinition, type PathLayer } from '@zpd/core';
 import { registerInspector } from '../registry/inspectors';
 import { Field, MaterialField, NumberField } from '../components/inspector-ui';
 import type { InspectorProps } from '../types';
-import { owningMaterialRole } from './material';
 
-function PathInspector({ layer, onChange, ctx }: InspectorProps<PathLayer>) {
-  const material = owningMaterialRole(ctx.doc.layers, layer.id);
-  const materialColor = material === null ? null : pcbLayerDefinition(material).color;
+function PathInspector({ layer, materialRole, onChange }: InspectorProps<PathLayer>) {
+  const materialColor = materialRole === null ? null : pcbLayerDefinition(materialRole).color;
   return (
     <div className="flex flex-col gap-2">
-      <MaterialField role={material} />
+      <MaterialField role={materialRole} />
       <Field label="Fill enabled">
         <input
           type="checkbox"

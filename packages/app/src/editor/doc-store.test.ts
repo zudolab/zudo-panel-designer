@@ -122,6 +122,21 @@ describe('legacy autosave promotion', () => {
     expect(window.localStorage.getItem(DOC_STORAGE_KEY)).toBeNull();
     expect(window.localStorage.getItem(LEGACY_DOC_STORAGE_KEY)).toBe(raw);
   });
+
+  it('allows a later legitimate v2 write without touching protected legacy bytes', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      savedAt: 1,
+      config: { ...legacyConfig, version: PANEL_CONFIG_VERSION },
+    });
+    window.localStorage.setItem(LEGACY_DOC_STORAGE_KEY, raw);
+    expect(readDoc()).toBeNull();
+
+    const next = createDefaultDoc(20);
+    expect(writeDoc(next)).toEqual({ ok: true });
+    expect(window.localStorage.getItem(LEGACY_DOC_STORAGE_KEY)).toBe(raw);
+    expect(readDoc()).toEqual(next);
+  });
 });
 
 describe('clearDoc', () => {

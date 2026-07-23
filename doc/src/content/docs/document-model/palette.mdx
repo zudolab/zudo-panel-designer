@@ -1,41 +1,50 @@
 ---
-title: The 3-color palette
-description: The fixed 3-color palette and its physical PCB meaning, from palette.ts.
+title: PCB material stack and display palette
+description: The three fixed fabrication containers and their display colors, from palette.ts.
 sidebar_position: 3
 ---
 
-## A fixed 3-entry palette
+## Three fixed material containers
 
-Every color in a zpd document is one of exactly three fixed entries — there is no custom-color mode. The physical PCB panel finish decides these; they are not arbitrary UI colors:
+Every document has exactly three fabrication roots in physical bottom-to-top
+order:
+
+| Container | Role | Effective display color | PCB meaning |
+| --- | --- | --- | --- |
+| Copper | `copper` | gold (`#d4af37`) | Exposed copper with the product's HASL finish |
+| Solder mask | `solder-mask` | black (`#151515`) | Positive solder-mask coverage |
+| Silkscreen | `silkscreen` | white (`#f2f0e9`) | Printed silkscreen |
+
+The Layers UI reverses that order so the visible top surface appears first:
+**Silkscreen → Solder mask → Copper**. These roots are structural
+`PcbLayerContainer`s, not ordinary groups. Their roles, ids, labels, order,
+and material colors are fixed.
+
+<Note title="Membership is authoritative">
+  A vector object's owning container determines every non-null fill and
+  stroke at projection time. Moving an object between containers therefore
+  changes its material. Legacy `color`, `fill`, and `stroke` indexes remain in
+  the JSON for backward compatibility and to represent whether path fill or
+  stroke is enabled, but they do not override container membership in v5.
+</Note>
+
+Solder-mask artwork uses positive coverage: painted regions cover copper,
+while missing mask and holes in an even-odd path reveal the gold/HASL copper
+below. Raster image layers are design references only. They live in Copper by
+default but are excluded from manufacturing and 3D material maps.
+
+## Compatibility color indexes
 
 ```ts
 type ColorIndex = 0 | 1 | 2;
 ```
 
-| Index | Name | Hex | PCB meaning |
-| --- | --- | --- | --- |
-| `0` | black | `#151515` | Soldermask |
-| `1` | gold | `#d4af37` | Exposed copper, ENIG-plated |
-| `2` | white | `#f2f0e9` | Silkscreen |
+| Index | Name | Owning role |
+| --- | --- | --- |
+| `0` | black | `solder-mask` |
+| `1` | gold | `copper` |
+| `2` | white | `silkscreen` |
 
-```ts
-const PALETTE: readonly PaletteEntry[] = [
-  { index: 0, name: 'black', hex: '#151515', note: 'soldermask' },
-  { index: 1, name: 'gold', hex: '#d4af37', note: 'exposed copper (ENIG)' },
-  { index: 2, name: 'white', hex: '#f2f0e9', note: 'silkscreen' },
-];
-```
-
-<Note title="Hex is display-only; the name is the contract">
-  The hex values are display approximations for the editor UI — they are chosen to look right on screen, not to match an exact ink/plating swatch. The color *names* (`'black' | 'gold' | 'white'`) are the actual contract that other packages (patterns, serialize, app) rely on, including the `palette` field written into an exported `PanelConfig`.
-</Note>
-
-## Lookup helper
-
-```ts
-function paletteEntry(index: ColorIndex): PaletteEntry {
-  return PALETTE[index];
-}
-```
-
-Every colorable layer field (`ShapeLayer.color`, `PatternLayer.color`, `TextLayer.color`, `PathLayer.fill` / `PathLayer.stroke`) stores a `ColorIndex`, not a hex string or a name — `paletteEntry` is the one place that resolves an index to its display hex and physical-layer note.
+The hex values are display approximations, not fabrication swatches. The
+exported `palette` field remains a derived, advisory mapping for older readers;
+the v5 `layers` stack is the authoritative fabrication model.

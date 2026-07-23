@@ -79,7 +79,7 @@ describe('InspectorHost onChange (#150)', () => {
       }),
     };
     const { ctx, commit } = stubCtx(doc);
-    render(<InspectorHost ctx={ctx} layer={leaf} selectedIds={['deep']} />);
+    render(<InspectorHost ctx={ctx} doc={doc} layer={leaf} selectedIds={['deep']} />);
     expect(screen.getByTestId('mock-shape-inspector')).toBeTruthy();
 
     lastInspectorProps().onChange({ x: 42, color: 2 });
@@ -105,7 +105,7 @@ describe('InspectorHost onChange (#150)', () => {
       layers: createPcbLayerStack({ copper: [group('g', [leaf])] }),
     };
     const { ctx, commit, replace } = stubCtx(doc);
-    render(<InspectorHost ctx={ctx} layer={leaf} selectedIds={['deep']} />);
+    render(<InspectorHost ctx={ctx} doc={doc} layer={leaf} selectedIds={['deep']} />);
 
     lastInspectorProps().onChange({ width: 33 }, { commit: false });
 
@@ -114,5 +114,31 @@ describe('InspectorHost onChange (#150)', () => {
     const next = replace.mock.calls[0][0] as DocState;
     const groupNode = next.layers[0].children[0] as GroupNode;
     expect((groupNode.children[0] as ShapeLayer).width).toBe(33);
+  });
+
+  it('uses the committed render doc for material context and patches, not a lagging ctx ref', () => {
+    registerInspector('shape', MockShapeInspector);
+    const staleLeaf = shape('moving');
+    const staleDoc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [staleLeaf] }),
+    };
+    const movedLeaf = shape('moving', { color: 2 });
+    const committedDoc: DocState = {
+      ...staleDoc,
+      layers: createPcbLayerStack({ silkscreen: [movedLeaf] }),
+    };
+    const { ctx, commit } = stubCtx(staleDoc);
+
+    render(
+      <InspectorHost ctx={ctx} doc={committedDoc} layer={movedLeaf} selectedIds={['moving']} />,
+    );
+
+    expect(lastInspectorProps().materialRole).toBe('silkscreen');
+    lastInspectorProps().onChange({ x: 7 });
+    const next = commit.mock.calls[0][0] as DocState;
+    expect(next.layers[0].children).toEqual([]);
+    expect(next.layers[2].children[0]).toMatchObject({ id: 'moving', x: 7, color: 2 });
   });
 });

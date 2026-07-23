@@ -15,7 +15,7 @@ test('@smoke autosave: a nudge survives a full page reload via localStorage rest
   page,
 }) => {
   await openEditor(page);
-  const before = (await bridge(page).getDoc()).layers.find((l) => l.id === 'demo-rect') as {
+  const before = (await bridge(page).getMaterialLayer('demo-rect')) as {
     x: number;
   };
 
@@ -30,7 +30,7 @@ test('@smoke autosave: a nudge survives a full page reload via localStorage rest
   await page.reload();
   await page.waitForFunction(() => window.__zpdTest !== undefined);
 
-  const after = (await bridge(page).getDoc()).layers.find((l) => l.id === 'demo-rect') as {
+  const after = (await bridge(page).getMaterialLayer('demo-rect')) as {
     x: number;
   };
   expect(after.x).toBeCloseTo(before.x + 0.5, 5);
@@ -106,8 +106,14 @@ test('@smoke clipboard: a zpd envelope paste inserts fresh-id clones at the 2mm 
   });
 
   expect(await bridge(page).getLayerCount()).toBe(before + 1);
-  const layers = (await bridge(page).getDoc()).layers;
-  const pasted = layers[layers.length - 1] as { id: string; x: number; y: number; width: number };
+  const pastedId = await bridge(page).getSelectedId();
+  expect(pastedId).not.toBeNull();
+  const pasted = (await bridge(page).getMaterialLayer(pastedId!)) as {
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+  };
   expect(pasted.id).not.toBe('env-rect'); // fresh id, never the envelope's
   expect(pasted.x).toBeCloseTo(7, 5); // 5 + 2mm cascade
   expect(pasted.y).toBeCloseTo(7, 5);
@@ -130,13 +136,12 @@ test('@smoke align panel: Align Left flushes both selected layers to the shared 
   await page.mouse.down();
   await page.mouse.move(end.x, end.y, { steps: 10 });
   await page.mouse.up();
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-ellipse', 'demo-rect']);
 
   await page.getByRole('button', { name: 'Align Left' }).click();
 
-  const layers = (await bridge(page).getDoc()).layers;
-  const rect = layers.find((l) => l.id === 'demo-rect') as { x: number };
-  const ellipse = layers.find((l) => l.id === 'demo-ellipse') as { x: number };
+  const rect = (await bridge(page).getMaterialLayer('demo-rect')) as { x: number };
+  const ellipse = (await bridge(page).getMaterialLayer('demo-ellipse')) as { x: number };
   expect(rect.x).toBeCloseTo(8, 5);
   expect(ellipse.x).toBeCloseTo(8, 5); // was 30 — flushed to the selection's left edge
 });
@@ -158,8 +163,7 @@ test('@smoke font explorer: picking a catalog family commits it to the text laye
   await page.getByPlaceholder('Search Google Fonts…').fill('Roboto');
   await page.getByRole('button', { name: 'Use Roboto', exact: true }).click();
 
-  const layers = (await bridge(page).getDoc()).layers;
-  const demoText = layers.find((l) => l.id === 'demo-text');
+  const demoText = await bridge(page).getMaterialLayer('demo-text');
   expect(demoText?.type === 'text' && demoText.fontFamily).toBe('Roboto');
   // dialog closed itself after the pick
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -170,14 +174,14 @@ test('@smoke import round-trip: a dropped export restores the pre-mutation docum
 }) => {
   await openEditor(page);
   const exported = await bridge(page).serialize();
-  const originalRect = (await bridge(page).getDoc()).layers.find((l) => l.id === 'demo-rect') as {
+  const originalRect = (await bridge(page).getMaterialLayer('demo-rect')) as {
     x: number;
   };
 
   // Mutate: nudge demo-rect 1mm right (Shift = 1mm step).
   await selectAt(page, { x: 20, y: 22 });
   await page.keyboard.press('Shift+ArrowRight');
-  const mutated = (await bridge(page).getDoc()).layers.find((l) => l.id === 'demo-rect') as {
+  const mutated = (await bridge(page).getMaterialLayer('demo-rect')) as {
     x: number;
   };
   expect(mutated.x).toBeCloseTo(originalRect.x + 1, 5);
@@ -197,7 +201,7 @@ test('@smoke import round-trip: a dropped export restores the pre-mutation docum
   await page.getByRole('button', { name: 'Replace' }).click();
   await expect(page.getByText('Panel imported')).toBeVisible();
 
-  const restored = (await bridge(page).getDoc()).layers.find((l) => l.id === 'demo-rect') as {
+  const restored = (await bridge(page).getMaterialLayer('demo-rect')) as {
     x: number;
   };
   expect(restored.x).toBeCloseTo(originalRect.x, 5);

@@ -18,8 +18,7 @@ const RECT = { x: 8, y: 14, width: 24, height: 16 };
 const CENTER = { x: 20, y: 22 };
 
 async function demoRect(page: Page): Promise<ShapeLayer> {
-  const doc = await bridge(page).getDoc();
-  return doc.layers.find((l) => l.id === 'demo-rect') as ShapeLayer;
+  return (await bridge(page).getMaterialLayer('demo-rect')) as ShapeLayer;
 }
 
 // Select demo-rect, then Shift-drag its rotate handle to EXACTLY 45°: the
@@ -198,7 +197,7 @@ test('@smoke rotated text keeps its render pivot while a bundled font is delayed
   expect(afterReleaseSerialized).toEqual(beforeReleaseSerialized);
   expect(JSON.stringify(afterReleaseSerialized)).toBe(beforeReleaseSerializedBytes);
   expect(JSON.stringify(await bridge(page).getSelectedIds())).toBe(beforeReleaseSelectionBytes);
-  const docLayer = (await bridge(page).getDoc()).layers[0] as TextLayer;
+  const docLayer = (await bridge(page).getMaterialLayer(layer.id)) as TextLayer;
   expect(docLayer).toMatchObject({
     x: layer.x,
     y: layer.y,

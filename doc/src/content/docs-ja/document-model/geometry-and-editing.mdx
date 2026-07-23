@@ -19,7 +19,11 @@ sidebar_position: 10
 
 ## ヒットテスト
 
-`packages/core/src/hit-test.ts` は、mm 空間でのキャンバスのヒットテストを実装します。`hitTestDoc(doc, mmX, mmY)` はレイヤーを**最前面から順に**（最大のインデックスから `0` へ向かって）走査し、非表示のレイヤーをスキップしながら、タイプごとのテストに最初に一致したレイヤーを返します。一致するものがなければ `null` を返します。
+`packages/core/src/hit-test.ts` は、すでに投影されたフラット leaf に対する
+mm 空間のキャンバスヒットテストを実装します。`hitTestDoc(doc, mmX, mmY)`
+は最前面からの 2 段階で走査し、まず pattern 以外、どの通常アートワークにも
+当たらない場合だけ pattern を調べます。非表示の祖先/コンテナは投影時に
+すでに畳み込まれています。
 
 | Layer type | ヒットテスト |
 | --- | --- |
@@ -27,28 +31,36 @@ sidebar_position: 10
 | `image` | 回転した矩形への点内包判定（矩形のみ。楕円の分岐はなし）。 |
 | `text` | *推定した* bbox に対する、回転矩形への点内包判定。`@zpd/core` にはキャンバス／DOM のフォントメトリクスがないため、`estimateTextBbox` は実際のグリフ計測ではなく、おおまかな等幅フォント寄りの推定（`TEXT_CHAR_WIDTH_FACTOR = 0.6`、`TEXT_LINE_HEIGHT_FACTOR = 1.2`）を用いる。クリックで選択するには十分だが、レイアウトの正確な根拠にはならない。 |
 | `path` | フラット化した塗り領域に対する even-odd（偶奇）の点内包判定（`closed` のときのみ）に加え、余裕を持たせたつかみ幅の下限（`Math.max(layer.strokeWidth, 1.5) / 2`、`MIN_STROKE_GRAB_MM = 1.5`）でのストローク距離判定。これにより、細い線でもクリックしやすいままになる。 |
-| `pattern` | 常に `false`。 |
+| `pattern` | 移動可能な `x`／`y`／`size` 正方形への点内包判定。pattern のフォールバック段階でのみ考慮される。 |
 
-<Warning title="パターンレイヤーはキャンバスからはヒットテストできない">
-  `hitTestLayer` は `type === 'pattern'` に対して無条件で `false` を返します。パターンレイヤーはパネル全体を覆うため、キャンバスをクリックしても決してそれを対象にできません——パターンレイヤーはレイヤーリストからのみ選択でき、キャンバスのクリックでは選択できません。これは機能の欠落ではなく、意図的なものです。
-</Warning>
+<Note title="パターンはアートワークのクリックを奪わない">
+  pattern 正方形はキャンバスから選択できますが、視覚的に上にあっても
+  pattern 以外のヒットが常に先です。大きな背景 pattern の下にある
+  アートワークへ引き続きアクセスできます。
+</Note>
 
 素の Node/Vitest にはブラウザの `Path2D` が存在しないため、パスのヒットテストは `isPointInPath`/`isPointInStroke` を使いません——ベジェをポリライン（折れ線）にフラット化し（下記参照）、独自に even-odd のレイキャスティングと点から線分への距離計算を行います。これにより `@zpd/core` は依存関係を持たず、ブラウザの外でもテスト可能なままになっています。
 
 ## レイヤーリスト操作
 
-`packages/core/src/layer-ops.ts` は、下から上へ並んだフラットなレイヤー配列に対して操作を行います。すべての関数は純粋かつイミュータブルで、入力を変更するのではなく**新しい**配列を返します。そのため、呼び出し側は[履歴](./history.mdx)のリデューサーに対して安価に差分／アンドゥを行えます。
+`packages/core/src/layer-ops.ts` は投影 leaf 用の小さなフラット配列ヘルパーを
+残しています。正式なドキュメント変更は `group-ops.ts` の通常ツリー/固定
+スタックヘルパーを使います。すべて純粋かつイミュータブルで、意味上の
+no-op は入力と同一参照を返すため、幽霊のような[履歴](./history.mdx)
+エントリを避けられます。
 
 | Function | 効果 |
 | --- | --- |
-| `addLayer(layers, layer, index?)` | `index`（配列の範囲にクランプされる）に挿入する。`index` を省略した場合は末尾に追加する。 |
-| `removeLayer(layers, id)` | 指定した `id` のレイヤーを除外する。 |
-| `duplicateLayer(layers, id, newId, nameSuffix = ' copy')` | 元のレイヤーのすぐ上にコピーを挿入する。`id: newId` を持ち、`name` にはサフィックスが付く。 |
-| `reorderLayer(layers, fromIndex, toIndex)` | splice でレイヤーを移動する。範囲外や同一のインデックスでは何もしない。 |
-| `toggleLayerHidden(layers, id)` | 該当レイヤーの `hidden` を反転する。 |
-| `renameLayer(layers, id, name)` | 該当レイヤーの `name` を設定する。 |
+| `insertPcbNode(stack, role, node, parentId?, index?)` | 深さと id の安全性を守り、通常 leaf/group を 1 つの固定マテリアルへ挿入する。 |
+| `movePcbNode(stack, id, role, parentId?, index?)` | マテリアル間を含め、通常サブツリーを親変更または並べ替えする。 |
+| `groupPcbNodes(stack, ids, name?)` / `ungroupPcbNode(...)` | 互換な通常ルートをグループ化、または通常グループを 1 つ解除する。固定ルートは参加しない。 |
+| `clonePcbNode(...)` / `deletePcbNodeById(...)` | 新しい id で複製、または通常サブツリーを削除する。 |
+| `updatePcbNodeById(...)` / `mapPcbLeavesById(...)` | 通常ノード/leaf を更新し、実効 paint を所有マテリアルへ再正規化する。 |
+| `togglePcbLayerHidden(stack, role)` | 1 つの固定コンテナの永続化・undo 可能な表示状態を切り替える。 |
 
-すべての関数は、自前で ID を生成するのではなく、**呼び出し側から渡された** `id`（`duplicateLayer` の場合は呼び出し側から渡された `newId`）を受け取ります。ID の生成はドキュメントモデルの関心事であり（`mintId`、[ドキュメントの状態とレイヤー](./document-state-and-layers.mdx)を参照）、こうすることでこれらの操作は入力に対する純粋な関数として保たれます。
+固定ルートには意図的に名前変更、削除、選択、並べ替えの操作がありません。
+コンテナ間移動では null でない paint が移動先マテリアルへ正規化され、
+拒否された挿入/移動は元のスタックを返します。
 
 ## パスのジオメトリ
 

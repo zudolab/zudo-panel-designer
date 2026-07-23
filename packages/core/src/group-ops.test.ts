@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clonePcbNode,
   cloneNodeWithFreshIds,
   collectLeafIds,
   deleteNodeById,
@@ -489,6 +490,11 @@ describe('mapPcbLeavesById', () => {
     expect(next[2]).not.toBe(stack[2]);
     expect(next[2].children[0]).toMatchObject({ id: 'silk', name: 'Silk' });
   });
+
+  it('returns the exact stack when every matching mapper result is unchanged', () => {
+    const stack = createPcbLayerStack({ copper: [shape('copper')] });
+    expect(mapPcbLeavesById(stack, ['copper'], (leaf) => leaf)).toBe(stack);
+  });
 });
 
 describe('replaceNodeWithNodes', () => {
@@ -539,6 +545,13 @@ describe('fixed PCB-stack operations', () => {
     expect(movedGroup.id).toBe(subtree.id);
     expect((movedGroup.children[0] as ShapeLayer).color).toBe(2);
     expect((movedGroup.children[1] as ShapeLayer).color).toBe(2);
+  });
+
+  it('returns no clone when the requested clone destination is rejected', () => {
+    const stack = createPcbLayerStack({ copper: [shape('a')] });
+    const result = clonePcbNode(stack, 'a', 'missing-parent');
+    expect(result.stack).toBe(stack);
+    expect(result.node).toBeNull();
   });
 
   it('groups only roots from one material and keeps fixed roots unavailable to ordinary operations', () => {

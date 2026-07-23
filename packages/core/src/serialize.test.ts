@@ -58,6 +58,22 @@ describe('panel config v5 fixed PCB stack', () => {
     expect(tryParsePanelConfig({ app: 'zpd', version: 5 }).ok).toBe(false);
     expect(tryParsePanelConfig({ app: 'zpd', version: 1, layers: [] }).ok).toBe(true);
   });
+
+  it('deterministically de-duplicates explicit and generated guide ids', () => {
+    const payload = {
+      version: 5,
+      app: 'zpd',
+      layers: [],
+      guides: [
+        { id: 'guide-2', orientation: 'vertical', position: 1 },
+        { orientation: 'horizontal', position: 2 },
+      ],
+    };
+    const first = parsePanelConfig(payload);
+    const second = parsePanelConfig(payload);
+    expect(first.guides.map((guide) => guide.id)).toEqual(['guide-2', 'guide-2-2']);
+    expect(JSON.stringify(second.guides)).toBe(JSON.stringify(first.guides));
+  });
 });
 
 describe('v1-v4 deterministic material migration', () => {

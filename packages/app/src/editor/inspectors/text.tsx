@@ -5,11 +5,9 @@ import { ActionButton, Field, MaterialField, NumberField } from '../components/i
 import { CURATED_FONTS, ensureFont } from '../fonts';
 import { useFontFavorites } from '../use-font-favorites';
 import type { InspectorProps } from '../types';
-import { owningMaterialRole } from './material';
 
-function TextInspector({ layer, onChange, ctx }: InspectorProps<TextLayer>) {
+function TextInspector({ layer, materialRole, onChange, ctx }: InspectorProps<TextLayer>) {
   const { favorites } = useFontFavorites();
-  const material = owningMaterialRole(ctx.doc.layers, layer.id);
 
   // Curated options with any starred (in the Font Explorer) sorted first, so
   // the fonts a user keeps reaching for surface at the top of the dropdown. A
@@ -64,7 +62,7 @@ function TextInspector({ layer, onChange, ctx }: InspectorProps<TextLayer>) {
       >
         Browse Google Fonts…
       </ActionButton>
-      <MaterialField role={material} />
+      <MaterialField role={materialRole} />
       <Field label="size (mm)">
         <NumberField value={layer.sizeMm} onCommit={(v) => onChange({ sizeMm: v })} />
       </Field>

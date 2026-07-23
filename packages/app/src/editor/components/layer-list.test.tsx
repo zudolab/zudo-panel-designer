@@ -430,6 +430,31 @@ describe('LayerList tree rendering (#153)', () => {
     expect(within(header).queryByTitle('Bring forward')).toBeNull();
   });
 
+  it('keeps fixed-control Space activation local and un-cancelled', () => {
+    const { ctx, commit } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+    const globalSpaceHandler = vi.fn((event: globalThis.KeyboardEvent) => {
+      if (event.code === 'Space') event.preventDefault();
+    });
+    window.addEventListener('keydown', globalSpaceHandler);
+
+    try {
+      const collapse = screen.getByRole('button', { name: 'Collapse Copper' });
+      expect(fireEvent.keyDown(collapse, { key: ' ', code: 'Space' })).toBe(true);
+      expect(globalSpaceHandler).not.toHaveBeenCalled();
+      fireEvent.click(collapse);
+      expect(screen.getByRole('button', { name: 'Expand Copper' })).toBeTruthy();
+
+      const visibility = screen.getByRole('button', { name: 'Hide Copper' });
+      expect(fireEvent.keyDown(visibility, { key: ' ', code: 'Space' })).toBe(true);
+      expect(globalSpaceHandler).not.toHaveBeenCalled();
+      fireEvent.click(visibility);
+      expect(commit).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('keydown', globalSpaceHandler);
+    }
+  });
+
   it('keeps material collapse session-only and outside ordinary roving membership', () => {
     const { ctx, commit } = nodeTreeCtx(fixtureTree());
     const { rerender } = render(<LayerList ctx={ctx} selectedIds={[]} />);

@@ -1,5 +1,5 @@
-// Persistence + clipboard integration coverage (#158, confirming #146's v4
-// serialize format and #156's clipboard v2 envelope). Real trusted input only
+// Persistence + clipboard integration coverage (#158/#169, confirming the v5
+// fixed PCB stack and the clipboard v3 material envelope). Real trusted input only
 // (page.mouse / page.keyboard / setInputFiles via importPanelJson) except for
 // the clipboard paste, which — like editor-composer-parity.spec.ts's own
 // clipboard test — dispatches a real ClipboardEvent carrying a DataTransfer,
@@ -13,7 +13,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { bridge, importPanelJson, MOD, openEditor, toScreenPoint } from './helpers';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const V3_FIXTURE = path.join(__dirname, 'fixtures', 'preview-manufacturing.json');
+const V3_FIXTURE = path.join(__dirname, 'fixtures', 'legacy-v3-panel.json');
 
 // demo-doc.ts geometry: demo-rect (8,14) 24x16 -> center (20,22);
 // demo-ellipse (30,40) 22x22 -> center (41,51).
@@ -27,19 +27,21 @@ async function click(page: Page, mm: { x: number; y: number }, modifiers: string
   for (const key of [...modifiers].reverse()) await page.keyboard.up(key);
 }
 
-test('@smoke export -> import a grouped doc round-trips intact at v4', async ({ page }) => {
+test('@smoke export -> import a grouped doc round-trips intact at v5', async ({ page }) => {
   await openEditor(page);
-  await click(page, RECT_CENTER);
-  await click(page, ELLIPSE_CENTER, ['Shift']);
+  // Groups cannot span fixed materials. Rect + Text are both ordinary
+  // Silkscreen children, selected through the real Layers UI.
+  await page.getByRole('button', { name: 'Select layer Rect' }).click();
+  await page.getByRole('button', { name: 'Select layer Text' }).click({ modifiers: ['Shift'] });
   await page.keyboard.press(`${MOD}+g`);
 
   const treeBefore = await bridge(page).getLayerTree();
   const group = treeBefore.find((n) => n.kind === 'group');
   if (!group || group.kind !== 'group') throw new Error('setup: ⌘G did not produce a group');
-  expect(group.children.map((c) => c.id)).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(group.children.map((c) => c.id)).toEqual(['demo-rect', 'demo-text']);
 
   const exported = await bridge(page).serialize();
-  expect(exported.version).toBe(4);
+  expect(exported.version).toBe(5);
   const docBefore = await bridge(page).getDoc();
 
   const tmpPath = path.join(__dirname, '..', 'test-results', 'group-export-roundtrip.json');
@@ -63,7 +65,9 @@ test('@smoke export -> import a grouped doc round-trips intact at v4', async ({ 
   expect(docAfter).toEqual(docBefore);
 });
 
-test('@smoke a pre-existing v3 fixture still loads unchanged (identity migration)', async ({ page }) => {
+test('@smoke a pre-existing v3 fixture migrates into the v5 fixed material stack without losing leaves', async ({
+  page,
+}) => {
   await openEditor(page);
   await importPanelJson(page, V3_FIXTURE);
 
@@ -73,8 +77,8 @@ test('@smoke a pre-existing v3 fixture still loads unchanged (identity migration
   };
   expect(fixture.version).toBe(3);
 
-  // Identity migration: a v3 doc has no group nodes at all, so every fixture
-  // layer must arrive as a top-level LEAF, in the same order, same ids/types.
+  // A v3 doc has no fixed containers or group nodes. Migration preserves the
+  // ordinary leaves while deterministically partitioning their legacy colors.
   const tree = await bridge(page).getLayerTree();
   expect(tree.every((n) => n.kind === 'layer')).toBe(true);
   expect(tree.map((n) => n.id)).toEqual(fixture.layers.map((l) => l.id));
@@ -82,14 +86,29 @@ test('@smoke a pre-existing v3 fixture still loads unchanged (identity migration
     fixture.layers.map((l) => l.type),
   );
 
-  // This app now serializes at v4 — re-serializing the migrated doc must not
-  // silently resurrect a v3 shape.
+  expect(
+    (await bridge(page).getMaterialLayers()).map(({ id, material }) => ({ id, material })),
+  ).toEqual([
+    { id: 'legacy-copper', material: 'copper' },
+    { id: 'legacy-mask', material: 'solder-mask' },
+    { id: 'legacy-silkscreen', material: 'silkscreen' },
+  ]);
+
+  // Re-serializing the migrated doc emits the canonical v5 physical stack,
+  // never the legacy flat v3 shape.
   const reserialized = await bridge(page).serialize();
-  expect(reserialized.version).toBe(4);
-  expect(reserialized.layers.map((l) => l.id)).toEqual(fixture.layers.map((l) => l.id));
+  expect(reserialized.version).toBe(5);
+  expect((await bridge(page).getPcbLayerStack()).map((root) => root.role)).toEqual([
+    'copper',
+    'solder-mask',
+    'silkscreen',
+  ]);
+  expect((await bridge(page).getLayerTree()).map((node) => node.id)).toEqual(
+    fixture.layers.map((layer) => layer.id),
+  );
 });
 
-test('@smoke copy -> paste a group across the v2 clipboard envelope preserves structure with fresh ids', async ({
+test('@smoke copy -> paste a group across the v3 material clipboard envelope preserves structure with fresh ids', async ({
   page,
 }) => {
   await openEditor(page);
@@ -100,37 +119,40 @@ test('@smoke copy -> paste a group across the v2 clipboard envelope preserves st
     const envelope = {
       app: 'zpd',
       kind: 'layers',
-      version: 2,
+      version: 3,
       layers: [
         {
-          kind: 'group',
-          id: 'src-group',
-          name: 'Envelope group',
-          children: [
-            {
-              id: 'src-a',
-              name: 'A',
-              type: 'shape',
-              shape: 'rect',
-              x: 5,
-              y: 5,
-              width: 10,
-              height: 10,
-              color: 1,
-            },
-            {
-              id: 'src-b',
-              name: 'B',
-              type: 'shape',
-              shape: 'ellipse',
-              x: 20,
-              y: 20,
-              width: 8,
-              height: 8,
-              color: 2,
-              hidden: true,
-            },
-          ],
+          material: 'copper',
+          node: {
+            kind: 'group',
+            id: 'src-group',
+            name: 'Envelope group',
+            children: [
+              {
+                id: 'src-a',
+                name: 'A',
+                type: 'shape',
+                shape: 'rect',
+                x: 5,
+                y: 5,
+                width: 10,
+                height: 10,
+                color: 1,
+              },
+              {
+                id: 'src-b',
+                name: 'B',
+                type: 'shape',
+                shape: 'ellipse',
+                x: 20,
+                y: 20,
+                width: 8,
+                height: 8,
+                color: 2,
+                hidden: true,
+              },
+            ],
+          },
         },
       ],
     };
@@ -149,7 +171,8 @@ test('@smoke copy -> paste a group across the v2 clipboard envelope preserves st
   const pasted = tree.find(
     (n) => n.kind === 'group' && n.children.some((c) => c.name === 'A' || c.name === 'B'),
   );
-  if (!pasted || pasted.kind !== 'group') throw new Error('pasted group not found in getLayerTree()');
+  if (!pasted || pasted.kind !== 'group')
+    throw new Error('pasted group not found in getLayerTree()');
   expect(pasted.id).not.toBe('src-group'); // fresh id — cloneNodeWithFreshIds mints one root-to-leaf
   expect(pasted.name).toBe('Envelope group'); // structure-preserving: name survives
   expect(pasted.children).toHaveLength(2);
@@ -160,10 +183,13 @@ test('@smoke copy -> paste a group across the v2 clipboard envelope preserves st
   expect(childB?.id).not.toBe('src-b');
   expect(childB?.hidden).toBe(true); // per-child hidden flag survives the round trip
 
-  const doc = await bridge(page).getDoc();
-  const groupNode = doc.layers.find((l) => l.id === pasted.id);
-  if (!groupNode || groupNode.kind !== 'group') throw new Error('pasted group missing from getDoc()');
-  const [a, b] = groupNode.children as { x: number; y: number }[];
+  const a = await bridge(page).getMaterialLayer(childA.id);
+  const b = await bridge(page).getMaterialLayer(childB.id);
+  if (a?.type !== 'shape' || b?.type !== 'shape') {
+    throw new Error('pasted group children missing from material projection');
+  }
+  expect(a.material).toBe('copper');
+  expect(b.material).toBe('copper');
   // 2mm cascade offset applied to every LEAF of the pasted subtree.
   expect(a.x).toBeCloseTo(7, 5);
   expect(a.y).toBeCloseTo(7, 5);
@@ -224,27 +250,26 @@ test('@smoke numeric-rotate Escape leaves zero undo/redo residue', async ({ page
 // reference. A unit-level tripwire that reproduces this child-fresh/
 // parent-stale ordering (a lagging ctx.doc harness) now lives in
 // rotate-selection-panel.test.tsx.
-test(
-  '@smoke typing again immediately after an Escape bakes from the pre-gesture baseline, not the abandoned pre-abort delta',
-  async ({ page }) => {
-    await openEditor(page);
-    await click(page, RECT_CENTER);
-    await click(page, ELLIPSE_CENTER, ['Shift']);
+test('@smoke typing again immediately after an Escape bakes from the pre-gesture baseline, not the abandoned pre-abort delta', async ({
+  page,
+}) => {
+  await openEditor(page);
+  await click(page, RECT_CENTER);
+  await click(page, ELLIPSE_CENTER, ['Shift']);
 
-    const rotateInput = page.getByLabel('Rotate selection (°)');
-    await expect(rotateInput).toBeVisible();
-    await rotateInput.fill('10');
-    await rotateInput.fill('47');
-    await rotateInput.press('Escape');
+  const rotateInput = page.getByLabel('Rotate selection (°)');
+  await expect(rotateInput).toBeVisible();
+  await rotateInput.fill('10');
+  await rotateInput.fill('47');
+  await rotateInput.press('Escape');
 
-    // The row is usable again afterward — not left stuck mid-gesture.
-    await rotateInput.fill('45');
-    await rotateInput.press('Enter');
-    const rect = (await bridge(page).getDoc()).layers.find((l) => l.id === 'demo-rect') as {
-      rotation?: number;
-    };
-    // Baked from the pre-gesture baseline — 92 (= 47 + 45) here means the
-    // abandoned pre-abort delta leaked back in (see comment above).
-    expect(rect.rotation).toBe(45);
-  },
-);
+  // The row is usable again afterward — not left stuck mid-gesture.
+  await rotateInput.fill('45');
+  await rotateInput.press('Enter');
+  const rect = (await bridge(page).getMaterialLayer('demo-rect')) as {
+    rotation?: number;
+  };
+  // Baked from the pre-gesture baseline — 92 (= 47 + 45) here means the
+  // abandoned pre-abort delta leaked back in (see comment above).
+  expect(rect.rotation).toBe(45);
+});

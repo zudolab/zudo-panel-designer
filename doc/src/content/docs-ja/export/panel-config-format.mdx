@@ -54,7 +54,7 @@ v5 は Copper、Solder mask、Silkscreen の 3 つの固定ルートを物理的
 
 | Field | Type | 備考 |
 |---|---|---|
-| `id` | `string` | 安定したレイヤー id。インポート時に欠落している場合は `mintId('layer')` で生成される。 |
+| `id` | `string` | 安定したレイヤー id。インポート時に欠落/空なら type/group に基づく決定的なフォールバックを使い、衝突には安定した数字サフィックスを付ける。 |
 | `name` | `string` | 表示名。欠落している場合は `""` がデフォルト。 |
 | `hidden` | `boolean`（任意） | レイヤーが一度も非表示にされていない間は省略される。表示状態が一度でも切り替えられると、このフィールドは明示的に書き込まれる——偶数回切り替えた後の `false` も含めて——トグル操作は既にある値を反転させるため。 |
 | `type` | `'shape' \| 'pattern' \| 'path' \| 'text' \| 'image'` | 以下のフィールドを判別する。 |
@@ -74,6 +74,7 @@ v5 は Copper、Solder mask、Silkscreen の 3 つの固定ルートを物理的
 |---|---|---|
 | `patternType` | `string` | 自由形式の識別子（例: `"dot-grid"`）。認識できなくてもそのまま保持される——core は、それを検証するパターンレジストリに依存していない。 |
 | `params` | `Record<string, number>` | パターン固有の数値パラメータ（例: `pitch`、`radius`）。 |
+| `x`, `y`, `size` | `number` | 移動可能な正方形の位置と辺長（ミリメートル）。 |
 | `color` | `0 \| 1 \| 2` | |
 
 ### `path`
@@ -112,6 +113,7 @@ v5 は Copper、Solder mask、Silkscreen の 3 つの固定ルートを物理的
 |---|---|---|
 | `src` | `string` | データ URL。設計時の参照のみ——ラスターは製造できず、最終的なパネルはそこからトレースされたベクターレイヤーを使う。 |
 | `x`, `y`, `width`, `height` | `number` | ミリメートル。 |
+| `rotation` | `number`（任意） | bbox の中心を軸にした時計回りの度数。 |
 
 ## ガイドのフィールド
 
@@ -119,21 +121,23 @@ v5 は Copper、Solder mask、Silkscreen の 3 つの固定ルートを物理的
 
 | Field | Type | 備考 |
 |---|---|---|
-| `id` | `string` | 安定したガイド id。インポート時に欠落している場合は `mintId('guide')` で生成される。 |
+| `id` | `string` | 安定したガイド id。インポート時に欠落または重複していれば決定的に生成・衝突修復される。 |
 | `orientation` | `'horizontal' \| 'vertical'` | 必須。`horizontal` ガイドは直線 `y = position`、`vertical` ガイドは `x = position`。それ以外の値のエントリはインポート時に **破棄される**（有効な軸を持たないガイドは線を引けない）。 |
 | `position` | `number` | 線の座標（ミリメートル）。必須かつ有限。`position` が欠落・非有限のエントリは、`0` にデフォルト化されるのではなく **破棄される**。 |
 | `hidden` | `boolean`（任意） | 設定されていなければ省略される。hidden なガイドは薄く描画され、決してスナップしない。 |
 
 ## ColorIndex + パレット
 
-すべてのレイヤーの `color`（および `path` レイヤーの `fill`／`stroke`）は
-`ColorIndex`（`0`、`1`、`2` のいずれか）です。このインデックスは、
-`packages/core/src/palette.ts` で一度だけ定義される固定の 3 色パネル仕上げに対応します。
+すべてのレイヤーの互換用 `color`（および `path` レイヤーの `fill`／`stroke`
+有効状態）は `ColorIndex`（`0`、`1`、`2` のいずれか）を使います。v5
+では所属する固定コンテナが正式な値であり、null でない各 paint フィールドは
+そのマテリアルのインデックスへ正規化されます。対応は
+`packages/core/src/palette.ts` で一度だけ定義されます。
 
 | Index | Name | 意味 |
 |---|---|---|
 | `0` | `black` | ソルダーマスク |
-| `1` | `gold` | 露出銅（ENIG メッキ） |
+| `1` | `gold` | 製品の HASL 仕上げによる露出銅 |
 | `2` | `white` | シルクスクリーン |
 
 エンベロープ内の `palette` 配列（`["black", "gold", "white"]`）は、これらの名前を

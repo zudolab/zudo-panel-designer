@@ -2,13 +2,11 @@ import type { ShapeLayer } from '@zpd/core';
 import { registerInspector } from '../registry/inspectors';
 import { Field, MaterialField, NumberField } from '../components/inspector-ui';
 import type { InspectorProps } from '../types';
-import { owningMaterialRole } from './material';
 
-function ShapeInspector({ layer, onChange, ctx }: InspectorProps<ShapeLayer>) {
-  const material = owningMaterialRole(ctx.doc.layers, layer.id);
+function ShapeInspector({ layer, materialRole, onChange }: InspectorProps<ShapeLayer>) {
   return (
     <div className="flex flex-col gap-2">
-      <MaterialField role={material} />
+      <MaterialField role={materialRole} />
       <Field label="x (mm)">
         <NumberField value={layer.x} onCommit={(v) => onChange({ x: v })} />
       </Field>

@@ -55,7 +55,7 @@ test('@smoke dragging a layer near a guide snaps its edge onto the guide (#53 + 
   await page.mouse.move(to.x, to.y, { steps: 10 });
   await page.mouse.up();
 
-  const rect = (await bridge(page).getDoc()).layers.find((l) => l.id === 'demo-rect');
+  const rect = await bridge(page).getMaterialLayer('demo-rect');
   if (rect?.type !== 'shape') throw new Error('demo-rect missing or wrong type');
   // Right edge lands on the guide to 0.01mm — tighter than the 0.1mm grid,
   // so this passes only because the guide caught it.

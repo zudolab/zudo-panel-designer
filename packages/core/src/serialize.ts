@@ -239,10 +239,14 @@ function parseLayerNode(value: unknown, panel: PanelDimsMm, depth: number): Laye
 }
 
 class DeterministicIds {
-  private readonly used = new Set<string>(PCB_LAYER_DEFINITIONS.map((definition) => definition.id));
+  private readonly used: Set<string>;
   private readonly remainingOriginals = new Map<string, number>();
 
-  constructor(originalIds: readonly string[]) {
+  constructor(
+    originalIds: readonly string[],
+    reservedIds: readonly string[] = PCB_LAYER_DEFINITIONS.map((definition) => definition.id),
+  ) {
+    this.used = new Set(reservedIds);
     for (const id of originalIds) {
       this.remainingOriginals.set(id, (this.remainingOriginals.get(id) ?? 0) + 1);
     }
@@ -421,9 +425,14 @@ function parseGuide(value: unknown, index: number): Guide | null {
 
 function parseGuides(value: unknown): Guide[] {
   if (!Array.isArray(value)) return [];
-  return value
+  const parsed = value
     .map((entry, index) => parseGuide(entry, index))
     .filter((guide): guide is Guide => guide !== null);
+  const ids = new DeterministicIds(
+    parsed.map((guide) => guide.id),
+    [],
+  );
+  return parsed.map((guide) => ({ ...guide, id: ids.claimOriginal(guide.id) }));
 }
 
 function appendPartitions(
