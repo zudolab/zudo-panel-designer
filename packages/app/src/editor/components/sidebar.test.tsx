@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { Guide, ShapeLayer } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  projectPcbLayerStack as projectFlatLayers,
+  type Guide,
+  type ShapeLayer,
+} from '@zpd/core';
 import type { ToolContext } from '../types';
-import { projectFlatLayers } from '../flat-projection';
 import { Sidebar } from './sidebar';
 
 afterEach(cleanup);
@@ -27,7 +31,7 @@ const GUIDES: Guide[] = [
 
 function stubCtx() {
   const commit = vi.fn();
-  const doc = { panelHp: 12, layers: [LAYER], guides: GUIDES };
+  const doc = { panelHp: 12, layers: createPcbLayerStack({ copper: [LAYER] }), guides: GUIDES };
   const ctx = {
     doc,
     selectedIds: [],
@@ -93,5 +97,10 @@ describe('Sidebar — guides are view furniture, not layers', () => {
     expect(screen.getByText('Rect')).toBeTruthy();
     expect(screen.queryByText(/guide-h1/)).toBeNull();
     expect(screen.queryByText(/guide-v1/)).toBeNull();
+  });
+
+  it('removes the redundant standalone fixed palette card', () => {
+    renderSidebar();
+    expect(screen.queryByRole('button', { name: /Palette \(fixed\)/ })).toBeNull();
   });
 });

@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import type { GroupNode, LayerNode, ShapeLayer } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  projectPcbLayerStack as projectFlatLayers,
+  type GroupNode,
+  type LayerNode,
+  type PcbLayerStack,
+  type ShapeLayer,
+} from '@zpd/core';
 import type { ToolContext } from '../types';
-import { projectFlatLayers } from '../flat-projection';
 import { LayerList } from './layer-list';
 
 afterEach(cleanup);
@@ -20,12 +26,23 @@ const LAYER: ShapeLayer = {
   color: 1,
 };
 
+function stack(
+  layers: LayerNode[],
+  extra: Partial<Record<'solder-mask' | 'silkscreen', LayerNode[]>> = {},
+): PcbLayerStack {
+  return createPcbLayerStack({ copper: layers, ...extra });
+}
+
+function copperChildren(layers: PcbLayerStack): LayerNode[] {
+  return layers[0].children;
+}
+
 function stubCtx() {
   const commit = vi.fn();
   const select = vi.fn();
   const selectIds = vi.fn();
   const ctx = {
-    doc: { panelHp: 12, layers: [LAYER] },
+    doc: { panelHp: 12, layers: stack([LAYER]), guides: [] },
     selectedIds: [],
     commit,
     select,
@@ -49,7 +66,7 @@ describe('LayerList rename', () => {
 
     expect(commit).toHaveBeenCalledTimes(1);
     const [patchedDoc] = commit.mock.calls[0];
-    expect(patchedDoc.layers[0]).toMatchObject({ id: 's1', name: 'Header Cutout' });
+    expect(copperChildren(patchedDoc.layers)[0]).toMatchObject({ id: 's1', name: 'Header Cutout' });
     // edit mode closed
     expect(screen.queryByDisplayValue('Header Cutout')).toBeNull();
   });
@@ -98,7 +115,8 @@ function shape(id: string, name: string): ShapeLayer {
 function multiCtx(selectedIds: readonly string[]) {
   let doc = {
     panelHp: 12,
-    layers: [shape('a', 'A'), shape('b', 'B'), shape('c', 'C')],
+    layers: stack([shape('a', 'A'), shape('b', 'B'), shape('c', 'C')]),
+    guides: [],
   };
   const commit = vi.fn();
   const selectIds = vi.fn();
@@ -159,10 +177,16 @@ describe('LayerList multi-select', () => {
   it('meta-click on a grouped row strips its selected ancestor group', () => {
     const doc = {
       panelHp: 12,
-      layers: [
-        { kind: 'group' as const, id: 'G', name: 'G', children: [shape('a', 'A'), shape('b', 'B')] },
+      layers: stack([
+        {
+          kind: 'group' as const,
+          id: 'G',
+          name: 'G',
+          children: [shape('a', 'A'), shape('b', 'B')],
+        },
         shape('c', 'C'),
-      ],
+      ]),
+      guides: [],
     };
     const selectIds = vi.fn();
     const ctx = {
@@ -338,12 +362,17 @@ describe('LayerList keyboard access', () => {
 
 // ─── #153 tree rendering + row actions ─────────────────────────────────────
 
-function group(id: string, name: string, children: LayerNode[], extra: Partial<GroupNode> = {}): GroupNode {
+function group(
+  id: string,
+  name: string,
+  children: LayerNode[],
+  extra: Partial<GroupNode> = {},
+): GroupNode {
   return { kind: 'group', id, name, children, ...extra };
 }
 
 function nodeTreeCtx(layers: LayerNode[]) {
-  let doc = { panelHp: 12, layers };
+  let doc = { panelHp: 12, layers: stack(layers), guides: [] };
   const commit = vi.fn();
   const selectIds = vi.fn();
   const ctx = {
@@ -372,10 +401,60 @@ function nodeTreeCtx(layers: LayerNode[]) {
 // panel display this interleaves as [D, G-header, C, B, A] — G's z-band
 // renders exactly where G sits, not bundled separately above/below.
 function fixtureTree(): LayerNode[] {
-  return [shape('a', 'A'), group('G', 'Group', [shape('b', 'B'), shape('c', 'C')]), shape('d', 'D')];
+  return [
+    shape('a', 'A'),
+    group('G', 'Group', [shape('b', 'B'), shape('c', 'C')]),
+    shape('d', 'D'),
+  ];
 }
 
 describe('LayerList tree rendering (#153)', () => {
+  it('renders fixed materials in visual order with named controls and no ordinary affordances', () => {
+    const { ctx } = nodeTreeCtx(fixtureTree());
+    const { container } = render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    expect(
+      [...container.querySelectorAll('[data-material-role]')].map((node) =>
+        node.getAttribute('data-material-role'),
+      ),
+    ).toEqual(['silkscreen', 'solder-mask', 'copper']);
+
+    const copper = container.querySelector('[data-material-role="copper"]') as HTMLElement;
+    expect(within(copper).getByRole('button', { name: 'Collapse Copper' })).toBeTruthy();
+    expect(within(copper).getByRole('button', { name: 'Hide Copper' })).toBeTruthy();
+    const header = copper.querySelector(':scope > div') as HTMLElement;
+    expect(header.hasAttribute('draggable')).toBe(false);
+    expect(within(header).queryByRole('button', { name: /Select/ })).toBeNull();
+    expect(within(header).queryByTitle('Delete')).toBeNull();
+    expect(within(header).queryByTitle('Ungroup')).toBeNull();
+    expect(within(header).queryByTitle('Bring forward')).toBeNull();
+  });
+
+  it('keeps material collapse session-only and outside ordinary roving membership', () => {
+    const { ctx, commit } = nodeTreeCtx(fixtureTree());
+    const { rerender } = render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Copper' }));
+    expect(screen.queryByRole('button', { name: 'Select layer D' })).toBeNull();
+    expect(commit).not.toHaveBeenCalled();
+    rerender(<LayerList ctx={ctx} selectedIds={['d']} />);
+    expect(screen.getByRole('button', { name: 'Expand Copper' })).toBeTruthy();
+    expect(
+      screen.queryByRole('button', { name: /Select (Copper|Solder mask|Silkscreen)/ }),
+    ).toBeNull();
+  });
+
+  it('commits a fixed visibility toggle once and folds hidden state into descendants', () => {
+    const { ctx, commit } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide Copper' }));
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    expect(nextDoc.layers[0]).toMatchObject({ role: 'copper', hidden: true });
+    expect(projectFlatLayers(nextDoc.layers).every((layer) => layer.hidden)).toBe(true);
+  });
+
   it('renders nested rows with correct data-depth and true z-order interleaving', () => {
     const { ctx } = nodeTreeCtx(fixtureTree());
     render(<LayerList ctx={ctx} selectedIds={[]} />);
@@ -473,7 +552,7 @@ describe('LayerList tree rendering (#153)', () => {
 
       expect(commit).toHaveBeenCalledTimes(1);
       const [nextDoc] = commit.mock.calls[0];
-      const renamedGroup = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G');
+      const renamedGroup = copperChildren(nextDoc.layers).find((n) => n.id === 'G');
       expect(renamedGroup).toMatchObject({ name: 'Renamed' });
       expect(screen.queryByDisplayValue('Renamed')).toBeNull();
     });
@@ -489,7 +568,7 @@ describe('LayerList tree rendering (#153)', () => {
 
       expect(commit).toHaveBeenCalledTimes(1);
       const [nextDoc] = commit.mock.calls[0];
-      const renamedGroup = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G');
+      const renamedGroup = copperChildren(nextDoc.layers).find((n) => n.id === 'G');
       expect(renamedGroup).toMatchObject({ name: 'Renamed' });
     });
 
@@ -539,7 +618,7 @@ describe('LayerList tree rendering (#153)', () => {
 
     expect(commit).toHaveBeenCalledTimes(1);
     const [nextDoc] = commit.mock.calls[0];
-    const groupNode = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G');
+    const groupNode = copperChildren(nextDoc.layers).find((n) => n.id === 'G');
     expect(groupNode).toMatchObject({ hidden: true });
     const flat = projectFlatLayers(nextDoc.layers);
     expect(flat.find((l) => l.id === 'b')).toMatchObject({ hidden: true });
@@ -554,7 +633,7 @@ describe('LayerList tree rendering (#153)', () => {
 
     expect(commit).toHaveBeenCalledTimes(1);
     const [nextDoc] = commit.mock.calls[0];
-    expect((nextDoc.layers as LayerNode[]).map((n) => n.id)).toEqual(['a', 'd']);
+    expect(copperChildren(nextDoc.layers).map((n) => n.id)).toEqual(['a', 'd']);
   });
 
   it('drops a cascade-deleted descendant out of the selection', () => {
@@ -567,7 +646,7 @@ describe('LayerList tree rendering (#153)', () => {
     expect(selectIds).toHaveBeenLastCalledWith(['d']);
   });
 
-  it('ungroup releases children in place, at the group\'s own slot', () => {
+  it("ungroup releases children in place, at the group's own slot", () => {
     const { ctx, commit } = nodeTreeCtx(fixtureTree());
     render(<LayerList ctx={ctx} selectedIds={[]} />);
 
@@ -575,7 +654,7 @@ describe('LayerList tree rendering (#153)', () => {
 
     expect(commit).toHaveBeenCalledTimes(1);
     const [nextDoc] = commit.mock.calls[0];
-    expect((nextDoc.layers as LayerNode[]).map((n) => n.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(copperChildren(nextDoc.layers).map((n) => n.id)).toEqual(['a', 'b', 'c', 'd']);
   });
 
   it('ungrouping a selected group selects the children it released', () => {
@@ -596,7 +675,7 @@ describe('LayerList tree rendering (#153)', () => {
 
     expect(commit).toHaveBeenCalledTimes(1);
     const [nextDoc] = commit.mock.calls[0];
-    const groupNode = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G') as GroupNode;
+    const groupNode = copperChildren(nextDoc.layers).find((n) => n.id === 'G') as GroupNode;
     expect(groupNode.children.map((n) => n.id)).toEqual(['c', 'b']);
   });
 
@@ -637,7 +716,7 @@ describe('LayerList tree rendering (#153)', () => {
 
     expect(commit).toHaveBeenCalledTimes(1);
     const [nextDoc] = commit.mock.calls[0];
-    const renamedGroup = (nextDoc.layers as LayerNode[]).find((n) => n.id === 'G');
+    const renamedGroup = copperChildren(nextDoc.layers).find((n) => n.id === 'G');
     expect(renamedGroup).toMatchObject({ name: '' });
   });
 

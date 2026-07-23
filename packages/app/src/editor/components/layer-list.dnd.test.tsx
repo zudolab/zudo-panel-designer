@@ -6,9 +6,17 @@
 // getBoundingClientRect on the hovered row and pass a matching clientY.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, createEvent, fireEvent, render, screen } from '@testing-library/react';
-import { isGroupNode, type GroupNode, type LayerNode, type ShapeLayer } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  getPcbLayer,
+  isGroupNode,
+  projectPcbLayerStack as projectFlatLayers,
+  type GroupNode,
+  type LayerNode,
+  type PcbLayerStack,
+  type ShapeLayer,
+} from '@zpd/core';
 import type { ToolContext } from '../types';
-import { projectFlatLayers } from '../flat-projection';
 import { LayerList } from './layer-list';
 
 afterEach(cleanup);
@@ -23,11 +31,15 @@ function group(id: string, name: string, children: LayerNode[]): GroupNode {
 
 // Bottom -> top: a, G(b, c), d. Panel renders [D, G-header, C, B, A].
 function fixtureTree(): LayerNode[] {
-  return [shape('a', 'A'), group('G', 'Group', [shape('b', 'B'), shape('c', 'C')]), shape('d', 'D')];
+  return [
+    shape('a', 'A'),
+    group('G', 'Group', [shape('b', 'B'), shape('c', 'C')]),
+    shape('d', 'D'),
+  ];
 }
 
 function treeCtx(layers: LayerNode[], selectedIds: readonly string[] = []) {
-  let doc = { panelHp: 12, layers };
+  let doc = { panelHp: 12, layers: createPcbLayerStack({ copper: layers }), guides: [] };
   const commit = vi.fn((next: typeof doc) => {
     doc = next;
   });
@@ -55,15 +67,26 @@ function groupHeader(name: string): HTMLElement {
   return screen.getByRole('button', { name: `Select group ${name}` }).closest('div')!;
 }
 
-function topIds(tree: LayerNode[]): string[] {
-  return tree.map((n) => n.id);
+function topIds(stack: PcbLayerStack): string[] {
+  return getPcbLayer(stack, 'copper').children.map((n) => n.id);
 }
 
-function groupChildren(tree: LayerNode[], groupId: string): string[] {
+function groupChildren(stack: PcbLayerStack, groupId: string): string[] {
+  const tree = getPcbLayer(stack, 'copper').children;
   for (const n of tree) {
     if (!isGroupNode(n)) continue;
     if (n.id === groupId) return n.children.map((c) => c.id);
-    const nested = groupChildren(n.children, groupId);
+    const nested = findGroupChildren(n.children, groupId);
+    if (nested.length > 0) return nested;
+  }
+  return [];
+}
+
+function findGroupChildren(tree: LayerNode[], groupId: string): string[] {
+  for (const node of tree) {
+    if (!isGroupNode(node)) continue;
+    if (node.id === groupId) return node.children.map((child) => child.id);
+    const nested = findGroupChildren(node.children, groupId);
     if (nested.length > 0) return nested;
   }
   return [];
@@ -131,6 +154,33 @@ describe('LayerList DnD — drop on group header', () => {
 
     expect(commit).toHaveBeenCalledTimes(1);
     expect(groupChildren(commit.mock.calls[0][0].layers, 'G')).toEqual(['a']);
+  });
+
+  it('drops an ordinary subtree into an empty material as one commit', () => {
+    const { ctx, commit } = treeCtx(fixtureTree());
+    const { container } = render(<LayerList ctx={ctx} selectedIds={[]} />);
+    const silkscreenList = container.querySelector(
+      '[data-material-role="silkscreen"] > ul',
+    ) as HTMLElement;
+
+    fireEvent.dragStart(groupHeader('Group'));
+    fireEvent.dragOver(silkscreenList);
+    fireEvent.drop(silkscreenList);
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    expect(getPcbLayer(nextDoc.layers, 'copper').children.map((node) => node.id)).toEqual([
+      'a',
+      'd',
+    ]);
+    expect(getPcbLayer(nextDoc.layers, 'silkscreen').children.map((node) => node.id)).toEqual([
+      'G',
+    ]);
+    expect(
+      projectFlatLayers(nextDoc.layers)
+        .filter((layer) => ['b', 'c'].includes(layer.id))
+        .map((layer) => ('color' in layer ? layer.color : null)),
+    ).toEqual([2, 2]);
   });
 });
 
@@ -231,7 +281,7 @@ describe('LayerList DnD — positional drops', () => {
     const { ctx, commit } = treeCtx([group('G', 'Group', [shape('a', 'A')])]);
     const { container } = render(<LayerList ctx={ctx} selectedIds={[]} />);
 
-    const rootList = container.querySelector(':scope > ul') as HTMLElement;
+    const rootList = container.querySelector('[data-material-role="copper"] > ul') as HTMLElement;
     fireEvent.dragStart(leafRow('A'));
     fireEvent.dragOver(rootList);
     fireEvent.drop(rootList);
@@ -285,7 +335,10 @@ describe('LayerList DnD — invalid-drop guards (silent reject, no history)', ()
   });
 
   it('rejects dropping a group into its own descendant subtree', () => {
-    const tree = [group('outer', 'Outer', [group('inner', 'Inner', [shape('x', 'X')])]), shape('y', 'Y')];
+    const tree = [
+      group('outer', 'Outer', [group('inner', 'Inner', [shape('x', 'X')])]),
+      shape('y', 'Y'),
+    ];
     const { ctx, commit } = treeCtx(tree);
     render(<LayerList ctx={ctx} selectedIds={[]} />);
 
