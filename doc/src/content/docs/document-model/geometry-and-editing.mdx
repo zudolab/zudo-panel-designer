@@ -19,7 +19,11 @@ sidebar_position: 10
 
 ## Hit-testing
 
-`packages/core/src/hit-test.ts` implements canvas hit-testing in mm space. `hitTestDoc(doc, mmX, mmY)` walks layers **topmost-first** (highest index down to `0`), skipping hidden layers, and returns the first layer whose per-type test matches — or `null`.
+`packages/core/src/hit-test.ts` implements canvas hit-testing in mm space over
+the already projected flat leaves. `hitTestDoc(doc, mmX, mmY)` uses two
+topmost-first tiers: non-pattern artwork first, then patterns only when no
+ordinary artwork hits. Hidden ancestors/containers have already been folded
+into the projection.
 
 | Layer type | Hit test |
 | --- | --- |
@@ -27,28 +31,36 @@ sidebar_position: 10
 | `image` | Point-in-rotated-rect (rectangle only, no ellipse branch). |
 | `text` | Point-in-rotated-rect against an *estimated* bbox — `@zpd/core` has no canvas/DOM font metrics, so `estimateTextBbox` uses a rough monospace-ish estimate (`TEXT_CHAR_WIDTH_FACTOR = 0.6`, `TEXT_LINE_HEIGHT_FACTOR = 1.2`) rather than real glyph measurement. Good enough for click-to-select; not a layout authority. |
 | `path` | Even-odd point-in-polygon against the flattened fill (only when `closed`), plus a stroke distance test with a generous grab-zone floor: `Math.max(layer.strokeWidth, 1.5) / 2` (`MIN_STROKE_GRAB_MM = 1.5`), so thin strokes stay easy to click. |
-| `pattern` | Always `false`. |
+| `pattern` | Point-in-square against its movable `x`/`y`/`size` bounds; considered only in the fallback pattern tier. |
 
-<Warning title="Pattern layers are never canvas-hit-testable">
-  `hitTestLayer` returns `false` unconditionally for `type === 'pattern'`. A pattern layer covers the whole panel, so clicking the canvas can never target it — it is selectable only from the layer list, never by clicking the canvas. This is intentional, not a missing feature.
-</Warning>
+<Note title="Patterns do not swallow artwork clicks">
+  A pattern square can be selected from the canvas, but every non-pattern hit
+  wins first even when the pattern is visually above it. This preserves access
+  to artwork beneath a large background pattern.
+</Note>
 
 Because there's no browser `Path2D` in plain Node/Vitest, path hit-testing doesn't use `isPointInPath`/`isPointInStroke` — it flattens beziers to polylines (see below) and does its own even-odd ray casting and point-to-segment distance, keeping `@zpd/core` dependency-free and testable outside a browser.
 
 ## Layer-list operations
 
-`packages/core/src/layer-ops.ts` operates on the flat, bottom-to-top layer array. Every function is pure and immutable — it returns a **new** array rather than mutating its input, so callers can diff/undo cheaply against the [history](./history.mdx) reducer.
+`packages/core/src/layer-ops.ts` retains small flat-array helpers for projected
+leaf operations. Canonical document mutations use the ordinary-tree and
+fixed-stack helpers in `group-ops.ts`. Every function is pure and immutable,
+and semantic no-ops preserve the exact input reference so callers can avoid
+phantom [history](./history.mdx) entries.
 
 | Function | Effect |
 | --- | --- |
-| `addLayer(layers, layer, index?)` | Inserts at `index` (clamped to the array bounds), or appends when `index` is omitted. |
-| `removeLayer(layers, id)` | Filters out the layer with the given `id`. |
-| `duplicateLayer(layers, id, newId, nameSuffix = ' copy')` | Inserts a copy directly above the source layer, with `id: newId` and `name` suffixed. |
-| `reorderLayer(layers, fromIndex, toIndex)` | Moves a layer via splice; a no-op for out-of-range or equal indices. |
-| `toggleLayerHidden(layers, id)` | Flips `hidden` on the matching layer. |
-| `renameLayer(layers, id, name)` | Sets `name` on the matching layer. |
+| `insertPcbNode(stack, role, node, parentId?, index?)` | Inserts an ordinary leaf/group under one fixed material, enforcing depth and id safety. |
+| `movePcbNode(stack, id, role, parentId?, index?)` | Reparents or reorders an ordinary subtree, including across materials. |
+| `groupPcbNodes(stack, ids, name?)` / `ungroupPcbNode(...)` | Groups compatible ordinary roots or unwraps one ordinary group; fixed roots never participate. |
+| `clonePcbNode(...)` / `deletePcbNodeById(...)` | Clones with fresh ids or deletes an ordinary subtree. |
+| `updatePcbNodeById(...)` / `mapPcbLeavesById(...)` | Updates ordinary nodes/leaves and re-normalizes effective paint to their owner. |
+| `togglePcbLayerHidden(stack, role)` | Toggles persisted, undoable visibility of one fixed container. |
 
-Every function takes a **caller-supplied** `id` (for `duplicateLayer`, a caller-supplied `newId`) rather than minting one itself — id generation is the document model's concern (`mintId`, see [Document state &amp; layers](./document-state-and-layers.mdx)), which keeps these ops pure functions of their inputs.
+Fixed roots have no rename/delete/select/reorder counterparts by design.
+Cross-container moves normalize all non-null paint to the destination
+material; a rejected insertion/move returns the original stack.
 
 ## Path geometry
 

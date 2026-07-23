@@ -5,26 +5,35 @@
 // group-cascade-delete / ungroup / local reorder / drag-and-drop (#154, see
 // layer-list-dnd.ts) all go through @zpd/core tree ops so ordering +
 // immutability semantics live in one place.
-import { useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import {
-  deleteNodeById,
-  findNodeById,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
+import {
+  deletePcbNodeById,
+  findPcbNodeById,
   isGroupNode,
-  maximalSelectedRoots,
-  moveNodeToParent,
+  movePcbNode,
   PALETTE,
-  renameById,
-  toggleHiddenById,
-  ungroupGroupById,
+  PCB_LAYER_DEFINITIONS,
+  projectPcbLayerStack,
+  togglePcbLayerHidden,
+  ungroupPcbNode,
+  updatePcbNodeById,
   walkLayerNodes,
   type ColorIndex,
   type GroupNode,
   type Layer,
   type LayerNode,
+  type PcbLayerRole,
+  type PcbLayerStack,
 } from '@zpd/core';
-import { projectFlatLayers } from '../flat-projection';
 import { nextListSelection } from '../selection';
-import { toggleLeafSelection } from '../selection-resolve';
+import { maximalPcbSelectedRoots, toggleLeafSelection } from '../selection-resolve';
 import {
   executeDrop,
   invalidDropReason,
@@ -52,7 +61,18 @@ function layerColorIndex(layer: Layer): ColorIndex {
 
 export interface LayerListProps {
   ctx: ToolContext;
+  // The committed render-time stack. Production always supplies this from
+  // Sidebar; the fallback keeps isolated component harnesses concise.
+  stack?: PcbLayerStack;
   selectedIds: readonly string[];
+}
+
+// Editor's window keydown handler owns Space as temporary pan whenever the
+// event reaches it. Native buttons need an un-cancelled Space keydown to emit
+// their click, so activation stays local while retaining the browser's native
+// Enter/Space button behavior.
+function keepButtonActivationLocal(event: KeyboardEvent<HTMLButtonElement>): void {
+  if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
 }
 
 // ─── Visible-row traversal (#153) ───────────────────────────────────────
@@ -103,25 +123,27 @@ function collectVisibleRows(
 // or its parent lookup is inconsistent (defensive; unreachable for a row id
 // that came from the tree we just walked).
 function locateLocalSlot(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   id: string,
-): { parentId: string | null; index: number } | null {
-  const found = findNodeById(tree, id);
+): { role: PcbLayerRole; parentId: string | null; index: number } | null {
+  const found = findPcbNodeById(stack, id);
   if (!found) return null;
   const parentId = found.pathIds[found.pathIds.length - 1] ?? null;
   const siblings =
-    parentId === null ? tree : (findNodeById(tree, parentId)?.node as GroupNode | undefined)?.children;
+    parentId === null
+      ? found.container.children
+      : (findPcbNodeById(stack, parentId)?.node as GroupNode | undefined)?.children;
   if (!siblings) return null;
   const index = siblings.findIndex((n) => n.id === id);
-  return index < 0 ? null : { parentId, index };
+  return index < 0 ? null : { role: found.role, parentId, index };
 }
 
 // Every id (leaf or nested group) strictly BENEATH `id` — empty when `id`
 // is a leaf or not found. Used to enforce the #151 overlap invariant when a
 // GROUP id joins the selection: any already-selected descendant must drop
 // out (see handleRowClick's Meta branch).
-function collectDescendantIds(tree: LayerNode[], id: string): Set<string> {
-  const found = findNodeById(tree, id);
+function collectDescendantIds(stack: PcbLayerStack, id: string): Set<string> {
+  const found = findPcbNodeById(stack, id);
   const out = new Set<string>();
   if (found && isGroupNode(found.node)) {
     walkLayerNodes(found.node.children, (node) => out.add(node.id));
@@ -129,15 +151,21 @@ function collectDescendantIds(tree: LayerNode[], id: string): Set<string> {
   return out;
 }
 
-export function LayerList({ ctx, selectedIds }: LayerListProps) {
-  const tree = ctx.doc.layers;
-  const flatById = useMemo(() => new Map(ctx.flatLayers.map((l) => [l.id, l])), [ctx.flatLayers]);
+export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerListProps) {
+  const stack = committedStack ?? ctx.doc.layers;
+  const flatById = useMemo(
+    () => new Map(projectPcbLayerStack(stack).map((layer) => [layer.id, layer])),
+    [stack],
+  );
 
   // Expand/collapse (#153): session-only, keyed by STABLE node id (never
   // array index — index keys remount and drop state when order changes).
   // Not persisted, not document state, not in undo history. Default is
   // expanded (empty set = nothing collapsed).
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => new Set());
+  const [collapsedMaterialRoles, setCollapsedMaterialRoles] = useState<Set<PcbLayerRole>>(
+    () => new Set(),
+  );
   const toggleCollapsed = (id: string) => {
     setCollapsedGroupIds((prev) => {
       const next = new Set(prev);
@@ -146,12 +174,25 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
       return next;
     });
   };
+  const toggleMaterialCollapsed = (role: PcbLayerRole) => {
+    setCollapsedMaterialRoles((prev) => {
+      const next = new Set(prev);
+      if (next.has(role)) next.delete(role);
+      else next.add(role);
+      return next;
+    });
+  };
 
   const visibleRows = useMemo(() => {
     const rows: VisibleRow[] = [];
-    collectVisibleRows(tree, collapsedGroupIds, flatById, rows);
+    for (let i = stack.length - 1; i >= 0; i -= 1) {
+      const container = stack[i];
+      if (!collapsedMaterialRoles.has(container.role)) {
+        collectVisibleRows(container.children, collapsedGroupIds, flatById, rows);
+      }
+    }
     return rows;
-  }, [tree, collapsedGroupIds, flatById]);
+  }, [stack, collapsedGroupIds, collapsedMaterialRoles, flatById]);
   const visibleRowIds = useMemo(() => visibleRows.map((row) => row.id), [visibleRows]);
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -213,7 +254,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     // Dragging a selected row carries the WHOLE selection, collapsed to its
     // maximal roots (a selected group travels as one subtree, never alongside
     // a selected descendant); dragging an unselected row carries just itself.
-    const ids = selectedIds.includes(rowId) ? maximalSelectedRoots(tree, selectedIds) : [rowId];
+    const ids = selectedIds.includes(rowId) ? maximalPcbSelectedRoots(stack, selectedIds) : [rowId];
     setDraggingIds(ids.length > 0 ? ids : [rowId]);
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
@@ -227,9 +268,9 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     const dragging = draggingIdsRef.current;
     if (!dragging) return; // external drag (e.g. a file) — not ours
     e.stopPropagation();
-    const slot = resolveDropSlot(tree, rowId, zone, dragging, collapsedGroupIds);
+    const slot = resolveDropSlot(stack, rowId, zone, dragging, collapsedGroupIds);
     const reason: DropRejection | null =
-      slot === null ? 'cycle' : invalidDropReason(tree, slot, dragging);
+      slot === null ? 'cycle' : invalidDropReason(stack, slot, dragging);
     if (reason === null) {
       e.preventDefault(); // required to make this element a legal drop target
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
@@ -253,13 +294,13 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     if (slot === null) return;
     // Silent-reject-before-history: BOTH guards re-run here, before any
     // ctx.commit — a rejected drop must never create an undo entry.
-    if (invalidDropReason(tree, slot, dragging) !== null) return;
-    const nextTree = executeDrop(tree, dragging, slot);
+    if (invalidDropReason(stack, slot, dragging) !== null) return;
+    const nextStack = executeDrop(stack, dragging, slot);
     // Same-reference = the batch was a no-op (dropped onto its own slot) —
     // no phantom history entry.
-    if (nextTree === tree) return;
+    if (nextStack === stack) return;
     // One commit for the whole multi-root batch = ONE history entry.
-    ctx.commit({ ...ctx.doc, layers: nextTree });
+    ctx.commit({ ...ctx.doc, layers: nextStack });
   };
 
   const handleRowDrop = (e: DragEvent<HTMLElement>, rowId: string, zone: DropZone) => {
@@ -268,7 +309,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     if (!dragging) return;
     e.preventDefault();
     e.stopPropagation();
-    commitDrop(resolveDropSlot(tree, rowId, zone, dragging, collapsedGroupIds), dragging);
+    commitDrop(resolveDropSlot(stack, rowId, zone, dragging, collapsedGroupIds), dragging);
   };
 
   // Tail area of a rows <ul> (the space that is the list itself, not any
@@ -277,12 +318,16 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
   // handlers stopPropagation for internal drags, so only a hover over the
   // list's own empty runway arrives here as a direct target. This is the
   // outdent path below an expanded group's subtree (see resolveTailDropSlot).
-  const handleTailDragOver = (e: DragEvent<HTMLElement>, parentId: string | null) => {
+  const handleTailDragOver = (
+    e: DragEvent<HTMLElement>,
+    role: PcbLayerRole,
+    parentId: string | null,
+  ) => {
     if (e.target !== e.currentTarget) return;
     const dragging = draggingIdsRef.current;
     if (!dragging) return;
-    const slot = resolveTailDropSlot(tree, parentId, dragging);
-    if (slot !== null && invalidDropReason(tree, slot, dragging) === null) {
+    const slot = resolveTailDropSlot(stack, role, parentId, dragging);
+    if (slot !== null && invalidDropReason(stack, slot, dragging) === null) {
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     } else if (e.dataTransfer) {
@@ -290,20 +335,25 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     }
   };
 
-  const handleTailDrop = (e: DragEvent<HTMLElement>, parentId: string | null) => {
+  const handleTailDrop = (
+    e: DragEvent<HTMLElement>,
+    role: PcbLayerRole,
+    parentId: string | null,
+  ) => {
     if (e.target !== e.currentTarget) return;
     const dragging = draggingIdsRef.current;
     clearDragState();
     if (!dragging) return;
     e.preventDefault();
-    commitDrop(resolveTailDropSlot(tree, parentId, dragging), dragging);
+    commitDrop(resolveTailDropSlot(stack, role, parentId, dragging), dragging);
   };
 
   // Affordance attributes/classes for the row currently hovered by a drag.
   // data-drop / data-drop-invalid are the test-visible contract; aria-disabled
   // is the accessible "this target is rejected" signal the issue asks for.
   const dropAffordance = (rowId: string) => {
-    const indicator = dropIndicator !== null && dropIndicator.rowId === rowId ? dropIndicator : null;
+    const indicator =
+      dropIndicator !== null && dropIndicator.rowId === rowId ? dropIndicator : null;
     if (indicator === null) return { attrs: {}, className: '' };
     const invalid = indicator.reason !== null;
     return {
@@ -356,9 +406,9 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     // `stripped.includes(id)` distinguishes add from remove without a
     // separate branch.
     if (!e.shiftKey && (e.metaKey || e.ctrlKey)) {
-      const stripped = toggleLeafSelection(tree, selectedIds, id);
+      const stripped = toggleLeafSelection(stack, selectedIds, id);
       const next2 = stripped.includes(id)
-        ? stripped.filter((sid) => sid === id || !collectDescendantIds(tree, id).has(sid))
+        ? stripped.filter((sid) => sid === id || !collectDescendantIds(stack, id).has(sid))
         : stripped;
       ctx.selectIds(next2);
     } else if (e.shiftKey) {
@@ -367,7 +417,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
       // group (dropping the covered descendants), so the #151
       // [group, descendant] overlap invariant holds for every range. Rows
       // not covered by any ranged group survive as-is, in tree DFS order.
-      ctx.selectIds(maximalSelectedRoots(tree, next.selectedIds));
+      ctx.selectIds(maximalPcbSelectedRoots(stack, next.selectedIds));
     } else {
       ctx.selectIds(next.selectedIds);
     }
@@ -381,18 +431,18 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
   // needs no change when DnD lands. Per the issue spec, group ROWS don't get
   // this affordance (no move buttons in the group header) — only leaves.
   const move = (id: string, dir: 1 | -1) => {
-    const slot = locateLocalSlot(tree, id);
+    const slot = locateLocalSlot(stack, id);
     if (!slot) return;
-    const next = moveNodeToParent(tree, id, slot.parentId, slot.index + dir);
+    const next = movePcbNode(stack, id, slot.role, slot.parentId, slot.index + dir);
     // moveNodeToParent returns the SAME reference when the move clamps back
     // to the node's own slot (already at the top/bottom of its local stack)
     // — don't write a phantom undo entry for that.
-    if (next === tree) return;
+    if (next === stack) return;
     ctx.commit({ ...ctx.doc, layers: next });
   };
 
   const remove = (id: string) => {
-    const found = findNodeById(tree, id);
+    const found = findPcbNodeById(stack, id);
     // Cascade (#148): deleting a group removes every descendant with it —
     // collect the whole removed-subtree id set so selection drops all of
     // them, not just the group's own id.
@@ -401,17 +451,22 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
       walkLayerNodes([found.node], (node) => removedIds.add(node.id));
     }
     const renderedIndex = visibleRowIds.indexOf(id);
-    const nextTree = deleteNodeById(tree, id);
-    const nextFlatById = new Map(projectFlatLayers(nextTree).map((l) => [l.id, l]));
+    const nextStack = deletePcbNodeById(stack, id);
+    const nextFlatById = new Map(projectPcbLayerStack(nextStack).map((l) => [l.id, l]));
     const nextRows: VisibleRow[] = [];
-    collectVisibleRows(nextTree, collapsedGroupIds, nextFlatById, nextRows);
+    for (let i = nextStack.length - 1; i >= 0; i -= 1) {
+      const container = nextStack[i];
+      if (!collapsedMaterialRoles.has(container.role)) {
+        collectVisibleRows(container.children, collapsedGroupIds, nextFlatById, nextRows);
+      }
+    }
     const nextVisibleRowIds = nextRows.map((row) => row.id);
     const nextFocusId =
       renderedIndex < 0
         ? currentFocusId
         : (nextVisibleRowIds[Math.min(renderedIndex, nextVisibleRowIds.length - 1)] ?? null);
 
-    ctx.commit({ ...ctx.doc, layers: nextTree });
+    ctx.commit({ ...ctx.doc, layers: nextStack });
     setFocusedRowId(nextFocusId);
     if (nextFocusId) selectionButtonRefs.current.get(nextFocusId)?.focus();
     // Multi-capable drop-from-selection (#44): drop every removed id (the
@@ -422,12 +477,12 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
   };
 
   const ungroup = (groupId: string) => {
-    const found = findNodeById(tree, groupId);
+    const found = findPcbNodeById(stack, groupId);
     if (!found || !isGroupNode(found.node)) return;
     const childIds = found.node.children.map((child) => child.id);
-    const nextTree = ungroupGroupById(tree, groupId);
-    if (nextTree === tree) return;
-    ctx.commit({ ...ctx.doc, layers: nextTree });
+    const nextStack = ungroupPcbNode(stack, groupId);
+    if (nextStack === stack) return;
+    ctx.commit({ ...ctx.doc, layers: nextStack });
     // Releasing a selected group's children in its place (#153): the group
     // id no longer exists, so swap it for the children it just released —
     // maximalSelectedRoots re-collapses the result in case any of those
@@ -435,14 +490,20 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     // #151's invariant).
     if (selectedIds.includes(groupId)) {
       const expanded = selectedIds.flatMap((sid) => (sid === groupId ? childIds : [sid]));
-      ctx.selectIds(maximalSelectedRoots(nextTree, expanded));
+      ctx.selectIds(maximalPcbSelectedRoots(nextStack, expanded));
     }
   };
 
   const toggle = (id: string) => {
     // Recursive toggle (#148/#150): flips the node's OWN hidden flag at any
     // depth — a group's toggle folds to every descendant at flatten time.
-    ctx.commit({ ...ctx.doc, layers: toggleHiddenById(tree, id) });
+    const next = updatePcbNodeById(stack, id, (node) => ({ ...node, hidden: !node.hidden }));
+    if (next !== stack) ctx.commit({ ...ctx.doc, layers: next });
+  };
+
+  const toggleMaterialVisibility = (role: PcbLayerRole) => {
+    const next = togglePcbLayerHidden(stack, role);
+    if (next !== stack) ctx.commit({ ...ctx.doc, layers: next });
   };
 
   const startLeafRename = (layer: Layer) => {
@@ -456,7 +517,8 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
   const commitLeafRename = (id: string) => {
     // An empty name is a valid stored value — the row display already falls
     // back to layer.type (see the span below), same as the initial data.
-    ctx.commit({ ...ctx.doc, layers: renameById(tree, id, draftName.trim()) });
+    const next = updatePcbNodeById(stack, id, (node) => ({ ...node, name: draftName.trim() }));
+    if (next !== stack) ctx.commit({ ...ctx.doc, layers: next });
     setRenamingId(null);
   };
 
@@ -480,7 +542,8 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
       // deliberate clear-to-empty edit that renameById/GroupNode support).
       const trimmed = draftName.trim();
       if (trimmed !== group.name) {
-        ctx.commit({ ...ctx.doc, layers: renameById(tree, group.id, trimmed) });
+        const next = updatePcbNodeById(stack, group.id, (node) => ({ ...node, name: trimmed }));
+        if (next !== stack) ctx.commit({ ...ctx.doc, layers: next });
       }
     }
     setRenamingId(null);
@@ -491,7 +554,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
       // Keep the editor's window-level shortcut handler from turning Space
       // into temporary pan mode. Do not preventDefault: the button's native
       // Enter/Space click must remain the selection activation path.
-      event.stopPropagation();
+      keepButtonActivationLocal(event);
       return;
     }
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
@@ -538,7 +601,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
         onDragLeave={() => handleRowDragLeave(layer.id)}
         onDrop={(e) => handleRowDrop(e, layer.id, dropZoneFromEvent(e, 'leaf'))}
         onDragEnd={clearDragState}
-        className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs ${
+        className={`flex min-h-7 items-center gap-1.5 rounded px-1.5 py-1 text-xs ${
           selected ? 'bg-sky-500/20 text-sky-100' : 'text-neutral-300 hover:bg-neutral-800'
         }${draggingIds !== null && draggingIds.includes(layer.id) ? ' opacity-40' : ''}${affordance.className}`}
       >
@@ -554,7 +617,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
           onFocus={() => setFocusedRowId(layer.id)}
           onKeyDown={(event) => moveSelectionFocus(layer.id, event)}
           onClick={(event) => handleRowClick(layer.id, event)}
-          className="flex shrink-0 items-center gap-1.5 rounded-sm p-0.5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
+          className="flex min-h-6 min-w-6 shrink-0 items-center gap-1.5 rounded-sm p-0.5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
         >
           <span className="w-4 text-center" aria-hidden="true">
             {TYPE_ICON[layer.type]}
@@ -597,6 +660,8 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
         <span className="flex items-center gap-0.5 text-neutral-400">
           <button
             title="Bring forward"
+            aria-label={`Bring ${layer.name || layer.type} forward`}
+            className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
             onClick={(e) => {
               e.stopPropagation();
               move(layer.id, 1);
@@ -606,6 +671,8 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
           </button>
           <button
             title="Send backward"
+            aria-label={`Send ${layer.name || layer.type} backward`}
+            className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
             onClick={(e) => {
               e.stopPropagation();
               move(layer.id, -1);
@@ -615,6 +682,10 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
           </button>
           <button
             title="Show / hide"
+            aria-label={
+              layer.hidden ? `Show ${layer.name || layer.type}` : `Hide ${layer.name || layer.type}`
+            }
+            className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
             onClick={(e) => {
               e.stopPropagation();
               toggle(layer.id);
@@ -624,6 +695,8 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
           </button>
           <button
             title="Delete"
+            aria-label={`Delete ${layer.name || layer.type}`}
+            className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
             onClick={(e) => {
               e.stopPropagation();
               remove(layer.id);
@@ -636,7 +709,12 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     );
   };
 
-  const renderGroupRow = (group: GroupNode, depth: number, parentGroupId: string | null): ReactNode => {
+  const renderGroupRow = (
+    group: GroupNode,
+    depth: number,
+    parentGroupId: string | null,
+    role: PcbLayerRole,
+  ): ReactNode => {
     const selected = selectedIds.includes(group.id);
     const collapsed = collapsedGroupIds.has(group.id);
     const isRenaming = renamingId === group.id;
@@ -668,110 +746,113 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
           onDragLeave={() => handleRowDragLeave(group.id)}
           onDrop={(e) => handleRowDrop(e, group.id, dropZoneFromEvent(e, 'group'))}
           onDragEnd={clearDragState}
-          className={`flex items-center gap-1.5 rounded px-1.5 py-1 text-xs ${
+          className={`flex min-h-7 items-center gap-1.5 rounded px-1.5 py-1 text-xs ${
             selected ? 'bg-sky-500/20 text-sky-100' : 'text-neutral-300 hover:bg-neutral-800'
           }${draggingIds !== null && draggingIds.includes(group.id) ? ' opacity-40' : ''}${affordance.className}`}
         >
-        <button
-          type="button"
-          aria-label={collapsed ? `Expand ${name}` : `Collapse ${name}`}
-          aria-expanded={!collapsed}
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleCollapsed(group.id);
-          }}
-          className="flex shrink-0 items-center justify-center rounded-sm p-0.5 text-neutral-400 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
-        >
-          <span aria-hidden="true">{collapsed ? '▶' : '▼'}</span>
-        </button>
-        <button
-          ref={(node) => {
-            if (node) selectionButtonRefs.current.set(group.id, node);
-            else selectionButtonRefs.current.delete(group.id);
-          }}
-          type="button"
-          aria-label={`Select group ${name}`}
-          aria-pressed={selected}
-          tabIndex={currentFocusId === group.id ? 0 : -1}
-          onFocus={() => setFocusedRowId(group.id)}
-          onKeyDown={(event) => moveSelectionFocus(group.id, event)}
-          onClick={(event) => handleRowClick(group.id, event)}
-          className="flex shrink-0 items-center gap-1.5 rounded-sm p-0.5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
-        >
-          <span className="w-4 text-center" aria-hidden="true">
-            📁
+          <button
+            type="button"
+            aria-label={collapsed ? `Expand ${name}` : `Collapse ${name}`}
+            aria-expanded={!collapsed}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleCollapsed(group.id);
+            }}
+            className="flex min-h-6 min-w-6 shrink-0 items-center justify-center rounded-sm p-0.5 text-neutral-400 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
+          >
+            <span aria-hidden="true">{collapsed ? '▶' : '▼'}</span>
+          </button>
+          <button
+            ref={(node) => {
+              if (node) selectionButtonRefs.current.set(group.id, node);
+              else selectionButtonRefs.current.delete(group.id);
+            }}
+            type="button"
+            aria-label={`Select group ${name}`}
+            aria-pressed={selected}
+            tabIndex={currentFocusId === group.id ? 0 : -1}
+            onFocus={() => setFocusedRowId(group.id)}
+            onKeyDown={(event) => moveSelectionFocus(group.id, event)}
+            onClick={(event) => handleRowClick(group.id, event)}
+            className="flex min-h-6 min-w-6 shrink-0 items-center gap-1.5 rounded-sm p-0.5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
+          >
+            <span className="w-4 text-center" aria-hidden="true">
+              📁
+            </span>
+          </button>
+          {isRenaming ? (
+            <input
+              autoFocus
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={() => resolveGroupRename(group, true)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  resolveGroupRename(group, true);
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  resolveGroupRename(group, false);
+                }
+              }}
+              className="min-w-0 flex-1 select-text rounded border border-sky-500 bg-neutral-950 px-1 text-neutral-100"
+            />
+          ) : (
+            <span
+              onDoubleClick={() => {
+                startGroupRename(group);
+              }}
+              title="Double-click to rename"
+              className={`flex-1 truncate ${group.hidden ? 'italic opacity-50' : ''}`}
+            >
+              {name}
+            </span>
+          )}
+          <span aria-hidden="true" className="text-neutral-500">
+            ({group.children.length})
           </span>
-        </button>
-        {isRenaming ? (
-          <input
-            autoFocus
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onBlur={() => resolveGroupRename(group, true)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                resolveGroupRename(group, true);
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                resolveGroupRename(group, false);
-              }
-            }}
-            className="min-w-0 flex-1 select-text rounded border border-sky-500 bg-neutral-950 px-1 text-neutral-100"
-          />
-        ) : (
-          <span
-            onDoubleClick={() => {
-              startGroupRename(group);
-            }}
-            title="Double-click to rename"
-            className={`flex-1 truncate ${group.hidden ? 'italic opacity-50' : ''}`}
-          >
-            {name}
+          <span className="flex items-center gap-0.5 text-neutral-400">
+            <button
+              title="Show / hide"
+              aria-label={group.hidden ? `Show ${name}` : `Hide ${name}`}
+              className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggle(group.id);
+              }}
+            >
+              {group.hidden ? '🚫' : '👁'}
+            </button>
+            <button
+              title="Ungroup"
+              aria-label={`Ungroup ${name}`}
+              className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+              onClick={(e) => {
+                e.stopPropagation();
+                ungroup(group.id);
+              }}
+            >
+              ⇲
+            </button>
+            <button
+              title="Delete group and children"
+              aria-label={`Delete ${name} (and all children)`}
+              className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+              onClick={(e) => {
+                e.stopPropagation();
+                remove(group.id);
+              }}
+            >
+              ✕
+            </button>
           </span>
-        )}
-        <span aria-hidden="true" className="text-neutral-500">
-          ({group.children.length})
-        </span>
-        <span className="flex items-center gap-0.5 text-neutral-400">
-          <button
-            title="Show / hide"
-            aria-label={group.hidden ? `Show ${name}` : `Hide ${name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              toggle(group.id);
-            }}
-          >
-            {group.hidden ? '🚫' : '👁'}
-          </button>
-          <button
-            title="Ungroup"
-            aria-label={`Ungroup ${name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              ungroup(group.id);
-            }}
-          >
-            ⇲
-          </button>
-          <button
-            title="Delete group and children"
-            aria-label={`Delete ${name} (and all children)`}
-            onClick={(e) => {
-              e.stopPropagation();
-              remove(group.id);
-            }}
-          >
-            ✕
-          </button>
-        </span>
         </div>
         {!collapsed && (
           <ul
             data-group-id={group.id}
-            onDragOver={(e) => handleTailDragOver(e, group.id)}
-            onDrop={(e) => handleTailDrop(e, group.id)}
+            onDragOver={(e) => handleTailDragOver(e, role, group.id)}
+            onDrop={(e) => handleTailDrop(e, role, group.id)}
             className="ml-3 flex flex-col gap-0.5 border-l border-neutral-800 pl-2"
           >
             {group.children.length === 0 ? (
@@ -789,7 +870,7 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
                 Empty group
               </li>
             ) : (
-              renderNodes(group.children, depth + 1, group.id)
+              renderNodes(group.children, depth + 1, group.id, role)
             )}
           </ul>
         )}
@@ -797,13 +878,18 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
     );
   };
 
-  const renderNodes = (nodes: readonly LayerNode[], depth: number, parentGroupId: string | null): ReactNode[] => {
+  const renderNodes = (
+    nodes: readonly LayerNode[],
+    depth: number,
+    parentGroupId: string | null,
+    role: PcbLayerRole,
+  ): ReactNode[] => {
     const out: ReactNode[] = [];
     for (let i = nodes.length - 1; i >= 0; i -= 1) {
       const node = nodes[i];
       out.push(
         isGroupNode(node)
-          ? renderGroupRow(node, depth, parentGroupId)
+          ? renderGroupRow(node, depth, parentGroupId, role)
           : renderLeafRow(node, depth, parentGroupId),
       );
     }
@@ -811,16 +897,67 @@ export function LayerList({ ctx, selectedIds }: LayerListProps) {
   };
 
   return (
-    <ul
-      onDragOver={(e) => handleTailDragOver(e, null)}
-      onDrop={(e) => handleTailDrop(e, null)}
-      // The pb runway only exists WHILE a drag is live: it gives the root
-      // list a hoverable tail strip below the last row (the drop target for
-      // the whole document's visual bottom) without padding the panel when
-      // idle.
-      className={`flex flex-col gap-0.5${draggingIds !== null ? ' pb-6' : ''}`}
-    >
-      {renderNodes(tree, 0, null)}
-    </ul>
+    <div className="flex flex-col gap-2" aria-label="PCB material layers">
+      {[...stack].reverse().map((container) => {
+        const definition = PCB_LAYER_DEFINITIONS.find(({ role }) => role === container.role)!;
+        const collapsed = collapsedMaterialRoles.has(container.role);
+        const headingId = `pcb-material-${container.role}`;
+        return (
+          <section
+            key={container.role}
+            aria-labelledby={headingId}
+            data-material-role={container.role}
+            className="overflow-hidden rounded-md border border-neutral-700 bg-neutral-950/40"
+          >
+            <div className="flex min-h-8 items-center gap-1 border-b border-neutral-700 bg-neutral-800/80 px-1.5 text-xs font-medium text-neutral-100">
+              <button
+                type="button"
+                aria-label={collapsed ? `Expand ${definition.name}` : `Collapse ${definition.name}`}
+                aria-expanded={!collapsed}
+                onClick={() => toggleMaterialCollapsed(container.role)}
+                onKeyDown={keepButtonActivationLocal}
+                className="flex min-h-6 min-w-6 items-center justify-center rounded-sm text-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
+              >
+                <span aria-hidden="true">{collapsed ? '▶' : '▼'}</span>
+              </button>
+              <span
+                aria-hidden="true"
+                className="h-3.5 w-3.5 shrink-0 rounded-sm border border-neutral-500"
+                style={{ background: PALETTE[definition.color].hex }}
+              />
+              <span id={headingId} className="min-w-0 flex-1 truncate">
+                {definition.name}
+              </span>
+              <span className="text-[10px] font-normal text-neutral-400">
+                {PALETTE[definition.color].name}
+              </span>
+              <button
+                type="button"
+                title="Show / hide"
+                aria-label={
+                  container.hidden ? `Show ${definition.name}` : `Hide ${definition.name}`
+                }
+                onClick={() => toggleMaterialVisibility(container.role)}
+                onKeyDown={keepButtonActivationLocal}
+                className="min-h-6 min-w-6 rounded-sm text-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
+              >
+                {container.hidden ? '🚫' : '👁'}
+              </button>
+            </div>
+            {!collapsed && (
+              <ul
+                aria-label={`${definition.name} layers`}
+                onDragOver={(e) => handleTailDragOver(e, container.role, null)}
+                onDrop={(e) => handleTailDrop(e, container.role, null)}
+                className={`flex min-h-7 flex-col gap-0.5 p-1${draggingIds !== null ? ' pb-6' : ''}`}
+              >
+                {container.children.length > 0 &&
+                  renderNodes(container.children, 0, null, container.role)}
+              </ul>
+            )}
+          </section>
+        );
+      })}
+    </div>
   );
 }

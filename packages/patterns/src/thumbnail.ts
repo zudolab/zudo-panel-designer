@@ -4,8 +4,9 @@
 import { defaultParams } from './patterns';
 import type { PanelPatternGenerator } from './types';
 
-// PCB finish colors (mirror of @zpd/core's palette: black soldermask, gold
-// exposed ENIG copper). Kept as literals so this package stays self-contained.
+// PCB finish colors (mirror of @zpd/core's palette: black solder mask, gold
+// exposed copper with the product's HASL finish). Kept as literals so this
+// package stays self-contained.
 const THUMB_BG = '#151515';
 const THUMB_FG = '#d4af37';
 const THUMB_SPAN_MM = 30; // every thumbnail frames the same 30mm window

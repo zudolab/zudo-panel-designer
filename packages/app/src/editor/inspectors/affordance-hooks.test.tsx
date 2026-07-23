@@ -68,7 +68,7 @@ describe('pattern inspector — Browse… hook', () => {
     try {
       const ctx = stubCtx();
       const Inspector = getInspector('pattern')!;
-      render(<Inspector layer={layer} onChange={vi.fn()} ctx={ctx} />);
+      render(<Inspector layer={layer} materialRole="copper" onChange={vi.fn()} ctx={ctx} />);
 
       const button = screen.getByRole<HTMLButtonElement>('button', { name: /Browse…/ });
       expect(button.disabled).toBe(true);
@@ -90,7 +90,7 @@ describe('pattern inspector — Browse… hook', () => {
     try {
       const ctx = stubCtx();
       const Inspector = getInspector('pattern')!;
-      render(<Inspector layer={layer} onChange={vi.fn()} ctx={ctx} />);
+      render(<Inspector layer={layer} materialRole="copper" onChange={vi.fn()} ctx={ctx} />);
 
       const button = screen.getByRole<HTMLButtonElement>('button', { name: /Browse…/ });
       expect(button.disabled).toBe(false);
@@ -122,7 +122,7 @@ describe('image inspector — Convert to vector… hook', () => {
     try {
       const ctx = stubCtx();
       const Inspector = getInspector('image')!;
-      render(<Inspector layer={layer} onChange={vi.fn()} ctx={ctx} />);
+      render(<Inspector layer={layer} materialRole={null} onChange={vi.fn()} ctx={ctx} />);
 
       const button = screen.getByRole<HTMLButtonElement>('button', { name: /Convert to vector…/ });
       expect(button.disabled).toBe(true);
@@ -141,7 +141,7 @@ describe('image inspector — Convert to vector… hook', () => {
     try {
       const ctx = stubCtx();
       const Inspector = getInspector('image')!;
-      render(<Inspector layer={layer} onChange={vi.fn()} ctx={ctx} />);
+      render(<Inspector layer={layer} materialRole={null} onChange={vi.fn()} ctx={ctx} />);
 
       const button = screen.getByRole<HTMLButtonElement>('button', { name: /Convert to vector…/ });
       expect(button.disabled).toBe(false);

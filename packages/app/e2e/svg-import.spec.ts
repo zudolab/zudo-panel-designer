@@ -104,13 +104,18 @@ async function importFromDialog(page: Page, expectedShapeCount: number): Promise
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(`${expectedShapeCount} editable shapes`)).toBeVisible();
   await dialog
-    .getByRole('button', { name: `Import ${expectedShapeCount} shape${expectedShapeCount === 1 ? '' : 's'}` })
+    .getByRole('button', {
+      name: `Import ${expectedShapeCount} shape${expectedShapeCount === 1 ? '' : 's'}`,
+    })
     .click();
   await expect(dialog).toBeHidden();
 }
 
-function pathLayer(doc: Awaited<ReturnType<ReturnType<typeof bridge>['getDoc']>>, name: string) {
-  const layer = doc.layers.find((l) => l.name === name);
+function pathLayer(
+  layers: Awaited<ReturnType<ReturnType<typeof bridge>['getMaterialLayers']>>,
+  name: string,
+) {
+  const layer = layers.find((l) => l.name === name);
   if (!layer || layer.type !== 'path') throw new Error(`expected a path layer named "${name}"`);
   return layer as PathLayer;
 }
@@ -135,11 +140,11 @@ test.describe('SVG vector import -- drop', () => {
     const selectedIds = await bridge(page).getSelectedIds();
     expect(selectedIds).toHaveLength(4);
 
-    const doc = await bridge(page).getDoc();
-    const newLayers = doc.layers.filter((l) => selectedIds.includes(l.id));
+    const layers = await bridge(page).getMaterialLayers();
+    const newLayers = layers.filter((l) => selectedIds.includes(l.id));
     expect(newLayers.every((l) => l.type === 'path')).toBe(true);
 
-    const donut = pathLayer(doc, 'donut');
+    const donut = pathLayer(layers, 'donut');
     expect(donut.extraSubpaths).toHaveLength(1); // the hole
     expect(selectedIds).toContain(donut.id);
 
@@ -148,8 +153,8 @@ test.describe('SVG vector import -- drop', () => {
 
     await page.keyboard.press(`${MOD}+Shift+z`);
     await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 4);
-    const redoDoc = await bridge(page).getDoc();
-    expect(pathLayer(redoDoc, 'donut').extraSubpaths).toHaveLength(1);
+    const redoLayers = await bridge(page).getMaterialLayers();
+    expect(pathLayer(redoLayers, 'donut').extraSubpaths).toHaveLength(1);
   });
 
   test('@smoke a file with no extension and no MIME type that content-sniffs as SVG still reaches the dialog (#141 gap)', async ({
@@ -184,8 +189,9 @@ test.describe('SVG vector import -- drop', () => {
     await expect(dialog).toBeHidden();
 
     await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 1);
-    const doc = await bridge(page).getDoc();
-    expect(doc.layers[doc.layers.length - 1]?.type).toBe('image');
+    const selectedId = await bridge(page).getSelectedId();
+    expect(selectedId).not.toBeNull();
+    expect((await bridge(page).getMaterialLayer(selectedId!))?.type).toBe('image');
   });
 
   test('@smoke exceeding the 300-layer builder cap falls back to a raster image import', async ({
@@ -206,8 +212,9 @@ test.describe('SVG vector import -- drop', () => {
     await expect(dialog).toBeHidden();
 
     await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 1);
-    const doc = await bridge(page).getDoc();
-    expect(doc.layers[doc.layers.length - 1]?.type).toBe('image');
+    const selectedId = await bridge(page).getSelectedId();
+    expect(selectedId).not.toBeNull();
+    expect((await bridge(page).getMaterialLayer(selectedId!))?.type).toBe('image');
   });
 
   test('@smoke a misleading .svg (PNG bytes renamed) imports directly as an image, no dialog', async ({
@@ -223,8 +230,9 @@ test.describe('SVG vector import -- drop', () => {
 
     await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 1);
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    const doc = await bridge(page).getDoc();
-    expect(doc.layers[doc.layers.length - 1]?.type).toBe('image');
+    const selectedId = await bridge(page).getSelectedId();
+    expect(selectedId).not.toBeNull();
+    expect((await bridge(page).getMaterialLayer(selectedId!))?.type).toBe('image');
     await expect(page.getByText('Raster content in .svg file — imported as image.')).toBeVisible();
   });
 
@@ -239,8 +247,9 @@ test.describe('SVG vector import -- drop', () => {
     await importFromDialog(page, 1);
 
     await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 1);
-    const doc = await bridge(page).getDoc();
-    expect(doc.layers[doc.layers.length - 1]?.type).toBe('path');
+    const selectedId = await bridge(page).getSelectedId();
+    expect(selectedId).not.toBeNull();
+    expect((await bridge(page).getMaterialLayer(selectedId!))?.type).toBe('path');
   });
 });
 
@@ -300,8 +309,8 @@ test.describe('SVG vector import -- color remap', () => {
     await importFromDialog(page, 4);
 
     await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 4);
-    const doc = await bridge(page).getDoc();
-    expect(pathLayer(doc, 'accent-circle').fill).toBe(remapped);
+    const layers = await bridge(page).getMaterialLayers();
+    expect(pathLayer(layers, 'accent-circle').fill).toBe(remapped);
   });
 });
 
@@ -320,8 +329,8 @@ test.describe('SVG vector import -- persistence', () => {
 
     const afterSerialize = await bridge(page).serialize();
     expect(afterSerialize).toEqual(beforeSerialize);
-    const donut = afterSerialize.layers.find((l) => l.name === 'donut');
-    expect(donut?.type === 'path' && donut.extraSubpaths).toHaveLength(1);
+    const donut = pathLayer(await bridge(page).getMaterialLayers(), 'donut');
+    expect(donut.extraSubpaths).toHaveLength(1);
   });
 
   test('@smoke an imported compound path survives copy/paste duplication', async ({ page }) => {
@@ -330,7 +339,7 @@ test.describe('SVG vector import -- persistence', () => {
     await importFromDialog(page, 4);
 
     await page.getByRole('button', { name: 'Select layer donut' }).click();
-    const originalDonut = pathLayer(await bridge(page).getDoc(), 'donut');
+    const originalDonut = pathLayer(await bridge(page).getMaterialLayers(), 'donut');
     expect(await bridge(page).getSelectedId()).toBe(originalDonut.id);
 
     await page.keyboard.press(`${MOD}+c`);
@@ -344,16 +353,17 @@ test.describe('SVG vector import -- persistence', () => {
     });
 
     await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 1);
-    const doc = await bridge(page).getDoc();
-    const pasted = doc.layers.find((l) => l.name === 'donut' && l.id !== originalDonut.id) as
-      | PathLayer
-      | undefined;
+    const layers = await bridge(page).getMaterialLayers();
+    const pasted = layers.find((l) => l.name === 'donut' && l.id !== originalDonut.id) as
+      PathLayer | undefined;
     expect(pasted).toBeDefined();
     expect(pasted?.extraSubpaths).toHaveLength(1);
     expect(pasted?.fill).toBe(originalDonut.fill);
   });
 
-  test('@smoke the 3D preview opens without error with imported layers present', async ({ page }) => {
+  test('@smoke the 3D preview opens without error with imported layers present', async ({
+    page,
+  }) => {
     const errors = captureUnexpectedPageErrors(page);
     await openEditor(page);
     await dropTextFile(page, 'icon.svg', ICON_MULTICOLOR, 'image/svg+xml');

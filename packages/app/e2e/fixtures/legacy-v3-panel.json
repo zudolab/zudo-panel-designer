@@ -1,0 +1,43 @@
+{
+  "version": 3,
+  "app": "zpd",
+  "panel": { "hp": 12, "widthMm": 60.6, "heightMm": 128.5 },
+  "palette": ["Black", "Gold", "White"],
+  "layers": [
+    {
+      "id": "legacy-copper",
+      "name": "Legacy copper",
+      "type": "shape",
+      "shape": "rect",
+      "x": 4,
+      "y": 4,
+      "width": 10,
+      "height": 8,
+      "color": 1
+    },
+    {
+      "id": "legacy-mask",
+      "name": "Legacy mask",
+      "type": "path",
+      "points": [
+        { "x": 20, "y": 10 },
+        { "x": 30, "y": 10 }
+      ],
+      "closed": false,
+      "stroke": 0,
+      "strokeWidth": 0.5
+    },
+    {
+      "id": "legacy-silkscreen",
+      "name": "Legacy silkscreen",
+      "type": "text",
+      "content": "LEGACY",
+      "fontFamily": "sans-serif",
+      "sizeMm": 4,
+      "x": 4,
+      "y": 30,
+      "color": 2
+    }
+  ],
+  "guides": []
+}

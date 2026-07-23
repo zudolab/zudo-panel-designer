@@ -1,11 +1,12 @@
 # zpd — zudo-panel-designer
 
 A web app for designing Takazudo Modular PCB blank panels. Lay out a panel in
-the browser and download a versioned order JSON. Panels come in three fixed
-finishes: **black**, **gold**, and **white**.
+the browser and download a versioned order JSON. Artwork belongs to three fixed
+PCB material layers: **Copper** (gold/HASL), **Solder mask** (black), and
+**Silkscreen** (white).
 
 The editor gives you a tool palette with hover tooltips, a collapsible
-card-panel sidebar (view options, panel size, palette, layers, align &
+card-panel sidebar (view options, panel size, fixed material layers, align &
 distribute, properties, and a per-tool help footer), and mm rulers framing the
 canvas. The Select tool is a full multi-selection vector editor —
 marquee-select, move, rotate, resize, and edit path anchors — with ruler
@@ -33,6 +34,22 @@ there too but dispatched by their own dedicated code.
 
 Full behavior is covered in the
 [doc site](https://doc-zudo-panel-designer.takazudomodular.com/).
+
+## PCB material layers
+
+Every document has three fixed fabrication containers. Physically they build
+from bottom to top as **Copper → Solder mask → Silkscreen**; the Layers UI
+shows that same stack top to bottom as **Silkscreen → Solder mask → Copper**.
+Container membership, rather than an object's old color field, determines the
+effective material: Copper is exposed **gold/HASL** copper, Solder mask is
+black, and Silkscreen is white. Solder-mask artwork is positive coverage; omitted
+areas and even-odd path holes reveal copper beneath it.
+
+The three roots cannot be renamed, deleted, grouped, selected, or reordered.
+Ordinary groups remain available inside each material and objects can move
+between containers to change material. Panel JSON is v5; older v1–v4 files
+migrate into the fixed stack on import. This is a foundation for future Gerber
+output—zpd does not currently export Gerbers.
 
 ## Monorepo layout
 

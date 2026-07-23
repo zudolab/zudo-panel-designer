@@ -3,43 +3,43 @@
 // inspector is registered for a type it degrades to a clear message rather than
 // crashing — so a half-built wave still runs.
 import { createElement } from 'react';
-import { updateLeafById, type DocState, type Layer } from '@zpd/core';
+import { updatePcbNodeById, type DocState, type Layer } from '@zpd/core';
+import { owningMaterialRole } from '../inspectors/material';
 import { getInspector } from '../registry/inspectors';
 import type { ToolContext } from '../types';
 
 export interface InspectorHostProps {
   ctx: ToolContext;
+  // The committed render-time doc. ctx.doc is optimized for event handlers
+  // and is synchronized through a passive-effect ref, so render-only labels
+  // must not read it immediately after a commit.
+  doc: DocState;
   layer: Layer | null;
   // The full selection (#45). `layer` is non-null only at exactly one selected;
   // this disambiguates "nothing selected" from "many selected".
   selectedIds: readonly string[];
 }
 
-export function InspectorHost({ ctx, layer, selectedIds }: InspectorHostProps) {
+export function InspectorHost({ ctx, doc, layer, selectedIds }: InspectorHostProps) {
   // Multi-selection has no single-layer inspector yet — a plain count message.
   if (selectedIds.length > 1) {
-    return (
-      <p className="text-xs text-neutral-500">{selectedIds.length} layers selected</p>
-    );
+    return <p className="text-xs text-neutral-500">{selectedIds.length} layers selected</p>;
   }
   if (!layer) {
     return <p className="text-xs text-neutral-500">Select a layer to edit its properties.</p>;
   }
   const inspector = getInspector(layer.type);
   if (!inspector) {
-    return (
-      <p className="text-xs text-neutral-500">
-        No inspector registered for “{layer.type}”.
-      </p>
-    );
+    return <p className="text-xs text-neutral-500">No inspector registered for “{layer.type}”.</p>;
   }
 
   const onChange = (patch: Partial<Layer>, options?: { commit?: boolean }) => {
     const next: DocState = {
-      ...ctx.doc,
-      // Recursive write (#150): the inspected leaf may sit inside a group —
-      // a flat root-array map would silently drop the edit for nested leaves.
-      layers: updateLeafById(ctx.doc.layers, layer.id, (l) => ({ ...l, ...patch }) as Layer),
+      ...doc,
+      // Recursive material-aware write (#150, #166): the inspected leaf may
+      // sit inside a group, and compatibility paint must be normalized back to
+      // its owning fixed container after every patch.
+      layers: updatePcbNodeById(doc.layers, layer.id, (node) => ({ ...node, ...patch }) as Layer),
     };
     if (options?.commit ?? true) ctx.commit(next);
     else ctx.replace(next);
@@ -47,5 +47,6 @@ export function InspectorHost({ ctx, layer, selectedIds }: InspectorHostProps) {
 
   // The component is resolved dynamically from the registry (stable per
   // registration); createElement keeps that out of the static-JSX analysis.
-  return createElement(inspector, { layer, onChange, ctx });
+  const materialRole = owningMaterialRole(doc.layers, layer.id);
+  return createElement(inspector, { layer, materialRole, onChange, ctx });
 }

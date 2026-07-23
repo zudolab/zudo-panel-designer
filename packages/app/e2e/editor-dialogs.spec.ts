@@ -24,7 +24,7 @@ test('@smoke image import + trace-to-vector produces path layers', async ({ page
   // decoding the dropped file + probing its dimensions is async
   await expect.poll(() => bridge(page).getSelectedId()).not.toBeNull();
   const imageId = (await bridge(page).getSelectedId()) as string;
-  const before = (await bridge(page).getDoc()).layers.find((l) => l.id === imageId);
+  const before = await bridge(page).getMaterialLayer(imageId);
   expect(before?.type).toBe('image');
 
   await page.getByRole('button', { name: 'Convert to vector…' }).click();
@@ -36,9 +36,9 @@ test('@smoke image import + trace-to-vector produces path layers', async ({ page
   await applyButton.click();
   await expect(dialog).toBeHidden();
 
-  const doc = await bridge(page).getDoc();
-  expect(doc.layers.find((l) => l.id === imageId)?.hidden).toBe(true);
-  expect(doc.layers.filter((l) => l.type === 'path').length).toBeGreaterThan(0);
+  const layers = await bridge(page).getMaterialLayers();
+  expect(layers.find((l) => l.id === imageId)?.hidden).toBe(true);
+  expect(layers.filter((l) => l.type === 'path').length).toBeGreaterThan(0);
 });
 
 test('@smoke pattern picker adds a new pattern layer', async ({ page }) => {
@@ -51,6 +51,6 @@ test('@smoke pattern picker adds a new pattern layer', async ({ page }) => {
 
   await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 1);
   const selectedId = await bridge(page).getSelectedId();
-  const layer = (await bridge(page).getDoc()).layers.find((l) => l.id === selectedId);
+  const layer = await bridge(page).getMaterialLayer(selectedId!);
   expect(layer).toMatchObject({ type: 'pattern', patternType: 'diag-stripes' });
 });

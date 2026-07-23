@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flattenLayerNodes, type DocState, type ImageLayer, type Pt, type TextLayer } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  type DocState,
+  type ImageLayer,
+  type Pt,
+  type TextLayer,
+} from '@zpd/core';
+import { projectFlatLayers } from './flat-projection';
 import { replaceDoc } from './replace-doc';
 import type { ToolContext } from './types';
 import {
@@ -13,7 +20,7 @@ afterEach(() => resetTextGeometryForTests());
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    doc: { panelHp: 12, guides: [], layers: [] },
+    doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     selectedIds: [],
@@ -53,7 +60,11 @@ const IMAGE_LAYER: ImageLayer = {
 describe('replaceDoc', () => {
   it('resets history with the next doc instead of committing (does not push an undo entry)', () => {
     const ctx = stubCtx();
-    const nextDoc: DocState = { panelHp: 6, guides: [], layers: [IMAGE_LAYER] };
+    const nextDoc: DocState = {
+      panelHp: 6,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }),
+    };
 
     replaceDoc(nextDoc, ctx);
 
@@ -65,17 +76,21 @@ describe('replaceDoc', () => {
 
   it('clears the selection', () => {
     const ctx = stubCtx({ selectedIds: ['stale-1'] });
-    replaceDoc({ panelHp: 6, guides: [], layers: [] }, ctx);
+    replaceDoc({ panelHp: 6, guides: [], layers: createPcbLayerStack() }, ctx);
     expect(ctx.selectIds).toHaveBeenCalledWith([]);
   });
 
   it('reconciles the image cache against the next doc layers', () => {
     const ctx = stubCtx();
-    const nextDoc: DocState = { panelHp: 6, guides: [], layers: [IMAGE_LAYER] };
+    const nextDoc: DocState = {
+      panelHp: 6,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }),
+    };
 
     replaceDoc(nextDoc, ctx);
 
-    expect(ctx.evictImageCache).toHaveBeenCalledWith(nextDoc.layers);
+    expect(ctx.evictImageCache).toHaveBeenCalledWith(projectFlatLayers(nextDoc.layers));
   });
 
   it('clears render-only text geometry before a same-id next document', () => {
@@ -102,7 +117,11 @@ describe('replaceDoc', () => {
     expect(getTextGeometry(oldLayer)!.pivot).toEqual({ x: 30, y: 30 });
 
     const nextLayer = { ...oldLayer, name: 'New' };
-    const nextDoc: DocState = { panelHp: 6, guides: [], layers: [nextLayer] };
+    const nextDoc: DocState = {
+      panelHp: 6,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [nextLayer] }),
+    };
     replaceDoc(nextDoc, stubCtx());
     setTextMeasureForTests((layer) => ({
       x: layer.x,
@@ -110,7 +129,7 @@ describe('replaceDoc', () => {
       width: 12,
       height: 10,
     }));
-    reconcileTextGeometry(flattenLayerNodes(nextDoc.layers));
+    reconcileTextGeometry(projectFlatLayers(nextDoc.layers));
     expect(getTextGeometry(nextLayer)!.pivot).toEqual({ x: 16, y: 25 });
   });
 });

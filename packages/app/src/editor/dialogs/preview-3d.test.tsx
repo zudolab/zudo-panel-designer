@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import '../registry';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPcbLayerStack } from '@zpd/core';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { PANEL_THICKNESS_MM, type DocState, type Pt } from '@zpd/core';
 import type { CommandContext } from '../commands';
@@ -14,7 +15,7 @@ afterEach(() => {
 });
 
 function stubCtx(overrides: Partial<CommandContext> = {}): CommandContext {
-  const doc: DocState = { panelHp: 12, guides: [], layers: [] };
+  const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
   return {
     doc,
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },

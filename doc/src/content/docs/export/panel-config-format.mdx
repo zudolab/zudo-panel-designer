@@ -12,24 +12,28 @@ order artifact. It is produced by `serializePanelConfig()` and consumed by
 
 ```json
 {
-  "version": 2,
+  "version": 5,
   "app": "zpd",
   "panel": { "hp": 12, "widthMm": 60.6, "heightMm": 128.5 },
   "palette": ["black", "gold", "white"],
-  "layers": [],
+  "layers": [
+    { "kind": "pcb-layer", "id": "pcb-layer-copper", "role": "copper", "children": [] },
+    { "kind": "pcb-layer", "id": "pcb-layer-solder-mask", "role": "solder-mask", "children": [] },
+    { "kind": "pcb-layer", "id": "pcb-layer-silkscreen", "role": "silkscreen", "children": [] }
+  ],
   "guides": []
 }
 ```
 
 | Field | Type | Notes |
 |---|---|---|
-| `version` | `2` | `PANEL_CONFIG_VERSION`. See [Versioning](#versioning) below. |
+| `version` | `5` | `PANEL_CONFIG_VERSION`. See [Versioning](#versioning) below. |
 | `app` | `"zpd"` | Fixed literal identifying the producing app. |
 | `panel.hp` | `number` | Panel width in Eurorack HP, from the live document (`doc.panelHp`). |
 | `panel.widthMm` | `number` | Derived from `hp` via `panelWidthMm()` — **advisory output**, not re-trusted on import (see below). |
 | `panel.heightMm` | `number` | `PANEL_HEIGHT_MM`, the fixed 3U Eurorack panel height (128.5mm). |
 | `palette` | `string[]` | The three fixed color names, in index order: `["black", "gold", "white"]`. |
-| `layers` | `Layer[]` | The document's layer stack, bottom to top. See [Layer fields](#layer-fields). |
+| `layers` | `PcbLayerContainer[]` | The fixed Copper, Solder mask, and Silkscreen containers in physical bottom-to-top order. |
 | `guides` | `Guide[]` | The document's ruler guides. Added in v2 (see [Versioning](#versioning)); see [Guide fields](#guide-fields). |
 
 :::note
@@ -41,6 +45,20 @@ than trusting hand-edited values. `panel.hp` and `layers` are the
 authoritative source data.
 :::
 
+## Fixed material containers
+
+v5 persists exactly three fixed roots, in physical bottom-to-top order:
+Copper, Solder mask, then Silkscreen. Each has `kind: "pcb-layer"`, a stable
+`id`, a `role`, optional persisted `hidden`, and ordinary `children`. The UI
+shows the reverse top-to-bottom order. The container determines effective
+material—gold/HASL copper, black positive solder-mask coverage, or white
+silkscreen—so legacy child colors are normalized on import. Mask absence and
+even-odd holes reveal copper underneath.
+
+The roots are not ordinary groups: users cannot rename, delete, select, group,
+or reorder them. Ordinary groups can be nested under each root and artwork can
+move across roots to change material.
+
 ## Layer fields
 
 All five layer types share a base shape plus type-specific fields.
@@ -49,7 +67,7 @@ All five layer types share a base shape plus type-specific fields.
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | `string` | Stable layer id. Minted via `mintId('layer')` if missing on import. |
+| `id` | `string` | Stable layer id. Missing/empty ids receive a deterministic type/group fallback on import; collisions receive stable numeric suffixes. |
 | `name` | `string` | Display name. Defaults to `""` if missing. |
 | `hidden` | `boolean` (optional) | Omitted while a layer has never been hidden. Once its visibility is toggled, the field is written explicitly — including `false` after an even number of toggles — since the toggle op flips whatever value is already there. |
 | `type` | `'shape' \| 'pattern' \| 'path' \| 'text' \| 'image'` | Discriminates the fields below. |
@@ -69,6 +87,7 @@ All five layer types share a base shape plus type-specific fields.
 |---|---|---|
 | `patternType` | `string` | Free-form identifier (e.g. `"dot-grid"`). Kept verbatim even if unrecognized — core has no dependency on the patterns registry that would validate it. |
 | `params` | `Record<string, number>` | Pattern-specific numeric parameters (e.g. `pitch`, `radius`). |
+| `x`, `y`, `size` | `number` | Position and side length of the movable square, in millimeters. |
 | `color` | `0 \| 1 \| 2` | |
 
 ### `path`
@@ -107,6 +126,7 @@ All five layer types share a base shape plus type-specific fields.
 |---|---|---|
 | `src` | `string` | A data URL. Design-time reference only — a raster cannot be manufactured; the final panel uses the vector layers traced from it. |
 | `x`, `y`, `width`, `height` | `number` | Millimeters. |
+| `rotation` | `number` (optional) | Degrees clockwise around the bbox center. |
 
 ## Guide fields
 
@@ -114,21 +134,23 @@ Each entry in the `guides` array is a ruler guide — a reference line, not a la
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | `string` | Stable guide id. Minted via `mintId('guide')` if missing on import. |
+| `id` | `string` | Stable guide id. Generated and collision-repaired deterministically if missing or duplicated on import. |
 | `orientation` | `'horizontal' \| 'vertical'` | Required. A `horizontal` guide is the line `y = position`; a `vertical` guide is `x = position`. An entry with any other value is **dropped** on import (a guide with no valid axis can't plant a line). |
 | `position` | `number` | The line's coordinate in millimeters. Required and finite; an entry with a missing/non-finite `position` is **dropped** rather than defaulted to `0`. |
 | `hidden` | `boolean` (optional) | Omitted unless set. A hidden guide renders faintly and never snaps. |
 
 ## ColorIndex + palette
 
-Every layer's `color` (and a `path` layer's `fill`/`stroke`) is a
-`ColorIndex`: `0`, `1`, or `2`. The index maps to a fixed 3-color panel
-finish, defined once in `packages/core/src/palette.ts`:
+Every layer's compatibility `color` field (and a `path` layer's
+`fill`/`stroke` enablement) uses a `ColorIndex`: `0`, `1`, or `2`. In v5 the
+owning fixed container is authoritative and normalizes every non-null paint
+field to its material index. The mapping is defined once in
+`packages/core/src/palette.ts`:
 
 | Index | Name | Meaning |
 |---|---|---|
-| `0` | `black` | Soldermask |
-| `1` | `gold` | Exposed copper (ENIG-plated) |
+| `0` | `black` | Solder mask |
+| `1` | `gold` | Exposed copper with the product's HASL finish |
 | `2` | `white` | Silkscreen |
 
 The `palette` array in the envelope (`["black", "gold", "white"]`) is these
@@ -138,16 +160,10 @@ user-configurable per document.
 
 ## Versioning
 
-`PANEL_CONFIG_VERSION` is currently `2`, and the `PanelConfig` TypeScript
-type pins `version: 2`. **v2** added the top-level `guides` array; v1 was the
-same envelope without it.
-
-The migration is deliberately **path-free**: `parsePanelConfig` does not read
-or branch on the incoming `version` field. Because every field defends itself
-individually, a v1 file (or any file missing `guides`, including one a user
-hand-edited) loads cleanly — `parseGuides` sees no array and yields `[]`, the
-same result the migration would produce. So there is no dedicated v1→v2
-upgrade step: an old file simply parses to a document with no guides. The
-`version` field is emitted for the human/order reader, not consumed by the
-parser — see [Defensive Parsing](./defensive-parsing.mdx) for why the parser
-is lenient by design rather than strict about the envelope shape.
+`PANEL_CONFIG_VERSION` is currently `5`, and `PanelConfig` pins `version: 5`.
+v1–v4 files used free root layers (v2 added `guides`); import deterministically
+partitions their paint into the v5 fixed material stack, preserving ordinary
+groups where possible and normalizing material from container membership. v5
+input is also repaired defensively if fixed-root metadata is missing,
+duplicated, or reordered. This is a versioned JSON migration, not a Gerber
+export format; Gerber output is a future possibility, not a current feature.

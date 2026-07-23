@@ -31,15 +31,19 @@ test('@smoke marquee drag selects 2 of 3 layers via getSelectedIds()', async ({ 
   // panel-wide but must not join the selection.
   await marqueeDrag(page, { x: 4, y: 10 }, { x: 56, y: 50 });
 
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  // Selection order follows the fixed physical stack: Copper before
+  // Silkscreen, even though the rect was painted first in the marquee.
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-ellipse', 'demo-rect']);
 });
 
-test('@smoke alt-drag duplicates the selection — +N layers via getLayerCount()', async ({ page }) => {
+test('@smoke alt-drag duplicates the selection — +N layers via getLayerCount()', async ({
+  page,
+}) => {
   await openEditor(page);
 
   // Same marquee as above: selects demo-rect + demo-ellipse (N = 2).
   await marqueeDrag(page, { x: 4, y: 10 }, { x: 56, y: 50 });
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-ellipse', 'demo-rect']);
   const before = await bridge(page).getLayerCount();
 
   // Alt-drag from inside demo-rect (spans x 8..32 / y 14..30): the whole

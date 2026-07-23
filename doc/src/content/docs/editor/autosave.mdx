@@ -8,19 +8,37 @@ zpd has no server-side project storage — the working document lives in the bro
 
 ## Boot restore
 
-On mount, `Editor()` reads the stored document once via a lazy `useState` initializer: `readDoc() ?? createDemoDoc()`. If `doc-store.ts` finds a valid entry under the `zpd.doc.v1` key, that document loads silently — there is no "restore this session?" prompt. The editor falls back to the demo document (`demo-doc.ts`'s `createDemoDoc()`, one layer of every type, so the shell exercises every inspector on first load) whenever `readDoc()` can't produce a document to restore — not just on a true first visit, but also an unparseable/corrupt payload, an unrecognized stored shape, or `localStorage` being unavailable or throwing on read. `readDoc()` never throws either way; every one of those cases returns `null` rather than propagating an error.
+On mount, `Editor()` reads the stored document once via a lazy `useState`
+initializer: `readDoc() ?? createDemoDoc()`. The current key is
+`zpd.doc.v2`; its envelope version is 2 and its config must be exactly the
+current PanelConfig v5 shape. A valid entry loads silently. If no current
+entry exists, the reader can migrate a valid legacy `zpd.doc.v1` envelope
+containing PanelConfig v1–v4. Promotion is transactional: the migrated
+document is exposed only after its canonical v5 form has been written to the
+v2 key, while the legacy bytes are retained as rollback data.
+
+The editor falls back to the fixed-stack demo document whenever `readDoc()`
+cannot restore safely. Corrupt or unsupported current v2 bytes are preserved
+and protected from automatic overwrite; corrupt legacy bytes are also
+preserved, but because they live at a separate key they do not block later
+legitimate v2 autosaves. `readDoc()` never throws.
 
 The stored payload is a small versioned envelope:
 
 ```ts
 interface StoredDocPayload {
-  version: number; // DOC_STORAGE_VERSION
+  version: 2; // DOC_STORAGE_VERSION
   savedAt: number;
-  config: unknown; // serializePanelConfig(doc) output
+  config: PanelConfig; // exact v5 serializePanelConfig(doc) output
 }
 ```
 
-`readDoc()` runs the `config` field through core's defensive `parsePanelConfig()` (see [Defensive Parsing](../export/defensive-parsing.mdx)), so a corrupted or hand-edited payload degrades to safe defaults rather than crashing the boot. `readDoc()`/`writeDoc()` never throw — every `localStorage` access (including the property read itself, which can throw under locked-down privacy settings) is wrapped and reduced to a tagged result.
+`readDoc()` validates the storage envelope and uses core's non-throwing exact
+config parser (see [Defensive Parsing](../export/defensive-parsing.mdx)).
+Unsupported/future/corrupt payloads are rejected rather than silently
+rewritten as defaults. `readDoc()`/`writeDoc()` never throw — every
+`localStorage` access (including the property read itself, which can throw
+under locked-down privacy settings) is wrapped and reduced to a tagged result.
 
 ## Debounced autosave
 
@@ -66,7 +84,7 @@ The header's **New panel** button (and the command palette's *File → New Panel
 > This replaces the current panel with the default starter panel. This cannot be undone.
 > [Cancel] [**New panel**]
 
-On confirm, it replaces the whole document with `createDefaultDoc()` — the same plain starter document (one dot-grid pattern layer) a script or a fresh `@zpd/core` consumer would get, **not** the richer first-visit demo document described above (that one-layer-of-every-type doc only ever appears on a truly empty boot).
+On confirm, it replaces the whole document with `createDefaultDoc()` — the same plain fixed-stack starter document (one dot-grid pattern under Copper) a script or a fresh `@zpd/core` consumer would get, **not** the richer first-visit demo document described above.
 
 `replaceDoc()` (`replace-doc.ts`) is the shared whole-document-replacement primitive behind both New panel and JSON import (see [Round-Trip → Importing](../export/round-trip.mdx#importing)) — unlike a normal `ctx.commit()`/`ctx.replace()`, it:
 

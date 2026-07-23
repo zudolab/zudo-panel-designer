@@ -72,7 +72,7 @@ Keep any cross-event gesture state (a pen draft, a drag origin) in **module scop
 
 ## The selection contract (`selectedIds`)
 
-`ToolContext.selectedIds` is the **single source of truth** for what's selected — a `readonly string[]` that is always normalized (`selection.ts`): de-duplicated, filtered to ids that still exist in the current document (a stale id after a delete/undo drops out), and in **document order** — the layers-array order, not the order the ids were clicked. So chrome and inspectors always iterate a stable, valid list.
+`ToolContext.selectedIds` is the **single source of truth** for what's selected — a `readonly string[]` that is always normalized (`selection.ts`): de-duplicated, filtered to ordinary leaf/group ids that still exist (fixed container ids are never admitted), and in projected document/tree order rather than click order. So chrome and inspectors always iterate a stable, valid list.
 
 Two **derived single-selection views** are kept so single-selection tools and inspectors compile and behave unchanged:
 

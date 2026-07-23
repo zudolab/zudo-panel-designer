@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
 import type { TextLayer } from '@zpd/core';
 import { registerInspector } from '../registry/inspectors';
-import { ActionButton, ColorPicker, Field, NumberField } from '../components/inspector-ui';
+import { ActionButton, Field, MaterialField, NumberField } from '../components/inspector-ui';
 import { CURATED_FONTS, ensureFont } from '../fonts';
 import { useFontFavorites } from '../use-font-favorites';
 import type { InspectorProps } from '../types';
 
-function TextInspector({ layer, onChange, ctx }: InspectorProps<TextLayer>) {
+function TextInspector({ layer, materialRole, onChange, ctx }: InspectorProps<TextLayer>) {
   const { favorites } = useFontFavorites();
 
   // Curated options with any starred (in the Font Explorer) sorted first, so
@@ -62,9 +62,7 @@ function TextInspector({ layer, onChange, ctx }: InspectorProps<TextLayer>) {
       >
         Browse Google Fonts…
       </ActionButton>
-      <Field label="Color">
-        <ColorPicker value={layer.color} onPick={(c) => c !== null && onChange({ color: c })} />
-      </Field>
+      <MaterialField role={materialRole} />
       <Field label="size (mm)">
         <NumberField value={layer.sizeMm} onCommit={(v) => onChange({ sizeMm: v })} />
       </Field>

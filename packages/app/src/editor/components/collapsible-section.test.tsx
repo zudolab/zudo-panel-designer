@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
+import { useState } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { CollapsibleSection } from './collapsible-section';
 
 afterEach(cleanup);
+
+function StatefulBody() {
+  const [count, setCount] = useState(0);
+  return <button onClick={() => setCount((value) => value + 1)}>Count {count}</button>;
+}
 
 describe('CollapsibleSection', () => {
   it('defaults to open: content visible, chevron down, aria-expanded true', () => {
@@ -60,5 +66,25 @@ describe('CollapsibleSection', () => {
     const controlsId = button.getAttribute('aria-controls');
     expect(controlsId).toBeTruthy();
     expect(document.getElementById(controlsId as string)).not.toBeNull();
+  });
+
+  it('can keep stateful content mounted while hiding it', () => {
+    render(
+      <CollapsibleSection title="Layers" keepMounted>
+        <StatefulBody />
+      </CollapsibleSection>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Count 0' }));
+    const toggle = screen.getByRole('button', { name: /Layers/ });
+    const content = document.getElementById(toggle.getAttribute('aria-controls')!);
+
+    fireEvent.click(toggle);
+    expect(content?.hidden).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Count 1' })).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(content?.hidden).toBe(false);
+    expect(screen.getByRole('button', { name: 'Count 1' })).toBeTruthy();
   });
 });

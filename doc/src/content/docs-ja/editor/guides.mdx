@@ -66,4 +66,4 @@ interface Guide {
 
 ## 永続化
 
-ガイドは、エクスポートされる `PanelConfig` を通じてラウンドトリップします。新しいトップレベルの `guides` 配列を運ぶために、シリアライズは **v2** へ上がりました。v1（あるいはガイドを持たない任意の）設定も、`guides` が `[]` にデフォルト化されて問題なく読み込まれます。フィールドごとのルール — ガイドは有効な `orientation` と有限の `position` を必要とし、そうでなければ破棄される、`id` が欠けていれば付与される、`hidden` は保持される — は、[PanelConfig フォーマット → バージョニング](../export/panel-config-format.mdx#バージョニング)と[防御的パース → ガイド](../export/defensive-parsing.mdx#ガイド)で扱います。
+ガイドは、トップレベルの `guides` 配列として PanelConfig **v2** で導入され、現在の v5 でも保持されます。v1〜v4 の入力は v5 へ移行され、ガイドのない入力は `guides: []` として読み込まれます。フィールドごとのルール — ガイドは有効な `orientation` と有限の `position` を必要とし、そうでなければ破棄される、`id` が欠けていれば決定的なフォールバックが使われる、`hidden` は保持される — は、[PanelConfig フォーマット → バージョニング](../export/panel-config-format.mdx#バージョニング)と[防御的パース → ガイド](../export/defensive-parsing.mdx#ガイド)で扱います。

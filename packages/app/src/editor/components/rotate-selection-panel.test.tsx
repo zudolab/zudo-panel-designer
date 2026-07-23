@@ -27,6 +27,7 @@ import {
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
+  mapPcbLeavesById,
   replace as coreReplace,
   type DocState,
   type HistoryState,
@@ -38,6 +39,7 @@ import type { ToolContext } from '../types';
 import { projectFlatLayers } from '../flat-projection';
 import { bakeMultiRotate, captureMultiRotateSession } from '../multi-rotate';
 import { RotateSelectionPanel } from './rotate-selection-panel';
+import { canonicalDoc, type DocFixture } from '../test-doc';
 
 afterEach(cleanup);
 
@@ -46,11 +48,21 @@ function rect(id: string, x: number, y: number, width: number, height: number): 
 }
 
 function pattern(id: string): PatternLayer {
-  return { id, name: id, type: 'pattern', patternType: 'dot-grid', color: 1, params: {}, x: 0, y: 0, size: 10 };
+  return {
+    id,
+    name: id,
+    type: 'pattern',
+    patternType: 'dot-grid',
+    color: 1,
+    params: {},
+    x: 0,
+    y: 0,
+    size: 10,
+  };
 }
 
-function makeHarness(initialDoc: DocState) {
-  let history: HistoryState<DocState> = createHistory(initialDoc);
+function makeHarness(initialFixture: DocFixture) {
+  let history: HistoryState<DocState> = createHistory(canonicalDoc(initialFixture));
   let notify: () => void = () => {};
   const mutate = (next: HistoryState<DocState>) => {
     history = next;
@@ -87,11 +99,11 @@ function makeHarness(initialDoc: DocState) {
     getHistory: () => history,
     getDoc: () => history.present,
     layerById: (id: string) =>
-      history.present.layers.find((l) => 'id' in l && l.id === id) as ShapeLayer,
+      projectFlatLayers(history.present.layers).find((l) => l.id === id) as ShapeLayer,
   };
 }
 
-const TWO_RECTS_DOC: DocState = {
+const TWO_RECTS_DOC: DocFixture = {
   panelHp: 12,
   guides: [],
   layers: [rect('a', 0, 0, 10, 10), rect('b', 30, 0, 10, 10)],
@@ -105,7 +117,7 @@ describe('RotateSelectionPanel — visibility', () => {
   });
 
   it('renders nothing for an all-non-rotatable (pattern-only) combined selection', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [pattern('p1'), pattern('p2')] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [pattern('p1'), pattern('p2')] };
     const { Host } = makeHarness(doc);
     render(<Host selectedIds={['p1', 'p2']} />);
     expect(screen.queryByLabelText('Rotate selection (°)')).toBeNull();
@@ -188,7 +200,7 @@ describe('RotateSelectionPanel — Escape via abortGesture', () => {
 
     expect(getHistory().past.length).toBe(baselinePast); // the phantom entry is gone
     expect(layerById('a').rotation).toBeUndefined(); // exact pre-edit snapshot restored
-    expect(getDoc().layers).toEqual(TWO_RECTS_DOC.layers); // deep-equal against the captures
+    expect(getDoc().layers).toEqual(canonicalDoc(TWO_RECTS_DOC).layers); // deep-equal against the captures
   });
 
   it('Escape after a finalize rolls back only the post-finalize edit', () => {
@@ -271,7 +283,7 @@ describe('RotateSelectionPanel — invalid/empty input', () => {
 
 describe('RotateSelectionPanel — baseline reset on selection change', () => {
   it('re-captures fresh starts (and resets the draft) when the selection set changes', () => {
-    const doc: DocState = {
+    const doc: DocFixture = {
       panelHp: 12,
       guides: [],
       layers: [rect('a', 0, 0, 10, 10), rect('b', 30, 0, 10, 10), rect('c', 60, 0, 10, 10)],
@@ -309,9 +321,7 @@ describe('RotateSelectionPanel — re-captures on an external doc edit under an 
     // An external edit (e.g. a plain drag-move tool) commits directly —
     // never through this row — moving 'a' far from its captured position.
     // The Host re-renders on the dispatch, exactly like the real Editor.
-    const movedLayers = getDoc().layers.map((l) =>
-      'id' in l && l.id === 'a' ? { ...l, x: 200 } : l,
-    );
+    const movedLayers = mapPcbLeavesById(getDoc().layers, ['a'], (l) => ({ ...l, x: 200 }));
     act(() => ctx.commit({ ...getDoc(), layers: movedLayers }));
 
     const input = screen.getByLabelText('Rotate selection (°)');
@@ -326,7 +336,7 @@ describe('RotateSelectionPanel — re-captures on an external doc edit under an 
     );
     if (!freshSession) throw new Error('expected a capturable session for two rotatable rects');
     const expected = bakeMultiRotate(movedLayers, freshSession, 10);
-    const expectedA = expected.find((l) => 'id' in l && l.id === 'a') as ShapeLayer;
+    const expectedA = projectFlatLayers(expected).find((l) => l.id === 'a') as ShapeLayer;
 
     expect(layerById('a').x).toBeCloseTo(expectedA.x, 6);
     expect(layerById('a').rotation).toBe(10);
@@ -342,9 +352,7 @@ describe('RotateSelectionPanel — re-captures on an external doc edit under an 
 
     // An external edit lands mid-gesture — this row must keep baking from ITS
     // OWN frozen session, not silently re-capture from the mutated doc.
-    const externallyMoved = getDoc().layers.map((l) =>
-      'id' in l && l.id === 'b' ? { ...l, x: 999 } : l,
-    );
+    const externallyMoved = mapPcbLeavesById(getDoc().layers, ['b'], (l) => ({ ...l, x: 999 }));
     act(() => ctx.replace({ ...getDoc(), layers: externallyMoved }));
 
     fireEvent.change(input, { target: { value: '10' } });
@@ -352,13 +360,14 @@ describe('RotateSelectionPanel — re-captures on an external doc edit under an 
     // never moved externally — lands exactly where a fresh 10° bake from the
     // untouched original doc would put it.
     const freshFromOriginal = captureMultiRotateSession(
-      TWO_RECTS_DOC.layers,
+      canonicalDoc(TWO_RECTS_DOC).layers,
       ['a', 'b'],
-      projectFlatLayers(TWO_RECTS_DOC.layers),
+      projectFlatLayers(canonicalDoc(TWO_RECTS_DOC).layers),
     );
-    if (!freshFromOriginal) throw new Error('expected a capturable session for two rotatable rects');
-    const expected = bakeMultiRotate(TWO_RECTS_DOC.layers, freshFromOriginal, 10);
-    const expectedA = expected.find((l) => 'id' in l && l.id === 'a') as ShapeLayer;
+    if (!freshFromOriginal)
+      throw new Error('expected a capturable session for two rotatable rects');
+    const expected = bakeMultiRotate(canonicalDoc(TWO_RECTS_DOC).layers, freshFromOriginal, 10);
+    const expectedA = projectFlatLayers(expected).find((l) => l.id === 'a') as ShapeLayer;
     expect(layerById('a').x).toBeCloseTo(expectedA.x, 6);
     expect(layerById('a').rotation).toBe(10);
   });
@@ -379,9 +388,7 @@ describe('RotateSelectionPanel — commit-render timing regressions', () => {
 
     // The external nudge commits; the very next user action is typing into
     // this row — no other render lands in between.
-    const movedLayers = getDoc().layers.map((l) =>
-      'id' in l && l.id === 'a' ? { ...l, x: 200 } : l,
-    );
+    const movedLayers = mapPcbLeavesById(getDoc().layers, ['a'], (l) => ({ ...l, x: 200 }));
     act(() => ctx.commit({ ...getDoc(), layers: movedLayers }));
 
     fireEvent.change(input, { target: { value: '10' } });
@@ -394,7 +401,7 @@ describe('RotateSelectionPanel — commit-render timing regressions', () => {
     );
     if (!freshSession) throw new Error('expected a capturable session for two rotatable rects');
     const expected = bakeMultiRotate(movedLayers, freshSession, 10);
-    const expectedA = expected.find((l) => 'id' in l && l.id === 'a') as ShapeLayer;
+    const expectedA = projectFlatLayers(expected).find((l) => l.id === 'a') as ShapeLayer;
     expect(layerById('a').x).toBeCloseTo(expectedA.x, 6); // the nudge survives
     expect(layerById('a').rotation).toBe(10);
   });

@@ -13,13 +13,35 @@ sidebar_position: 1
 ```ts
 interface DocState {
   panelHp: number;
-  layers: Layer[]; // bottom -> top (index 0 renders first)
+  layers: PcbLayerStack; // Copper -> Solder mask -> Silkscreen
   guides: Guide[]; // ルーラーガイド — レイヤーではなく表示用の付帯物
 }
 ```
 
 - `panelHp` — HP で表したパネルの幅（[パネルサイズ](./panel-sizing.mdx)を参照）。
-- `layers` — フラットで順序付けされた配列。インデックス `0` がスタックの**最下層**で最初にレンダリングされ、後ろの要素ほど前の要素の上に重ねて描画されます。
+- `layers` — 物理的な下から上の順に並ぶ固定スタックです。各ルートは通常のレイヤー/グループ子を所有します。
+
+  ```ts
+  type PcbLayerRole = 'copper' | 'solder-mask' | 'silkscreen';
+
+  interface PcbLayerContainer {
+    kind: 'pcb-layer';
+    id: `pcb-layer-${PcbLayerRole}`;
+    role: PcbLayerRole;
+    children: LayerNode[];
+    hidden?: boolean;
+  }
+
+  type PcbLayerStack = [
+    PcbLayerContainer<'copper'>,
+    PcbLayerContainer<'solder-mask'>,
+    PcbLayerContainer<'silkscreen'>,
+  ];
+  ```
+
+  これらのルートは選択・変更できる通常グループではありません。`LayerNode`
+  は leaf `Layer` またはネストした通常の `GroupNode` で、名前変更、削除、
+  グループ化、移動ができるのは通常ノードだけです。
 - `guides` — ドキュメントのルーラーガイド。**必須**の配列です（[ガイド](#ガイド)を参照）。
 
 ## `Layer` ユニオン型
@@ -36,10 +58,10 @@ interface LayerBase {
 
 | Type | Manufacturable? | 概要 |
 | --- | --- | --- |
-| `shape` | Yes | 長方形または楕円。パレットの 1 色で塗りつぶされます。 |
+| `shape` | Yes | 長方形または楕円。所有コンテナのマテリアルで塗りつぶされます。 |
 | `pattern` | Yes | `@zpd/patterns` の名前付き・パラメータ化されたパターン（core からは不透明な値）。 |
 | `path` | Yes | ベジェパス。塗り・線・その両方のいずれか。ペンツールまたは画像トレースから生成されます。 |
-| `text` | Yes | 固定のフォント／サイズで描画されるテキスト。パレットの 1 色で塗りつぶされます。 |
+| `text` | Yes | 固定のフォント／サイズと所有マテリアルで描画されるテキスト。 |
 | `image` | No（設計時のみ） | ラスターの参照画像。パネルはラスターそのものではなく、そこからトレースされたベクターレイヤーをもとに製造されます。 |
 
 ### Shape レイヤー
@@ -65,6 +87,9 @@ interface PatternLayer extends LayerBase {
   patternType: string;
   params: Record<string, number>;
   color: ColorIndex;
+  x: number;
+  y: number;
+  size: number;
 }
 ```
 
@@ -93,6 +118,10 @@ interface PathLayer extends LayerBase {
 
 `extraSubpaths` は、画像トレースによって生成される追加の閉じたサブパス——ある 1 つの色領域の穴や島——を保持します。これらはプライマリのサブパスと一緒に even-odd（偶奇）フィルで描画されるため、穴は穴として残ります。
 
+`color`、`fill`、`stroke` は互換用フィールドです。コンテナ所属が null
+でない paint を所有マテリアルへ強制します。パスでは null と非 null の違いが
+fill/stroke の有効状態として残ります。
+
 ### Text レイヤー
 
 ```ts
@@ -118,6 +147,7 @@ interface ImageLayer extends LayerBase {
   y: number;
   width: number;
   height: number;
+  rotation?: number;
 }
 ```
 
@@ -143,24 +173,29 @@ interface Guide {
 `DocState` はメモリ上の作業ドキュメントです。`PanelConfig` は、ユーザーがダウンロードして製造に引き渡す、バージョン付きのエクスポート形式です。
 
 ```ts
-const PANEL_CONFIG_VERSION = 2;
+const PANEL_CONFIG_VERSION = 5;
 
 interface PanelConfig {
-  version: 2;
+  version: 5;
   app: 'zpd';
   panel: { hp: number; widthMm: number; heightMm: number };
   palette: string[];
-  layers: Layer[];
+  layers: PcbLayerStack;
   guides: Guide[];
 }
 ```
 
 `hp`、`layers`、`guides` は正式なデータであり、ラウンドトリップします。`panel.widthMm`、`panel.heightMm`、`palette` は、人間や注文の読み手のための**派生的で参考用の出力**であり、エクスポート時に `hp` と固定パレットから計算されます。ファイルを読み込み直す際には、これらの値が再び信頼されることはありません。
 
-**v2** でトップレベルの `guides` 配列が追加されました。v1 の設定（あるいは `guides` を持たない任意の設定）も、`guides` が `[]` にデフォルト化されて問題なく読み込まれます。`parsePanelConfig` は `version` で分岐しません——各フィールドが自分自身を防御します——ので、古いファイルに専用のマイグレーション経路は不要です。[PanelConfig フォーマット → バージョニング](../export/panel-config-format.mdx#バージョニング)を参照してください。
+**v5** で固定 PCB マテリアルスタックが追加されました。v1–v4 の自由な
+ルート文書は、旧来の paint により Copper、Solder mask、Silkscreen へ
+決定的に分割されます。複数マテリアルにまたがるグループは、可能な限り通常の
+構造を保って分割され、id は決定的に修復され、null でない paint は所属へ
+正規化されます。不正な v5 ルートも固定順へ正規化されます。
+[PanelConfig フォーマット → バージョニング](../export/panel-config-format.mdx#バージョニング)を参照してください。
 
 <Warning title="parsePanelConfig は決して例外を投げない">
-  `parsePanelConfig` には、ユーザーが手で編集した JSON、古いエクスポート、あるいは別のツールが生成した JSON など、あらゆるものが渡されます。そのため、1 つの不正なフィールドがドキュメント全体を失敗させないよう、各フィールドは個別に防御されます。`hp` が不正または欠落している場合はデフォルトのパネルサイズにフォールバックし、不正な `color` インデックスは `0`（黒）にクランプされ、認識できない `type` を持つレイヤーは黙って破棄されます。壊れた入力やオブジェクトでない入力は、デフォルトのドキュメントになります。
+  `parsePanelConfig` には、ユーザーが手で編集した JSON、古いエクスポート、あるいは別のツールが生成した JSON などが渡されるため、各フィールドを個別に防御します。不正な panel/layer フィールドはフォールバックまたは破棄され、v1–v4 は移行され、不正な v5 スタックは正規化されます。永続オートセーブ用の厳密なバージョン境界では、未対応または将来バージョンの設定を拒否します。
 </Warning>
 
 フィールドごとのパースルールの全容は、`packages/core/src/serialize.ts` のソースを参照してください。

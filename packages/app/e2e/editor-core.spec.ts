@@ -28,9 +28,8 @@ test('@smoke app loads clean and boots the default document', async ({ page }) =
   // fixture layers of every type for dev/QA (see demo-doc.ts) — not a bare
   // createDefaultDoc(12). Assert the piece createDemoDoc derives directly
   // from it: panelHp and the default dot-grid pattern layer stay in place.
-  const doc = await bridge(page).getDoc();
-  expect(doc.panelHp).toBe(12);
-  expect(doc.layers[0]).toMatchObject({
+  expect(await bridge(page).getPanelHp()).toBe(12);
+  expect(await bridge(page).getMaterialLayer('layer-default-dot-grid')).toMatchObject({
     id: 'layer-default-dot-grid',
     type: 'pattern',
     patternType: 'dot-grid',
@@ -45,7 +44,7 @@ test('@smoke add rectangle, drag it, then undo restores its position', async ({ 
   const rectId = await bridge(page).getSelectedId();
   expect(rectId).not.toBeNull();
 
-  const before = (await bridge(page).getDoc()).layers.find((l) => l.id === rectId);
+  const before = await bridge(page).getMaterialLayer(rectId!);
   if (before?.type !== 'shape') throw new Error('expected a shape layer to be selected');
 
   const start = await toScreenPoint(page, {
@@ -57,14 +56,14 @@ test('@smoke add rectangle, drag it, then undo restores its position', async ({ 
   await page.mouse.move(start.x + 24, start.y + 18, { steps: 8 });
   await page.mouse.up();
 
-  const moved = (await bridge(page).getDoc()).layers.find((l) => l.id === rectId);
+  const moved = await bridge(page).getMaterialLayer(rectId!);
   if (moved?.type !== 'shape') throw new Error('rect layer disappeared during drag');
   expect(moved.x).not.toBe(before.x);
   expect(moved.y).not.toBe(before.y);
 
   await page.keyboard.press(`${MOD}+z`);
 
-  const restored = (await bridge(page).getDoc()).layers.find((l) => l.id === rectId);
+  const restored = await bridge(page).getMaterialLayer(rectId!);
   if (restored?.type !== 'shape') throw new Error('rect layer disappeared after undo');
   expect(restored.x).toBe(before.x);
   expect(restored.y).toBe(before.y);

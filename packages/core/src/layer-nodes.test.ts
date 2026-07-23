@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { flattenLayerNodes, isGroupNode, MAX_GROUP_DEPTH, walkLayerNodes } from './layer-nodes';
+import {
+  flattenLayerNodes,
+  isGroupNode,
+  MAX_GROUP_DEPTH,
+  projectPcbLayerStack,
+  walkLayerNodes,
+  walkPcbLayerNodes,
+} from './layer-nodes';
+import { createPcbLayerStack } from './palette';
 import type { GroupNode, LayerNode, ShapeLayer } from './types';
 
 function shape(id: string, extra: Partial<ShapeLayer> = {}): ShapeLayer {
@@ -131,5 +139,51 @@ describe('flattenLayerNodes', () => {
 
   it('MAX_GROUP_DEPTH is 8 (root nodes = depth 0)', () => {
     expect(MAX_GROUP_DEPTH).toBe(8);
+  });
+});
+
+describe('fixed PCB stack projection', () => {
+  it('walks ordinary nodes in physical stack order without counting the fixed wrapper as depth', () => {
+    const stack = createPcbLayerStack({
+      copper: [group('g', [shape('c')])],
+      'solder-mask': [shape('m')],
+      silkscreen: [shape('s')],
+    });
+    const visited: Array<[string, string, number]> = [];
+    walkPcbLayerNodes(stack, (node, role, _container, depth) => {
+      visited.push([node.id, role, depth]);
+    });
+    expect(visited).toEqual([
+      ['g', 'copper', 0],
+      ['c', 'copper', 1],
+      ['m', 'solder-mask', 0],
+      ['s', 'silkscreen', 0],
+    ]);
+  });
+
+  it('forces effective paint from membership, folds fixed hidden, and memoizes by stack identity', () => {
+    const stack = createPcbLayerStack({
+      copper: [shape('c', { color: 0 })],
+      'solder-mask': [
+        {
+          id: 'p',
+          name: 'p',
+          type: 'path',
+          points: [],
+          closed: false,
+          fill: null,
+          stroke: 2,
+          strokeWidth: 1,
+        },
+      ],
+      silkscreen: [shape('s', { color: 1 })],
+    });
+    stack[1] = { ...stack[1], hidden: true };
+
+    const first = projectPcbLayerStack(stack);
+    expect(projectPcbLayerStack(stack)).toBe(first);
+    expect(first[0]).toMatchObject({ id: 'c', color: 1 });
+    expect(first[1]).toMatchObject({ id: 'p', fill: null, stroke: 0, hidden: true });
+    expect(first[2]).toMatchObject({ id: 's', color: 2 });
   });
 });

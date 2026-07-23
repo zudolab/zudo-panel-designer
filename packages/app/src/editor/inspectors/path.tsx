@@ -1,23 +1,29 @@
-import type { ColorIndex, PathLayer } from '@zpd/core';
+import { pcbLayerDefinition, type PathLayer } from '@zpd/core';
 import { registerInspector } from '../registry/inspectors';
-import { ColorPicker, Field, NumberField } from '../components/inspector-ui';
+import { Field, MaterialField, NumberField } from '../components/inspector-ui';
 import type { InspectorProps } from '../types';
 
-function PathInspector({ layer, onChange }: InspectorProps<PathLayer>) {
+function PathInspector({ layer, materialRole, onChange }: InspectorProps<PathLayer>) {
+  const materialColor = materialRole === null ? null : pcbLayerDefinition(materialRole).color;
   return (
     <div className="flex flex-col gap-2">
-      <Field label="Fill">
-        <ColorPicker
-          value={layer.fill}
-          allowNone
-          onPick={(c: ColorIndex | null) => onChange({ fill: c })}
+      <MaterialField role={materialRole} />
+      <Field label="Fill enabled">
+        <input
+          type="checkbox"
+          checked={layer.fill !== null}
+          disabled={materialColor === null}
+          onChange={(event) => onChange({ fill: event.target.checked ? materialColor : null })}
+          className="accent-sky-400 disabled:opacity-40"
         />
       </Field>
-      <Field label="Stroke">
-        <ColorPicker
-          value={layer.stroke}
-          allowNone
-          onPick={(c: ColorIndex | null) => onChange({ stroke: c })}
+      <Field label="Stroke enabled">
+        <input
+          type="checkbox"
+          checked={layer.stroke !== null}
+          disabled={materialColor === null}
+          onChange={(event) => onChange({ stroke: event.target.checked ? materialColor : null })}
+          className="accent-sky-400 disabled:opacity-40"
         />
       </Field>
       <Field label="stroke w (mm)">

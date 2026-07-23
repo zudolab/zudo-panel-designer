@@ -1,18 +1,14 @@
-// Versioned config export — the stage-1 deliverable: the user downloads this
-// JSON and orders a panel with it. hp + layer data are authoritative; the
-// panel.widthMm/heightMm and palette name fields are derived/advisory OUTPUT
-// for the human/order reader, not re-trusted on the way back in.
-//
-// parsePanelConfig NEVER throws: it is fed whatever JSON a user hand-edited
-// or an old/foreign tool produced, so every field is defended individually
-// (clamped, defaulted, or dropped) rather than letting one bad field fail
-// the whole document.
 import { createDefaultDoc, DEFAULT_PANEL_HP } from './default-doc';
-import { MAX_GROUP_DEPTH } from './layer-nodes';
-import { PALETTE } from './palette';
+import { isGroupNode, MAX_GROUP_DEPTH, normalizeLayerNodeMaterial } from './layer-nodes';
+import {
+  createPcbLayerContainer,
+  PALETTE,
+  PCB_LAYER_DEFINITIONS,
+  PCB_LAYER_ROLES,
+  pcbLayerRoleForColor,
+} from './palette';
 import { MAX_PANEL_HP, PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
 import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
-import { mintId } from './types';
 import type {
   ColorIndex,
   DocState,
@@ -24,30 +20,21 @@ import type {
   PathLayer,
   PathPoint,
   PatternLayer,
+  PcbLayerRole,
+  PcbLayerStack,
   ShapeLayer,
   TextLayer,
 } from './types';
 
-// v2 added the top-level `guides` array; v3 adds pattern square geometry
-// (x/y/size on pattern layers, #96). v4 adds the recursive GroupNode layer
-// tree (layer groups). The v4 bump is a COMPATIBILITY GATE, not just
-// documentation: parsePanelConfig silently drops any layer with an unknown
-// `type`/`kind`, so an older build reading a group-bearing v4 config would
-// delete whole subtrees it doesn't understand — the existing
-// tryParsePanelConfig future-version gate is what protects old builds from
-// that silent data loss. Loading a v<=3 config is an IDENTITY migration: a
-// flat Layer[] is already a valid LayerNode[] (every Layer is a leaf
-// LayerNode), so parsePanelConfig does not branch on version at all — the
-// same per-field defense that has always run is what makes this work; only
-// serializePanelConfig's output version changes.
-export const PANEL_CONFIG_VERSION = 4;
+// v5 replaces the free ordinary root with the canonical fixed PCB stack.
+export const PANEL_CONFIG_VERSION = 5;
 
 export interface PanelConfig {
-  version: 4;
+  version: 5;
   app: 'zpd';
   panel: { hp: number; widthMm: number; heightMm: number };
   palette: string[];
-  layers: LayerNode[];
+  layers: PcbLayerStack;
   guides: Guide[];
 }
 
@@ -86,7 +73,6 @@ function optionalBool(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
-// Out-of-range/invalid color indexes clamp to 0 (black) rather than reject.
 function colorIndex(value: unknown): ColorIndex {
   return value === 0 || value === 1 || value === 2 ? value : 0;
 }
@@ -110,14 +96,14 @@ function point(value: unknown): PathPoint | null {
 
 function subpath(value: unknown): PathPoint[] {
   if (!Array.isArray(value)) return [];
-  return value.map(point).filter((p): p is PathPoint => p !== null);
+  return value.map(point).filter((entry): entry is PathPoint => entry !== null);
 }
 
 function parseParams(value: unknown): Record<string, number> {
   if (!isPlainObject(value)) return {};
   const params: Record<string, number> = {};
-  for (const [key, v] of Object.entries(value)) {
-    if (typeof v === 'number' && Number.isFinite(v)) params[key] = v;
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === 'number' && Number.isFinite(entry)) params[key] = entry;
   }
   return params;
 }
@@ -133,20 +119,19 @@ interface PanelDimsMm {
   heightMm: number;
 }
 
-// Pattern square geometry (#96). v1/v2 configs carry no x/y/size at all, and a
-// hand-edited v3 file may carry broken values — both degrade the same way:
-// a missing/non-finite/non-positive `size` falls back to the cover size, then
-// a missing/non-finite `x`/`y` centers the RESULTING size on the panel. A full
-// v1/v2 migration is therefore exactly "cover geometry via the helper". A
-// finite but absurd size is clamped to MAX_PATTERN_SIZE_MM — generators loop
-// over the whole span, so an unbounded size is a freeze-on-open DoS vector.
-//
-// NOTE the migration contract: cover geometry preserves the panel COVERAGE and
-// the pattern's CENTER (centeredStart pins one lattice tick to the draw span's
-// center, which cover placement keeps at the panel center) — it does NOT
-// preserve exact pixel phase. A lattice-parity/centerY-dependent generator may
-// shift by a sub-pitch amount because the draw span changes from the panel
-// rect to the square.
+function parseBase(value: Record<string, unknown>, fallbackId: string): ParsedBase {
+  const id = typeof value.id === 'string' && value.id.length > 0 ? value.id : fallbackId;
+  const name = str(value.name, '');
+  const hidden = optionalBool(value.hidden);
+  return hidden === undefined ? { id, name } : { id, name, hidden };
+}
+
+function parseHp(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.min(value, MAX_PANEL_HP)
+    : DEFAULT_PANEL_HP;
+}
+
 function parsePatternGeometry(
   value: Record<string, unknown>,
   panel: PanelDimsMm,
@@ -162,25 +147,10 @@ function parsePatternGeometry(
   };
 }
 
-function parseBase(value: Record<string, unknown>): ParsedBase {
-  const id = typeof value.id === 'string' && value.id.length > 0 ? value.id : mintId('layer');
-  const name = str(value.name, '');
-  const hidden = optionalBool(value.hidden);
-  return hidden === undefined ? { id, name } : { id, name, hidden };
-}
-
-// Invalid/non-positive hp falls back to the default; finite positive hp is
-// bounded by the largest product size before any dimensions are derived.
-function parseHp(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? Math.min(value, MAX_PANEL_HP)
-    : DEFAULT_PANEL_HP;
-}
-
 function parseLayer(value: unknown, panel: PanelDimsMm): Layer | null {
   if (!isPlainObject(value)) return null;
-  const base = parseBase(value);
-
+  const fallback = typeof value.type === 'string' ? value.type : 'layer';
+  const base = parseBase(value, fallback);
   switch (value.type) {
     case 'shape': {
       const layer: ShapeLayer = {
@@ -196,30 +166,23 @@ function parseLayer(value: unknown, panel: PanelDimsMm): Layer | null {
       const rotation = optionalNum(value.rotation);
       return rotation === undefined ? layer : { ...layer, rotation };
     }
-    case 'pattern': {
-      // patternType is kept verbatim even when unrecognized — core has no
-      // dependency on the patterns registry that would validate it.
-      const layer: PatternLayer = {
+    case 'pattern':
+      return {
         ...base,
         type: 'pattern',
         patternType: str(value.patternType, 'unknown'),
         params: parseParams(value.params),
         color: colorIndex(value.color),
         ...parsePatternGeometry(value, panel),
-      };
-      return layer;
-    }
+      } satisfies PatternLayer;
     case 'path': {
-      const points = subpath(value.points);
-      // Preserve presence/absence of extraSubpaths (even an empty array)
-      // rather than normalizing it away, so round-tripping stays exact.
       const extraSubpaths = Array.isArray(value.extraSubpaths)
         ? value.extraSubpaths.map(subpath)
         : undefined;
       const layer: PathLayer = {
         ...base,
         type: 'path',
-        points,
+        points: subpath(value.points),
         closed: value.closed === true,
         fill: value.fill === null ? null : colorIndex(value.fill),
         stroke: value.stroke === null ? null : colorIndex(value.stroke),
@@ -255,96 +218,378 @@ function parseLayer(value: unknown, panel: PanelDimsMm): Layer | null {
       return rotation === undefined ? layer : { ...layer, rotation };
     }
     default:
-      // Unrecognized layer `type` — drop it rather than guess its shape.
       return null;
   }
 }
 
-// Recursive node parse: dispatches on the dual discriminator (`kind` for
-// groups, `type` for leaves — see types.ts). Every field defends itself, same
-// policy as parseLayer: unknown `kind` (a `kind` present but not 'group') is
-// dropped, and a GROUP nested past MAX_GROUP_DEPTH is dropped defensively
-// (the rest of the document survives) rather than throwing or truncating the
-// whole parse. The cap applies to GROUP nesting only, not to depth in
-// general: a leaf directly inside the deepest allowed group (depth
-// MAX_GROUP_DEPTH) adds no further group nesting, so it must still parse —
-// otherwise the deepest legal group could never hold any children at all.
 function parseLayerNode(value: unknown, panel: PanelDimsMm, depth: number): LayerNode | null {
   if (!isPlainObject(value)) return null;
   if ('kind' in value) {
-    if (value.kind !== 'group') return null;
-    if (depth > MAX_GROUP_DEPTH) return null;
-    const base = parseBase(value);
-    const childrenRaw = Array.isArray(value.children) ? value.children : [];
-    const children = childrenRaw
+    if (value.kind !== 'group' || depth > MAX_GROUP_DEPTH) return null;
+    const children = (Array.isArray(value.children) ? value.children : [])
       .map((child) => parseLayerNode(child, panel, depth + 1))
       .filter((child): child is LayerNode => child !== null);
-    const group: GroupNode = { ...base, kind: 'group', children };
-    return group;
+    return {
+      ...parseBase(value, 'group'),
+      kind: 'group',
+      children,
+    } satisfies GroupNode;
   }
   return parseLayer(value, panel);
 }
 
-// A guide needs a valid orientation and a finite numeric position; anything
-// else is dropped rather than defaulted, so a malformed `guides` entry can't
-// silently plant a bogus 0mm line. A missing id is stamped (same policy as
-// layers) so downstream UI can key on it.
-function parseGuide(value: unknown): Guide | null {
+class DeterministicIds {
+  private readonly used: Set<string>;
+  private readonly remainingOriginals = new Map<string, number>();
+
+  constructor(
+    originalIds: readonly string[],
+    reservedIds: readonly string[] = PCB_LAYER_DEFINITIONS.map((definition) => definition.id),
+  ) {
+    this.used = new Set(reservedIds);
+    for (const id of originalIds) {
+      this.remainingOriginals.set(id, (this.remainingOriginals.get(id) ?? 0) + 1);
+    }
+  }
+
+  claimOriginal(wanted: string): string {
+    const remaining = (this.remainingOriginals.get(wanted) ?? 1) - 1;
+    if (remaining > 0) this.remainingOriginals.set(wanted, remaining);
+    else this.remainingOriginals.delete(wanted);
+    return this.allocate(wanted, false);
+  }
+
+  claimGenerated(wanted: string): string {
+    return this.allocate(wanted, true);
+  }
+
+  private allocate(wanted: string, protectOriginals: boolean): string {
+    if (!this.used.has(wanted) && (!protectOriginals || !this.remainingOriginals.has(wanted))) {
+      this.used.add(wanted);
+      return wanted;
+    }
+    let suffix = 2;
+    while (
+      this.used.has(`${wanted}-${suffix}`) ||
+      this.remainingOriginals.has(`${wanted}-${suffix}`)
+    ) {
+      suffix += 1;
+    }
+    const allocated = `${wanted}-${suffix}`;
+    this.used.add(allocated);
+    return allocated;
+  }
+}
+
+type Partitions = Partial<Record<PcbLayerRole, LayerNode>>;
+
+function partitionRoles(node: LayerNode, roles = new Set<PcbLayerRole>()): Set<PcbLayerRole> {
+  if (isGroupNode(node)) {
+    if (node.children.length === 0) roles.add('copper');
+    for (const child of node.children) partitionRoles(child, roles);
+  } else if (
+    node.type === 'image' ||
+    (node.type === 'path' && node.fill === null && node.stroke === null)
+  ) {
+    roles.add('copper');
+  } else if (node.type === 'path') {
+    if (node.fill !== null) roles.add(pcbLayerRoleForColor(node.fill));
+    if (node.stroke !== null) roles.add(pcbLayerRoleForColor(node.stroke));
+  } else {
+    roles.add(pcbLayerRoleForColor(node.color));
+  }
+  return roles;
+}
+
+function firstPaintedRole(node: LayerNode): PcbLayerRole | null {
+  if (isGroupNode(node)) {
+    for (const child of node.children) {
+      const role = firstPaintedRole(child);
+      if (role) return role;
+    }
+    return null;
+  }
+  if (node.type === 'image') return null;
+  if (node.type === 'path') {
+    if (node.fill !== null) return pcbLayerRoleForColor(node.fill);
+    if (node.stroke !== null) return pcbLayerRoleForColor(node.stroke);
+    return null;
+  }
+  return pcbLayerRoleForColor(node.color);
+}
+
+function partitionLegacyNode(node: LayerNode, ids: DeterministicIds): Partitions {
+  if (!isGroupNode(node)) {
+    if (
+      node.type === 'image' ||
+      (node.type === 'path' && node.fill === null && node.stroke === null)
+    ) {
+      return { copper: { ...node, id: ids.claimOriginal(node.id) } };
+    }
+    if (node.type !== 'path') {
+      const role = pcbLayerRoleForColor(node.color);
+      return { [role]: { ...node, id: ids.claimOriginal(node.id) } };
+    }
+
+    const fillRole = node.fill === null ? null : pcbLayerRoleForColor(node.fill);
+    const strokeRole = node.stroke === null ? null : pcbLayerRoleForColor(node.stroke);
+    if (fillRole === strokeRole) {
+      const role = fillRole ?? 'copper';
+      return { [role]: { ...node, id: ids.claimOriginal(node.id) } };
+    }
+    const result: Partitions = {};
+    if (fillRole) {
+      result[fillRole] = {
+        ...node,
+        id: ids.claimOriginal(node.id),
+        stroke: null,
+      };
+    }
+    if (strokeRole) {
+      result[strokeRole] = {
+        ...node,
+        id: fillRole ? ids.claimGenerated(`${node.id}-${strokeRole}`) : ids.claimOriginal(node.id),
+        fill: null,
+      };
+    }
+    return result;
+  }
+
+  const roles = partitionRoles(node);
+  const keeper = firstPaintedRole(node) ?? 'copper';
+  const groupIds = new Map<PcbLayerRole, string>();
+  for (const role of [keeper, ...PCB_LAYER_ROLES.filter((entry) => entry !== keeper)]) {
+    if (roles.has(role)) {
+      groupIds.set(
+        role,
+        role === keeper ? ids.claimOriginal(node.id) : ids.claimGenerated(`${node.id}-${role}`),
+      );
+    }
+  }
+
+  const childrenByRole = new Map<PcbLayerRole, LayerNode[]>();
+  for (const child of node.children) {
+    const partitions = partitionLegacyNode(child, ids);
+    for (const role of PCB_LAYER_ROLES) {
+      const partition = partitions[role];
+      if (!partition) continue;
+      const children = childrenByRole.get(role) ?? [];
+      children.push(partition);
+      childrenByRole.set(role, children);
+    }
+  }
+
+  const result: Partitions = {};
+  for (const role of roles) {
+    const children = childrenByRole.get(role) ?? [];
+    // A role discovered from paint always has content. Colorless-only and
+    // empty groups intentionally retain their shell in Copper.
+    if (children.length === 0 && !(role === 'copper' && roles.size === 1)) continue;
+    result[role] = { ...node, id: groupIds.get(role)!, children };
+  }
+  return result;
+}
+
+function forceNodeMaterial(node: LayerNode, role: PcbLayerRole, ids: DeterministicIds): LayerNode {
+  const id = ids.claimOriginal(node.id);
+  if (!isGroupNode(node)) {
+    return normalizeLayerNodeMaterial({ ...node, id }, role);
+  }
+  return {
+    ...node,
+    id,
+    children: node.children.map((child) => forceNodeMaterial(child, role, ids)),
+  };
+}
+
+function assignOrdinaryIds(node: LayerNode, ids: DeterministicIds): LayerNode {
+  const id = ids.claimOriginal(node.id);
+  return isGroupNode(node)
+    ? { ...node, id, children: node.children.map((child) => assignOrdinaryIds(child, ids)) }
+    : { ...node, id };
+}
+
+function parseGuide(value: unknown, index: number): Guide | null {
   if (!isPlainObject(value)) return null;
   const orientation =
     value.orientation === 'horizontal' || value.orientation === 'vertical'
       ? value.orientation
       : null;
-  if (orientation === null) return null;
   const position = optionalNum(value.position);
-  if (position === undefined) return null;
-  const id = typeof value.id === 'string' && value.id.length > 0 ? value.id : mintId('guide');
+  if (!orientation || position === undefined) return null;
+  const id = typeof value.id === 'string' && value.id.length > 0 ? value.id : `guide-${index + 1}`;
   const hidden = optionalBool(value.hidden);
   const guide: Guide = { id, orientation, position };
   return hidden === undefined ? guide : { ...guide, hidden };
 }
 
-// Missing or non-array `guides` (v1 / hand-edited configs) -> []. Malformed
-// entries are individually dropped.
 function parseGuides(value: unknown): Guide[] {
   if (!Array.isArray(value)) return [];
-  return value.map(parseGuide).filter((guide): guide is Guide => guide !== null);
+  const parsed = value
+    .map((entry, index) => parseGuide(entry, index))
+    .filter((guide): guide is Guide => guide !== null);
+  const ids = new DeterministicIds(
+    parsed.map((guide) => guide.id),
+    [],
+  );
+  return parsed.map((guide) => ({ ...guide, id: ids.claimOriginal(guide.id) }));
 }
 
-// Never throws: garbage/non-object input yields the safe default document;
-// every field below is defended individually so one bad value can't sink
-// the rest of the document.
+function appendPartitions(
+  buckets: Record<PcbLayerRole, LayerNode[]>,
+  partitions: Partitions,
+): void {
+  for (const role of PCB_LAYER_ROLES) {
+    const node = partitions[role];
+    if (node) buckets[role].push(node);
+  }
+}
+
+function collectOriginalIds(node: LayerNode, output: string[]): void {
+  output.push(node.id);
+  if (isGroupNode(node)) {
+    for (const child of node.children) collectOriginalIds(child, output);
+  }
+}
+
+function recoverableOrdinaryRoots(rawLayers: unknown[], panel: PanelDimsMm): LayerNode[] {
+  const roots: LayerNode[] = [];
+  for (const raw of rawLayers) {
+    const ordinary = parseLayerNode(raw, panel, 0);
+    if (ordinary) {
+      roots.push(ordinary);
+      continue;
+    }
+    if (!isPlainObject(raw) || !Array.isArray(raw.children)) continue;
+    for (const childRaw of raw.children) {
+      const child = parseLayerNode(childRaw, panel, 0);
+      if (child) roots.push(child);
+    }
+  }
+  return roots;
+}
+
+function parseStack(rawLayers: unknown[], version: number, panel: PanelDimsMm): PcbLayerStack {
+  const originalIds: string[] = [];
+  for (const root of recoverableOrdinaryRoots(rawLayers, panel)) {
+    collectOriginalIds(root, originalIds);
+  }
+  const ids = new DeterministicIds(originalIds);
+  const buckets: Record<PcbLayerRole, LayerNode[]> = {
+    copper: [],
+    'solder-mask': [],
+    silkscreen: [],
+  };
+  const hiddenByRole: Partial<Record<PcbLayerRole, boolean>> = {};
+
+  if (version < PANEL_CONFIG_VERSION) {
+    for (const raw of rawLayers) {
+      const node = parseLayerNode(raw, panel, 0);
+      if (node) appendPartitions(buckets, partitionLegacyNode(node, ids));
+    }
+  } else {
+    for (const raw of rawLayers) {
+      if (!isPlainObject(raw)) continue;
+      const ordinary = parseLayerNode(raw, panel, 0);
+      if (ordinary) {
+        appendPartitions(buckets, partitionLegacyNode(ordinary, ids));
+        continue;
+      }
+
+      const childrenRaw = Array.isArray(raw.children) ? raw.children : null;
+      if (!childrenRaw) continue;
+      const validRole = PCB_LAYER_ROLES.includes(raw.role as PcbLayerRole)
+        ? (raw.role as PcbLayerRole)
+        : null;
+      if (validRole) {
+        if (hiddenByRole[validRole] === undefined) {
+          hiddenByRole[validRole] = optionalBool(raw.hidden);
+        } else if (raw.hidden === true) {
+          hiddenByRole[validRole] = true;
+        }
+        for (const childRaw of childrenRaw) {
+          const child = parseLayerNode(childRaw, panel, 0);
+          if (child) buckets[validRole].push(forceNodeMaterial(child, validRole, ids));
+        }
+      } else {
+        // Unknown or malformed wrapper: its recoverable ordinary children are
+        // legacy-partitioned rather than discarded.
+        for (const childRaw of childrenRaw) {
+          const child = parseLayerNode(childRaw, panel, 0);
+          if (child) appendPartitions(buckets, partitionLegacyNode(child, ids));
+        }
+      }
+    }
+  }
+
+  return PCB_LAYER_ROLES.map((role) =>
+    createPcbLayerContainer(role, buckets[role], hiddenByRole[role]),
+  ) as PcbLayerStack;
+}
+
+export function parseLayerNodeFragment(input: unknown, hp = DEFAULT_PANEL_HP): LayerNode[] {
+  if (!Array.isArray(input)) return [];
+  const sanitizedHp = parseHp(hp);
+  const panel = { widthMm: panelWidthMm(sanitizedHp), heightMm: PANEL_HEIGHT_MM };
+  const parsed = input
+    .map((entry) => parseLayerNode(entry, panel, 0))
+    .filter((node): node is LayerNode => node !== null);
+  const originalIds: string[] = [];
+  for (const node of parsed) collectOriginalIds(node, originalIds);
+  const ids = new DeterministicIds(originalIds);
+  return parsed.map((node) => assignOrdinaryIds(node, ids));
+}
+
+export interface MaterialLayerNode {
+  material: PcbLayerRole;
+  node: LayerNode;
+}
+
+export function parseLegacyLayerFragment(
+  input: unknown,
+  hp = DEFAULT_PANEL_HP,
+): MaterialLayerNode[] {
+  if (!Array.isArray(input)) return [];
+  const sanitizedHp = parseHp(hp);
+  const panel = { widthMm: panelWidthMm(sanitizedHp), heightMm: PANEL_HEIGHT_MM };
+  const parsed = input
+    .map((entry) => parseLayerNode(entry, panel, 0))
+    .filter((node): node is LayerNode => node !== null);
+  const originalIds: string[] = [];
+  for (const node of parsed) collectOriginalIds(node, originalIds);
+  const ids = new DeterministicIds(originalIds);
+  const output: MaterialLayerNode[] = [];
+  for (const node of parsed) {
+    const partitions = partitionLegacyNode(node, ids);
+    for (const material of PCB_LAYER_ROLES) {
+      const partition = partitions[material];
+      if (partition) output.push({ material, node: partition });
+    }
+  }
+  return output;
+}
+
+// Never throws. Invalid non-object input becomes a canonical default document;
+// malformed document fields are recovered independently.
 export function parsePanelConfig(input: unknown): DocState {
   if (!isPlainObject(input)) return createDefaultDoc();
-
-  const panel = isPlainObject(input.panel) ? input.panel : undefined;
-  // hp is sanitized FIRST and the panel dims the pattern-geometry defense
-  // needs are DERIVED from it — the serialized panel.widthMm/heightMm are
-  // advisory output (see header) and are never re-trusted on the way in.
-  const hp = parseHp(input.hp ?? panel?.hp);
-  const panelDims: PanelDimsMm = { widthMm: panelWidthMm(hp), heightMm: PANEL_HEIGHT_MM };
-
-  const layers = Array.isArray(input.layers)
-    ? input.layers
-        .map((entry) => parseLayerNode(entry, panelDims, 0))
-        .filter((node): node is LayerNode => node !== null)
-    : [];
-
-  return { panelHp: hp, layers, guides: parseGuides(input.guides) };
+  const panelValue = isPlainObject(input.panel) ? input.panel : undefined;
+  const hp = parseHp(input.hp ?? panelValue?.hp);
+  const panel = { widthMm: panelWidthMm(hp), heightMm: PANEL_HEIGHT_MM };
+  const version =
+    typeof input.version === 'number' && Number.isInteger(input.version) ? input.version : 4;
+  const rawLayers = Array.isArray(input.layers) ? input.layers : [];
+  return {
+    panelHp: hp,
+    layers: parseStack(rawLayers, version, panel),
+    guides: parseGuides(input.guides),
+  };
 }
 
 export type TryParsePanelConfigResult = { ok: true; doc: DocState } | { ok: false; reason: string };
 
-// Oldest PANEL_CONFIG_VERSION this app has ever emitted — v1 predates the
-// `guides` field but is otherwise a valid envelope.
 const MIN_PANEL_CONFIG_VERSION = 1;
 
-// STRICT envelope check, unlike parsePanelConfig above (which never fails —
-// it turns garbage into a default doc). Import UX needs to tell "this is not
-// a zpd panel config" apart from "this is a real config with a wonky field",
-// so it checks only the three envelope markers (app, version range, layers
-// shape) and, on success, delegates to parsePanelConfig for field-level
-// defense. parsePanelConfig itself is unchanged and still never throws.
 export function tryParsePanelConfig(input: unknown): TryParsePanelConfigResult {
   if (!isPlainObject(input)) return { ok: false, reason: 'not an object' };
   if (input.app !== 'zpd') return { ok: false, reason: 'not a zpd panel config (app mismatch)' };

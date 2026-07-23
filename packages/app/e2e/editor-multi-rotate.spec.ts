@@ -8,14 +8,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  isGroupNode,
   rotatedRectAABB,
   rotateLayersAboutPivot,
   type ShapeLayer,
   type TextLayer,
 } from '@zpd/core';
 import { expect, test, type Page } from '@playwright/test';
-import { bridge, importPanelJson, MOD, openEditor, toScreenPoint } from './helpers';
+import {
+  bridge,
+  dragLayerRowAfter,
+  importPanelJson,
+  MOD,
+  openEditor,
+  toScreenPoint,
+} from './helpers';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -64,7 +70,14 @@ async function click(page: Page, mm: { x: number; y: number }, modifiers: string
 async function selectRectAndEllipse(page: Page): Promise<void> {
   await click(page, RECT_CENTER);
   await click(page, ELLIPSE_CENTER, ['Shift']);
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-ellipse', 'demo-rect']);
+}
+
+async function moveEllipseToSilkscreen(page: Page): Promise<void> {
+  await dragLayerRowAfter(page, 'Ellipse', 'Rect');
+  await expect
+    .poll(async () => (await bridge(page).getMaterialLayer('demo-ellipse'))?.material)
+    .toBe('silkscreen');
 }
 
 async function knobScreenPos(page: Page): Promise<{ x: number; y: number }> {
@@ -117,6 +130,10 @@ test('@smoke combined rotate: flat multi-selection and an equivalent group produ
   page,
 }) => {
   await openEditor(page);
+  // Ordinary groups cannot cross fixed material boundaries. Move Ellipse
+  // into Silkscreen through the real layer-list DnD first so the same two
+  // shapes can exercise both flat and grouped combined-rotation paths.
+  await moveEllipseToSilkscreen(page);
   await selectRectAndEllipse(page);
   const historyBefore = await bridge(page).getHistory();
 
@@ -137,9 +154,8 @@ test('@smoke combined rotate: flat multi-selection and an equivalent group produ
   const expectedEllipse = expected.find((l) => l.id === 'demo-ellipse') as ShapeLayer;
   expect(expectedRect.rotation).toBe(45);
 
-  const flatDoc = await bridge(page).getDoc();
-  const flatRect = flatDoc.layers.find((l) => l.id === 'demo-rect') as ShapeLayer;
-  const flatEllipse = flatDoc.layers.find((l) => l.id === 'demo-ellipse') as ShapeLayer;
+  const flatRect = (await bridge(page).getMaterialLayer('demo-rect')) as ShapeLayer;
+  const flatEllipse = (await bridge(page).getMaterialLayer('demo-ellipse')) as ShapeLayer;
   expect(flatRect.rotation).toBe(45);
   expect(flatRect.x).toBeCloseTo(expectedRect.x, 3);
   expect(flatRect.y).toBeCloseTo(expectedRect.y, 3);
@@ -151,9 +167,12 @@ test('@smoke combined rotate: flat multi-selection and an equivalent group produ
   // streamed through replace(), not commit()).
   expect((await bridge(page).getHistory()).past.length).toBe(historyBefore.past.length + 1);
   await page.keyboard.press(`${MOD}+z`);
-  const reverted = await bridge(page).getDoc();
-  expect(reverted.layers.find((l) => l.id === 'demo-rect')).toMatchObject(RECT);
-  expect(reverted.layers.find((l) => l.id === 'demo-ellipse')).toMatchObject(ELLIPSE);
+  expect(await bridge(page).getMaterialLayer('demo-rect')).toMatchObject(RECT);
+  expect(await bridge(page).getMaterialLayer('demo-ellipse')).toMatchObject({
+    ...ELLIPSE,
+    color: 2,
+    material: 'silkscreen',
+  });
 
   // Same selection, now wrapped in a one-level group: the combined bbox/
   // pivot/knob are identical (grouping carries no positionOffset), so the
@@ -163,18 +182,14 @@ test('@smoke combined rotate: flat multi-selection and an equivalent group produ
   expect(await bridge(page).getSelectedIds()).toHaveLength(1);
   await dragCombinedKnob(page, endMm, { shift: true });
 
-  const groupedDoc = await bridge(page).getDoc();
   const tree = await bridge(page).getLayerTree();
   const group = tree.find((n) => n.kind === 'group');
-  if (!group || group.kind !== 'group') throw new Error('expected demo-rect/demo-ellipse to be grouped');
-  expect(group.children.map((c) => c.id)).toEqual(['demo-rect', 'demo-ellipse']);
+  if (!group || group.kind !== 'group')
+    throw new Error('expected demo-rect/demo-ellipse to be grouped');
+  expect(group.children.map((c) => c.id)).toEqual(['demo-ellipse', 'demo-rect']);
 
-  const groupedRect = groupedDoc.layers
-    .flatMap((n) => (isGroupNode(n) ? n.children : [n]))
-    .find((l) => l.id === 'demo-rect') as ShapeLayer;
-  const groupedEllipse = groupedDoc.layers
-    .flatMap((n) => (isGroupNode(n) ? n.children : [n]))
-    .find((l) => l.id === 'demo-ellipse') as ShapeLayer;
+  const groupedRect = (await bridge(page).getMaterialLayer('demo-rect')) as ShapeLayer;
+  const groupedEllipse = (await bridge(page).getMaterialLayer('demo-ellipse')) as ShapeLayer;
   expect(groupedRect).toMatchObject({ x: flatRect.x, y: flatRect.y, rotation: flatRect.rotation });
   expect(groupedEllipse).toMatchObject({
     x: flatEllipse.x,
@@ -226,9 +241,8 @@ test('@smoke a combined-rotate drag ending in pointerup writes one history entry
   await dragCombinedKnob(page, SWEEP_TO_45_MM, { shift: true, finish: 'up' });
 
   const { rect: expectedRect, ellipse: expectedEllipse } = expected45();
-  const doc = await bridge(page).getDoc();
-  const rect = doc.layers.find((l) => l.id === 'demo-rect') as ShapeLayer;
-  const ellipse = doc.layers.find((l) => l.id === 'demo-ellipse') as ShapeLayer;
+  const rect = (await bridge(page).getMaterialLayer('demo-rect')) as ShapeLayer;
+  const ellipse = (await bridge(page).getMaterialLayer('demo-ellipse')) as ShapeLayer;
   expect(rect).toMatchObject({ rotation: 45 });
   expect(rect.x).toBeCloseTo(expectedRect.x, 3);
   expect(rect.y).toBeCloseTo(expectedRect.y, 3);
@@ -248,9 +262,8 @@ test('@smoke a combined-rotate drag ending in pointercancel behaves exactly like
   await dragCombinedKnob(page, SWEEP_TO_45_MM, { shift: true, finish: 'cancel' });
 
   const { rect: expectedRect, ellipse: expectedEllipse } = expected45();
-  const doc = await bridge(page).getDoc();
-  const rect = doc.layers.find((l) => l.id === 'demo-rect') as ShapeLayer;
-  const ellipse = doc.layers.find((l) => l.id === 'demo-ellipse') as ShapeLayer;
+  const rect = (await bridge(page).getMaterialLayer('demo-rect')) as ShapeLayer;
+  const ellipse = (await bridge(page).getMaterialLayer('demo-ellipse')) as ShapeLayer;
   expect(rect).toMatchObject({ rotation: 45 });
   expect(rect.x).toBeCloseTo(expectedRect.x, 3);
   expect(rect.y).toBeCloseTo(expectedRect.y, 3);
@@ -366,7 +379,10 @@ test('@smoke a rotated text member bakes about its canvas-measured pivot (doc st
   // local box ROTATED by its current 12° (rotatedRectAABB) — exactly
   // multiRotateBbox's own math (renderer.ts), never core's rough text-bbox
   // estimate. RECT carries no rotation, so rotatedRectAABB is a no-op for it.
-  const rectAabb = rotatedRectAABB({ x: RECT.x, y: RECT.y, width: RECT.width, height: RECT.height }, 0);
+  const rectAabb = rotatedRectAABB(
+    { x: RECT.x, y: RECT.y, width: RECT.width, height: RECT.height },
+    0,
+  );
   const textAabb = rotatedRectAABB(textGeom.box, TEXT_LAYER.rotation);
   const minX = Math.min(rectAabb.x, textAabb.x);
   const minY = Math.min(rectAabb.y, textAabb.y);
@@ -388,8 +404,7 @@ test('@smoke a rotated text member bakes about its canvas-measured pivot (doc st
   await page.mouse.up();
   await page.keyboard.up('Shift');
 
-  const doc = await bridge(page).getDoc();
-  const textLayer = doc.layers.find((l) => l.id === 'pivot-text') as {
+  const textLayer = (await bridge(page).getMaterialLayer('pivot-text')) as {
     x: number;
     y: number;
     rotation?: number;
@@ -418,19 +433,17 @@ test('@smoke save -> reload round-trips every leaf rotation, including a rotated
 }) => {
   await openEditor(page);
 
-  // Range-select every non-pattern leaf via the layers panel (top-of-stack-
-  // first visible order: Reference image, Text, Path, Ellipse, Rect, then
-  // the default pattern) — avoids needing exact canvas geometry for a path,
+  // Select every non-pattern leaf with the editor's real select-all command
+  // — avoids needing exact canvas geometry for a path,
   // which has no fill and a thin stroke, and is far more robust than trying
   // to hit its bezier curve with a canvas click.
-  await page.getByRole('button', { name: 'Select layer Reference image' }).click();
-  await page.getByRole('button', { name: 'Select layer Rect' }).click({ modifiers: ['Shift'] });
+  await page.keyboard.press(`${MOD}+a`);
   expect(await bridge(page).getSelectedIds()).toEqual([
-    'demo-rect',
     'demo-ellipse',
     'demo-path',
-    'demo-text',
     'demo-image',
+    'demo-rect',
+    'demo-text',
   ]);
 
   // The numeric rotate input (#157) drives the SAME bakeMultiRotate as the
@@ -442,8 +455,10 @@ test('@smoke save -> reload round-trips every leaf rotation, including a rotated
   await rotateInput.press('Enter');
 
   const before = await bridge(page).getDoc();
-  const imageBefore = before.layers.find((l) => l.id === 'demo-image') as { rotation?: number };
-  const pathBefore = before.layers.find((l) => l.id === 'demo-path') as {
+  const imageBefore = (await bridge(page).getMaterialLayer('demo-image')) as {
+    rotation?: number;
+  };
+  const pathBefore = (await bridge(page).getMaterialLayer('demo-path')) as {
     points: { x: number; y: number }[];
   };
   expect(imageBefore.rotation).toBeCloseTo(30, 1);
@@ -473,15 +488,17 @@ test('@smoke save -> reload round-trips every leaf rotation, including a rotated
 
   const after = await bridge(page).getDoc();
   expect(after.panelHp).toBe(before.panelHp);
-  const imageAfter = after.layers.find((l) => l.id === 'demo-image') as { rotation?: number };
-  const pathAfter = after.layers.find((l) => l.id === 'demo-path') as {
+  const imageAfter = (await bridge(page).getMaterialLayer('demo-image')) as {
+    rotation?: number;
+  };
+  const pathAfter = (await bridge(page).getMaterialLayer('demo-path')) as {
     points: { x: number; y: number }[];
   };
   expect(imageAfter.rotation).toBeCloseTo(imageBefore.rotation as number, 6);
   expect(pathAfter.points).toEqual(pathBefore.points);
 
   // Full-doc identity: every leaf's full geometry (not just image/path)
-  // survives the v4 export/import round trip byte-for-byte, including the
+  // survives the v5 export/import round trip byte-for-byte, including the
   // baked rotation on demo-rect/demo-ellipse/demo-text.
   expect(after).toEqual(before);
   expect(await bridge(page).getLayerTree()).toEqual(treeBefore);

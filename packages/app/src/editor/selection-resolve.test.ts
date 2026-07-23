@@ -3,8 +3,16 @@
 // invariant, the overlay-mode matrix, and leaf resolution (visible/editable/
 // rotatable + combined bounds) against the flat projection.
 import { describe, expect, it } from 'vitest';
-import type { GroupNode, LayerNode, PathLayer, PatternLayer, ShapeLayer } from '@zpd/core';
-import { projectFlatLayers } from './flat-projection';
+import {
+  createPcbLayerStack,
+  projectPcbLayerStack as projectFlatLayers,
+  type GroupNode,
+  type LayerNode,
+  type PathLayer,
+  type PatternLayer,
+  type PcbLayerStack,
+  type ShapeLayer,
+} from '@zpd/core';
 import {
   expandSelectionToLeafIds,
   promoteMarqueeSelection,
@@ -64,11 +72,14 @@ const group = (id: string, children: LayerNode[], hidden = false): GroupNode => 
 });
 
 // a, G1[b, G2[c]], d — the standard nesting fixture.
-const tree = (): LayerNode[] => [
-  rect('a', 0, 0),
-  group('G1', [rect('b', 10, 10), group('G2', [rect('c', 20, 20)])]),
-  rect('d', 40, 40),
-];
+const stack = (nodes: LayerNode[]): PcbLayerStack => createPcbLayerStack({ copper: nodes });
+
+const tree = (): PcbLayerStack =>
+  stack([
+    rect('a', 0, 0),
+    group('G1', [rect('b', 10, 10), group('G2', [rect('c', 20, 20)])]),
+    rect('d', 40, 40),
+  ]);
 
 describe('expandSelectionToLeafIds', () => {
   it('a leaf id passes through; a group id expands to every descendant leaf', () => {
@@ -120,6 +131,12 @@ describe('toggleLeafSelection (Meta/Ctrl semantics)', () => {
   it('adding an ungrouped leaf simply appends', () => {
     expect(toggleLeafSelection(tree(), ['a'], 'd')).toEqual(['a', 'd']);
   });
+
+  it('never admits a fixed material wrapper or stale id', () => {
+    expect(toggleLeafSelection(tree(), ['a'], 'pcb-layer-copper')).toEqual(['a']);
+    expect(toggleLeafSelection(tree(), ['a'], 'ghost')).toEqual(['a']);
+    expect(togglePromotedSelection(tree(), ['a'], 'pcb-layer-copper')).toEqual(['a']);
+  });
 });
 
 describe('togglePromotedSelection (Shift semantics)', () => {
@@ -141,6 +158,18 @@ describe('promoteMarqueeSelection', () => {
   it('an additive union collapses a base leaf swallowed by a swept group (maximal roots)', () => {
     expect(promoteMarqueeSelection(tree(), ['b'], ['c', 'a'])).toEqual(['a', 'G1']);
   });
+
+  it('promotes only through ordinary groups and never admits a fixed material id', () => {
+    const t = createPcbLayerStack({
+      copper: [group('Copper group', [rect('copper-leaf', 0, 0)])],
+      silkscreen: [rect('silk-leaf', 20, 20)],
+    });
+    expect(promoteMarqueeSelection(t, ['copper-leaf', 'silk-leaf'], ['pcb-layer-copper'])).toEqual([
+      'Copper group',
+      'silk-leaf',
+    ]);
+    expect(topmostAncestorIdForLeaf(t, 'silk-leaf')).toBe('silk-leaf');
+  });
 });
 
 describe('resolveSelectionOverlayMode — the #151 matrix', () => {
@@ -150,7 +179,7 @@ describe('resolveSelectionOverlayMode — the #151 matrix', () => {
   });
 
   it('a selected group left CHILDLESS resolves to none — nothing to draw or transform', () => {
-    const t: LayerNode[] = [group('empty', []), rect('a', 0, 0)];
+    const t = stack([group('empty', []), rect('a', 0, 0)]);
     expect(resolveSelectionOverlayMode(t, ['empty'])).toBe('none');
   });
 
@@ -171,14 +200,14 @@ describe('resolveSelectionOverlayMode — the #151 matrix', () => {
 
 describe('resolveSelectionLeaves', () => {
   it('excludes an intrinsically hidden leaf from visible/editable', () => {
-    const t: LayerNode[] = [group('G', [rect('v', 0, 0), rect('h', 10, 10, true)])];
+    const t = stack([group('G', [rect('v', 0, 0), rect('h', 10, 10, true)])]);
     const res = resolveSelectionLeaves(t, ['G'], projectFlatLayers(t));
     expect(res.visibleLeafIds).toEqual(['v']);
     expect(res.editableLeafIds).toEqual(['v']);
   });
 
   it('excludes ancestor-folded hidden leaves (hidden GROUP) — nothing visible, no bounds', () => {
-    const t: LayerNode[] = [group('H', [rect('e', 0, 0)], true), rect('a', 20, 20)];
+    const t = stack([group('H', [rect('e', 0, 0)], true), rect('a', 20, 20)]);
     const res = resolveSelectionLeaves(t, ['H'], projectFlatLayers(t));
     expect(res.visibleLeafIds).toEqual([]);
     expect(res.editableLeafIds).toEqual([]);
@@ -186,14 +215,14 @@ describe('resolveSelectionLeaves', () => {
   });
 
   it('rotatableLeafIds follows core rotatableLayer: paths bake and stay in, patterns drop out', () => {
-    const t: LayerNode[] = [group('G', [rect('s', 0, 0), path('p'), pattern('pat')])];
+    const t = stack([group('G', [rect('s', 0, 0), path('p'), pattern('pat')])]);
     const res = resolveSelectionLeaves(t, ['G'], projectFlatLayers(t));
     expect(res.editableLeafIds).toEqual(['s', 'p', 'pat']);
     expect(res.rotatableLeafIds).toEqual(['s', 'p']);
   });
 
   it('combinedBounds is the AABB union of the editable leaves', () => {
-    const t: LayerNode[] = [group('G', [rect('s1', 0, 0), rect('s2', 30, 20)]), rect('x', 90, 90)];
+    const t = stack([group('G', [rect('s1', 0, 0), rect('s2', 30, 20)]), rect('x', 90, 90)]);
     const res = resolveSelectionLeaves(t, ['G'], projectFlatLayers(t));
     expect(res.combinedBounds).toEqual({ x: 0, y: 0, width: 40, height: 30 });
   });

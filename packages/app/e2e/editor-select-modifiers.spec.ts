@@ -52,7 +52,7 @@ test('@smoke Shift-click adds to, then toggles out of, the selection', async ({ 
   expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect']);
 
   await click(page, ELLIPSE_CENTER, { modifiers: ['Shift'] });
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-ellipse', 'demo-rect']);
 
   // Shift toggles WITHIN the selection too, not just add — clicking a member
   // that's already selected removes just that one.
@@ -69,7 +69,7 @@ test('@smoke Meta/Ctrl-click toggles exactly one layer, leaving the rest untouch
   expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect']);
 
   await click(page, ELLIPSE_CENTER, { modifiers: [MOD] });
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-ellipse', 'demo-rect']);
 
   await click(page, ELLIPSE_CENTER, { modifiers: [MOD] });
   expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect']);
@@ -119,7 +119,7 @@ test('@smoke plain multi-move: dragging one member moves the whole selection as 
 
   await click(page, RECT_CENTER);
   await click(page, ELLIPSE_CENTER, { modifiers: ['Shift'] });
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-ellipse', 'demo-rect']);
   const layerCountBefore = await bridge(page).getLayerCount();
 
   // No Alt: a plain move, distinct from the alt-drag DUPLICATE case
@@ -134,11 +134,10 @@ test('@smoke plain multi-move: dragging one member moves the whole selection as 
   await page.mouse.up();
 
   expect(await bridge(page).getLayerCount()).toBe(layerCountBefore);
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-ellipse', 'demo-rect']);
 
-  const doc = await bridge(page).getDoc();
-  const rect = doc.layers.find((l) => l.id === 'demo-rect');
-  const ellipse = doc.layers.find((l) => l.id === 'demo-ellipse');
+  const rect = await bridge(page).getMaterialLayer('demo-rect');
+  const ellipse = await bridge(page).getMaterialLayer('demo-ellipse');
   if (rect?.type !== 'shape' || ellipse?.type !== 'shape') {
     throw new Error('expected demo-rect and demo-ellipse to remain shape layers');
   }
@@ -150,7 +149,6 @@ test('@smoke plain multi-move: dragging one member moves the whole selection as 
 
   // ONE undo restores BOTH layers to their original positions.
   await page.keyboard.press(`${MOD}+z`);
-  const after = await bridge(page).getDoc();
-  expect(after.layers.find((l) => l.id === 'demo-rect')).toMatchObject(RECT);
-  expect(after.layers.find((l) => l.id === 'demo-ellipse')).toMatchObject(ELLIPSE);
+  expect(await bridge(page).getMaterialLayer('demo-rect')).toMatchObject(RECT);
+  expect(await bridge(page).getMaterialLayer('demo-ellipse')).toMatchObject(ELLIPSE);
 });

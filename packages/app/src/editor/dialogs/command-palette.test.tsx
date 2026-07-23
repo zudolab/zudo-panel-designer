@@ -5,6 +5,7 @@
 // commands.test.ts.
 import '../registry';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPcbLayerStack } from '@zpd/core';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Pt } from '@zpd/core';
 import { type CommandContext, type CommandDef } from '../commands';
@@ -33,7 +34,7 @@ beforeEach(() => {
 
 function stubCommandCtx(overrides: Partial<CommandContext> = {}): CommandContext {
   const base = {
-    doc: { panelHp: 12, guides: [], layers: [] },
+    doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     selectedIds: [],
@@ -299,10 +300,32 @@ describe('command-palette dialog', () => {
       doc: {
         panelHp: 12,
         guides: [],
-        layers: [
-          { id: 'a', name: 'a', type: 'shape', shape: 'rect', x: 0, y: 0, width: 10, height: 10, color: 1 },
-          { id: 'b', name: 'b', type: 'shape', shape: 'rect', x: 5, y: 5, width: 10, height: 10, color: 1 },
-        ],
+        layers: createPcbLayerStack({
+          copper: [
+            {
+              id: 'a',
+              name: 'a',
+              type: 'shape',
+              shape: 'rect',
+              x: 0,
+              y: 0,
+              width: 10,
+              height: 10,
+              color: 1,
+            },
+            {
+              id: 'b',
+              name: 'b',
+              type: 'shape',
+              shape: 'rect',
+              x: 5,
+              y: 5,
+              width: 10,
+              height: 10,
+              color: 1,
+            },
+          ],
+        }),
       },
       selectedIds: ['a', 'b'],
     });
@@ -321,7 +344,7 @@ describe('command-palette dialog', () => {
 
   it('"Ungroup" is listed disabled (aria-disabled) when nothing selected is a group', () => {
     const ctx = stubCommandCtx({
-      doc: { panelHp: 12, guides: [], layers: [] },
+      doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() },
       selectedIds: [],
     });
     const CommandPaletteDialog = getCommandPaletteDialog();

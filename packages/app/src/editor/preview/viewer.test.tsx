@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { StrictMode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPcbLayerStack } from '@zpd/core';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import type { DocState } from '@zpd/core';
 import type { PreviewSurfaceSnapshot } from './contracts';
@@ -11,7 +12,7 @@ import { PreviewViewerWithDependencies, type PreviewViewerDependencies } from '.
 afterEach(cleanup);
 
 const dimensions = { widthMm: 60.6, heightMm: 128.5, thicknessMm: 2.5 };
-const doc: DocState = { panelHp: 12, guides: [], layers: [] };
+const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
 
 function fakeRuntime(events: string[] = []): PreviewSceneRuntime {
   return {
@@ -93,7 +94,7 @@ describe('dynamic preview viewer', () => {
         dependencies={setup.value}
       />,
     );
-    const updatedDoc = { ...doc, layers: [] };
+    const updatedDoc = { ...doc, layers: createPcbLayerStack() };
     rerender(
       <PreviewViewerWithDependencies
         doc={updatedDoc}

@@ -6,7 +6,14 @@
 // run its full dpr-sizing logic without throwing. We test wiring, not pixels.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { patternCoverGeometry, type DocState, type PatternLayer, type Pt } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  patternCoverGeometry,
+  type DocState,
+  type PatternLayer,
+  type Pt,
+} from '@zpd/core';
+import { projectFlatLayers } from '../flat-projection';
 import { defaultParams, PATTERN_GENERATORS } from '@zpd/patterns';
 import { getDialog } from '../registry/dialogs';
 import type { ToolContext } from '../types';
@@ -15,7 +22,7 @@ import { PAGE_SIZE, THUMBNAIL_SIZE_PX } from './pattern-picker';
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    doc: { panelHp: 12, guides: [], layers: [] },
+    doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     selectedIds: [],
@@ -100,7 +107,11 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
       y: 4,
       size: 30,
     };
-    const doc: DocState = { panelHp: 12, guides: [], layers: [existing] };
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [existing] }),
+    };
     const ctx = stubCtx({ doc });
     const close = vi.fn();
     const PatternPickerDialog = getPatternPickerDialog();
@@ -112,7 +123,7 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     const nextDoc = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
-    expect(nextDoc.layers).toEqual([
+    expect(projectFlatLayers(nextDoc.layers)).toEqual([
       { ...existing, patternType: target.name, params: defaultParams(target.name) },
     ]);
     expect(ctx.select).not.toHaveBeenCalled();
@@ -142,7 +153,11 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
       y: 2,
       size: 20,
     };
-    const doc: DocState = { panelHp: 12, guides: [], layers: [target1, other] };
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [target1], silkscreen: [other] }),
+    };
     const ctx = stubCtx({ doc });
     const PatternPickerDialog = getPatternPickerDialog();
 
@@ -150,7 +165,7 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
     fireEvent.click(screen.getByTitle(PATTERN_GENERATORS[3].displayName));
 
     const nextDoc = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
-    expect(nextDoc.layers[1]).toEqual(other);
+    expect(projectFlatLayers(nextDoc.layers)[1]).toEqual(other);
   });
 });
 
@@ -167,7 +182,11 @@ describe('pattern-picker dialog — add (opened without layerId)', () => {
       y: 0,
       size: 128.5,
     };
-    const doc: DocState = { panelHp: 12, guides: [], layers: [existing] };
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [existing] }),
+    };
     const ctx = stubCtx({ doc });
     const close = vi.fn();
     const PatternPickerDialog = getPatternPickerDialog();
@@ -179,9 +198,10 @@ describe('pattern-picker dialog — add (opened without layerId)', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     const nextDoc = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
-    expect(nextDoc.layers).toHaveLength(2);
-    expect(nextDoc.layers[0]).toEqual(existing); // stays on top of existing, not replacing it
-    const added = nextDoc.layers[1];
+    const layers = projectFlatLayers(nextDoc.layers);
+    expect(layers).toHaveLength(2);
+    expect(layers[0]).toEqual(existing); // stays on top of existing, not replacing it
+    const added = layers[1];
     expect(added).toMatchObject({
       type: 'pattern',
       patternType: target.name,

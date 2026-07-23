@@ -1,702 +1,407 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultDoc } from './default-doc';
-import { PALETTE } from './palette';
-import { MAX_PANEL_HP, PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
-import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
-import { MAX_GROUP_DEPTH } from './layer-nodes';
-import { PANEL_CONFIG_VERSION, parsePanelConfig, serializePanelConfig, tryParsePanelConfig } from './serialize';
-import type { DocState, GroupNode, LayerNode, PatternLayer } from './types';
+import { flattenLayerNodes, MAX_GROUP_DEPTH } from './layer-nodes';
+import { PCB_LAYER_DEFINITIONS } from './palette';
+import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
+import { patternCoverGeometry } from './pattern-geometry';
+import {
+  PANEL_CONFIG_VERSION,
+  parseLayerNodeFragment,
+  parseLegacyLayerFragment,
+  parsePanelConfig,
+  serializePanelConfig,
+  tryParsePanelConfig,
+} from './serialize';
+import type { GroupNode, LayerNode, PcbLayerRole, ShapeLayer } from './types';
 
-function fullFixtureDoc(): DocState {
-  return {
-    panelHp: 12,
-    layers: [
-      {
-        id: 'shape-1',
-        name: 'Rect',
-        type: 'shape',
-        shape: 'rect',
-        x: 1.5,
-        y: 2.25,
-        width: 10,
-        height: 5,
-        rotation: 45,
-        color: 0,
-      },
-      {
-        id: 'shape-2',
-        name: 'Ellipse (no rotation, hidden)',
-        hidden: true,
-        type: 'shape',
-        shape: 'ellipse',
-        x: 0,
-        y: 0,
-        width: 3,
-        height: 3,
-        color: 2,
-      },
-      {
-        id: 'pattern-1',
-        name: 'Dot grid',
-        type: 'pattern',
-        patternType: 'dot-grid',
-        params: { pitch: 5, radius: 1 },
-        color: 1,
-        // deliberately NOT cover geometry — proves hand-set square placement
-        // (including a negative y) survives the round trip verbatim
-        x: 5,
-        y: -10,
-        size: 40,
-      },
-      {
-        id: 'path-1',
-        name: 'Traced blob',
-        type: 'path',
-        closed: true,
-        fill: 1,
-        stroke: null,
-        strokeWidth: 0.2,
-        points: [
-          { x: 0, y: 0, hout: { x: 1, y: 0 } },
-          { x: 10, y: 0, hin: { x: 9, y: -1 }, hout: { x: 11, y: 1 } },
-          { x: 10, y: 10 },
-        ],
-        extraSubpaths: [
-          [
-            { x: 2, y: 2 },
-            { x: 4, y: 2, hin: { x: 3.5, y: 2 }, hout: { x: 4.5, y: 2 } },
-            { x: 4, y: 4 },
-          ],
-        ],
-      },
-      {
-        id: 'text-1',
-        name: 'Label',
-        type: 'text',
-        content: 'Line one\nLine two',
-        fontFamily: 'Inter',
-        sizeMm: 4,
-        x: 5,
-        y: 5,
-        rotation: 90,
-        color: 2,
-      },
-      {
-        id: 'image-1',
-        name: 'Reference photo',
-        type: 'image',
-        src: 'data:image/png;base64,AAAA',
-        x: 0,
-        y: 0,
-        width: 20,
-        height: 15,
-        rotation: 15,
-      },
-    ],
-    guides: [
-      { id: 'guide-h1', orientation: 'horizontal', position: 12.5 },
-      { id: 'guide-v1', orientation: 'vertical', position: 4, hidden: true },
-    ],
-  };
+const shape = (id: string, color: 0 | 1 | 2, name = id): ShapeLayer => ({
+  id,
+  name,
+  type: 'shape',
+  shape: 'rect',
+  x: 0,
+  y: 0,
+  width: 1,
+  height: 1,
+  color,
+});
+
+const group = (id: string, children: LayerNode[], extra: Partial<GroupNode> = {}): GroupNode => ({
+  kind: 'group',
+  id,
+  name: id,
+  children,
+  ...extra,
+});
+
+function children(doc: ReturnType<typeof parsePanelConfig>, role: PcbLayerRole): LayerNode[] {
+  return doc.layers.find((container) => container.role === role)!.children;
 }
 
-describe('serializePanelConfig / parsePanelConfig round trip', () => {
-  it('round-trips a document with all 5 layer types, extraSubpaths, and bezier handles', () => {
-    const doc = fullFixtureDoc();
-    const roundTripped = parsePanelConfig(serializePanelConfig(doc));
-    expect(roundTripped).toEqual(doc);
-  });
-
-  it('round-trips through an actual JSON string (the download/upload boundary)', () => {
-    const doc = fullFixtureDoc();
-    const json = JSON.stringify(serializePanelConfig(doc));
-    const roundTripped = parsePanelConfig(JSON.parse(json));
-    expect(roundTripped).toEqual(doc);
-  });
-
-  it('emits derived panel size + palette names as advisory output', () => {
-    const doc = fullFixtureDoc();
+describe('panel config v5 fixed PCB stack', () => {
+  it('serializes and round-trips the exact canonical persisted stack', () => {
+    const doc = createDefaultDoc();
+    doc.layers[1] = { ...doc.layers[1], hidden: true };
     const config = serializePanelConfig(doc);
-    expect(config.version).toBe(4);
-    expect(config.app).toBe('zpd');
-    expect(config.panel).toEqual({
-      hp: 12,
-      widthMm: panelWidthMm(12),
-      heightMm: PANEL_HEIGHT_MM,
-    });
-    expect(config.palette).toEqual(PALETTE.map((entry) => entry.name));
-  });
-});
 
-describe('serialize — guides (added in v2)', () => {
-  it('emits the guides array', () => {
-    const doc = fullFixtureDoc();
-    const config = serializePanelConfig(doc);
-    expect(config.guides).toEqual(doc.guides);
-  });
-
-  it('round-trip preserves guides (including a hidden one)', () => {
-    const doc = fullFixtureDoc();
-    const roundTripped = parsePanelConfig(JSON.parse(JSON.stringify(serializePanelConfig(doc))));
-    expect(roundTripped.guides).toEqual(doc.guides);
-  });
-
-  it('a v1 / missing-guides config parses to guides: []', () => {
-    // shape of an old v1 export: version 1, no `guides` key at all
-    const v1 = {
-      version: 1,
-      app: 'zpd',
-      panel: { hp: 12, widthMm: 60.96, heightMm: 128.5 },
-      palette: ['black', 'gold', 'white'],
-      layers: [],
-    };
-    expect(parsePanelConfig(v1).guides).toEqual([]);
-  });
-
-  it('defaults a non-array guides field to []', () => {
-    expect(parsePanelConfig({ guides: 'nope' }).guides).toEqual([]);
-    expect(parsePanelConfig({ guides: 42 }).guides).toEqual([]);
-    expect(parsePanelConfig({ guides: { position: 5 } }).guides).toEqual([]);
-  });
-
-  it('drops malformed guide entries safely', () => {
-    const doc = parsePanelConfig({
-      guides: [
-        null,
-        42,
-        'nope',
-        {}, // no orientation
-        { orientation: 'diagonal', position: 5 }, // bad orientation
-        { orientation: 'horizontal' }, // no position
-        { orientation: 'horizontal', position: 'x' }, // non-numeric position
-        { orientation: 'vertical', position: Infinity }, // non-finite position
-        { orientation: 'horizontal', position: 7 }, // the one good entry
-      ],
-    });
-    expect(doc.guides).toHaveLength(1);
-    expect(doc.guides[0]).toMatchObject({ orientation: 'horizontal', position: 7 });
-    expect(typeof doc.guides[0].id).toBe('string');
-    expect(doc.guides[0].id.length).toBeGreaterThan(0);
-  });
-
-  it('id-stamps a guide that is missing an id and preserves hidden', () => {
-    const doc = parsePanelConfig({
-      guides: [{ orientation: 'vertical', position: 3, hidden: true }],
-    });
-    expect(doc.guides[0].hidden).toBe(true);
-    expect(doc.guides[0].id.length).toBeGreaterThan(0);
-  });
-});
-
-// v3 (#96): pattern layers carry an x/y/size square. Migration contract: a
-// v1/v2 pattern layer (no geometry at all) gets COVER geometry — this
-// preserves panel coverage and the pattern's center, NOT exact pixel phase
-// (the draw span changes from the panel rect to the square, so lattice-parity
-// dependent generators may shift by a sub-pitch amount).
-describe('serialize v3 — pattern square geometry migration (#96)', () => {
-  function firstPattern(doc: DocState): PatternLayer {
-    const [layer] = doc.layers;
-    if ('kind' in layer || layer.type !== 'pattern') throw new Error('expected a pattern layer');
-    return layer;
-  }
-
-  const coverFor = (hp: number) =>
-    patternCoverGeometry({ widthMm: panelWidthMm(hp), heightMm: PANEL_HEIGHT_MM });
-
-  it('emits version 3', () => {
-    // Historical name kept (v3 = pattern square geometry); PANEL_CONFIG_VERSION
-    // has since moved to v4 (layer groups) — see the v4 describe block below.
-    expect(PANEL_CONFIG_VERSION).toBe(4);
-  });
-
-  it('a v1 config (no geometry fields) migrates every pattern layer to cover geometry', () => {
-    const v1 = {
-      version: 1,
-      app: 'zpd',
-      panel: { hp: 12, widthMm: 60.96, heightMm: 128.5 },
-      palette: ['black', 'gold', 'white'],
-      layers: [{ id: 'p1', type: 'pattern', patternType: 'dot-grid', color: 1, params: { pitch: 5 } }],
-    };
-    expect(firstPattern(parsePanelConfig(v1))).toMatchObject(coverFor(12));
-  });
-
-  it('a v2 config (guides, still no geometry) migrates the same way', () => {
-    const v2 = {
-      version: 2,
-      app: 'zpd',
-      panel: { hp: 8, widthMm: panelWidthMm(8), heightMm: PANEL_HEIGHT_MM },
-      palette: ['black', 'gold', 'white'],
-      layers: [{ id: 'p1', type: 'pattern', patternType: 'checker', color: 2, params: {} }],
-      guides: [{ id: 'g1', orientation: 'horizontal', position: 10 }],
-    };
-    const doc = parsePanelConfig(v2);
-    expect(firstPattern(doc)).toMatchObject(coverFor(8));
-    expect(doc.guides).toHaveLength(1);
-  });
-
-  it('derives cover geometry from the SANITIZED hp, never from serialized panel.widthMm/heightMm', () => {
-    const doc = parsePanelConfig({
-      version: 2,
-      app: 'zpd',
-      panel: { hp: 4, widthMm: 999, heightMm: 999 },
-      layers: [{ id: 'p1', type: 'pattern', patternType: 'dot-grid', color: 1, params: {} }],
-    });
-    expect(firstPattern(doc)).toMatchObject(coverFor(4));
-  });
-
-  it.each([
-    ['top-level hp', { hp: 1e9 }],
-    ['nested panel.hp', { panel: { hp: 1e9 } }],
-  ])('clamps hostile %s before deriving panel dimensions and cover geometry', (_label, hpInput) => {
-    const doc = parsePanelConfig({
-      ...hpInput,
-      layers: [{ type: 'pattern', patternType: 'dot-grid', color: 1, params: {} }],
-    });
-
-    expect(doc.panelHp).toBe(MAX_PANEL_HP);
-    expect(firstPattern(doc)).toMatchObject(coverFor(MAX_PANEL_HP));
-    expect(serializePanelConfig(doc).panel).toEqual({
-      hp: MAX_PANEL_HP,
-      widthMm: panelWidthMm(MAX_PANEL_HP),
-      heightMm: PANEL_HEIGHT_MM,
-    });
-  });
-
-  it.each([0, -3, NaN, Infinity, 'big', null, undefined])(
-    'non-finite/non-positive size (%s) falls back to the cover size, keeping finite x/y',
-    (size) => {
-      const doc = parsePanelConfig({
-        layers: [{ type: 'pattern', patternType: 'dot-grid', color: 1, params: {}, x: 5, y: 6, size }],
-      });
-      expect(firstPattern(doc)).toMatchObject({ x: 5, y: 6, size: coverFor(12).size });
-    },
-  );
-
-  it.each([NaN, Infinity, 'left', null, undefined])(
-    'missing/non-finite x/y (%s) centers the RESULTING size on the panel',
-    (coord) => {
-      const doc = parsePanelConfig({
-        layers: [{ type: 'pattern', patternType: 'dot-grid', color: 1, params: {}, x: coord, y: coord, size: 40 }],
-      });
-      expect(firstPattern(doc)).toEqual(
-        expect.objectContaining({
-          x: (panelWidthMm(12) - 40) / 2,
-          y: (PANEL_HEIGHT_MM - 40) / 2,
-          size: 40,
-        }),
-      );
-    },
-  );
-
-  it('clamps a finite but absurd size to MAX_PATTERN_SIZE_MM (freeze-on-open DoS guard)', () => {
-    const doc = parsePanelConfig({
-      layers: [
-        { type: 'pattern', patternType: 'dot-grid', color: 1, params: {}, x: 0, y: 0, size: 1e7 },
-      ],
-    });
-    expect(firstPattern(doc).size).toBe(MAX_PATTERN_SIZE_MM);
-  });
-
-  it('all-malformed geometry degrades to exactly the cover default', () => {
-    const doc = parsePanelConfig({
-      layers: [{ type: 'pattern', patternType: 'dot-grid', color: 1, params: {}, x: 'a', y: null, size: -1 }],
-    });
-    expect(firstPattern(doc)).toMatchObject(coverFor(12));
-  });
-
-  it('cover geometry always fully covers the panel (size = larger dim, centered)', () => {
-    for (const hp of [1, 4, 12, 20]) {
-      const widthMm = panelWidthMm(hp);
-      const { x, y, size } = coverFor(hp);
-      expect(size).toBe(Math.max(widthMm, PANEL_HEIGHT_MM));
-      expect(x).toBeLessThanOrEqual(0);
-      expect(y).toBeLessThanOrEqual(0);
-      expect(x + size).toBeGreaterThanOrEqual(widthMm);
-      expect(y + size).toBeGreaterThanOrEqual(PANEL_HEIGHT_MM);
-      // centered: equal overhang on both sides
-      expect(x + size - widthMm).toBeCloseTo(-x);
-      expect(y + size - PANEL_HEIGHT_MM).toBeCloseTo(-y);
-    }
-  });
-
-  it('tryParsePanelConfig accepts a v2 envelope and migrates its pattern geometry', () => {
-    const result = tryParsePanelConfig({
-      version: 2,
-      app: 'zpd',
-      layers: [{ id: 'p1', type: 'pattern', patternType: 'dot-grid', color: 1, params: {} }],
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('unreachable');
-    expect(firstPattern(result.doc)).toMatchObject(coverFor(12));
-  });
-});
-
-// v4 (#146): the recursive layer-node tree (layer groups).
-describe('serialize v4 — layer-node tree (layer groups)', () => {
-  function docWithGroups(): DocState {
-    const doc = fullFixtureDoc();
-    const [shape1, shape2, ...rest] = doc.layers;
-    const nested: GroupNode = {
-      kind: 'group',
-      id: 'group-inner',
-      name: 'Inner group',
-      children: [shape2],
-    };
-    const outer: GroupNode = {
-      kind: 'group',
-      id: 'group-outer',
-      name: 'Outer group',
-      hidden: true,
-      children: [shape1, nested],
-    };
-    return { ...doc, layers: [outer, ...rest] };
-  }
-
-  it('emits version 4', () => {
-    expect(serializePanelConfig(fullFixtureDoc()).version).toBe(4);
-  });
-
-  it('round-trips a doc with nested groups: ids, names, hidden, and structure preserved', () => {
-    const doc = docWithGroups();
-    const roundTripped = parsePanelConfig(
-      JSON.parse(JSON.stringify(serializePanelConfig(doc))),
+    expect(config.version).toBe(5);
+    expect(PANEL_CONFIG_VERSION).toBe(5);
+    expect(config.layers.map(({ id, role }) => ({ id, role }))).toEqual(
+      PCB_LAYER_DEFINITIONS.map(({ id, role }) => ({ id, role })),
     );
-    expect(roundTripped).toEqual(doc);
+    expect(parsePanelConfig(JSON.parse(JSON.stringify(config)))).toEqual(doc);
   });
 
-  it('a group-free doc serializes with layers passed through untransformed (only version changes)', () => {
-    const doc = fullFixtureDoc();
-    const config = serializePanelConfig(doc);
-    expect(config.layers).toBe(doc.layers);
-    expect(config.panel).toEqual({ hp: 12, widthMm: panelWidthMm(12), heightMm: PANEL_HEIGHT_MM });
-    expect(config.palette).toEqual(PALETTE.map((entry) => entry.name));
-    expect(config.guides).toEqual(doc.guides);
+  it('keeps the strict import gate for foreign, missing, and future versions', () => {
+    expect(tryParsePanelConfig({ app: 'other', version: 5, layers: [] }).ok).toBe(false);
+    expect(tryParsePanelConfig({ app: 'zpd', version: 6, layers: [] }).ok).toBe(false);
+    expect(tryParsePanelConfig({ app: 'zpd', version: 5 }).ok).toBe(false);
+    expect(tryParsePanelConfig({ app: 'zpd', version: 1, layers: [] }).ok).toBe(true);
   });
 
-  it('a v3 fixture (flat Layer[], no `kind` anywhere) parses as an identity migration', () => {
-    const flatDoc = fullFixtureDoc();
-    const v3Json = { ...serializePanelConfig(flatDoc), version: 3 };
-    const parsed = parsePanelConfig(v3Json);
-    expect(parsed).toEqual(flatDoc);
-  });
-
-  it('a subtree at depth > MAX_GROUP_DEPTH is dropped, the rest of the doc survives', () => {
-    // Build a chain of MAX_GROUP_DEPTH + 2 nested groups so the innermost
-    // leaf sits at depth MAX_GROUP_DEPTH + 1 (one past the cap).
-    let innermost: LayerNode = { id: 'deep-leaf', name: 'deep', type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color: 0 };
-    for (let depth = MAX_GROUP_DEPTH + 1; depth >= 0; depth -= 1) {
-      innermost = { kind: 'group', id: `g-${depth}`, name: `g-${depth}`, children: [innermost] };
-    }
-    const survivor = { id: 'survivor', name: 'survivor', type: 'shape' as const, shape: 'rect' as const, x: 0, y: 0, width: 1, height: 1, color: 0 as const };
-    const parsed = parsePanelConfig({
-      layers: [innermost, survivor],
-    });
-    expect(parsed.layers).toHaveLength(2);
-    expect(parsed.layers[1]).toMatchObject({ id: 'survivor' });
-    // The over-deep chain survives down to the cap, then the next level drops.
-    let cursor: LayerNode | undefined = parsed.layers[0];
-    let depthSeen = 0;
-    while (cursor && 'kind' in cursor && cursor.kind === 'group') {
-      depthSeen += 1;
-      cursor = cursor.children[0];
-    }
-    expect(depthSeen).toBe(MAX_GROUP_DEPTH + 1); // groups at depth 0..MAX_GROUP_DEPTH survive
-    expect(cursor).toBeUndefined(); // the depth-9 leaf (and its would-be group) is dropped
-  });
-
-  it('keeps a leaf directly inside the deepest allowed group (depth MAX_GROUP_DEPTH survives, only further GROUP nesting is capped)', () => {
-    // Build a chain of exactly MAX_GROUP_DEPTH + 1 groups (g-0 at depth 0 ..
-    // g-MAX_GROUP_DEPTH at depth MAX_GROUP_DEPTH — the deepest legal group),
-    // whose innermost child is a plain leaf, not another group.
-    let innermost: LayerNode = {
-      id: 'deep-leaf',
-      name: 'deep',
-      type: 'shape',
-      shape: 'rect',
-      x: 0,
-      y: 0,
-      width: 1,
-      height: 1,
-      color: 0,
+  it('deterministically de-duplicates explicit and generated guide ids', () => {
+    const payload = {
+      version: 5,
+      app: 'zpd',
+      layers: [],
+      guides: [
+        { id: 'guide-2', orientation: 'vertical', position: 1 },
+        { orientation: 'horizontal', position: 2 },
+      ],
     };
-    for (let depth = MAX_GROUP_DEPTH; depth >= 0; depth -= 1) {
-      innermost = { kind: 'group', id: `g-${depth}`, name: `g-${depth}`, children: [innermost] };
-    }
-    const parsed = parsePanelConfig({ layers: [innermost] });
-
-    let cursor: LayerNode | undefined = parsed.layers[0];
-    let depthSeen = 0;
-    while (cursor && 'kind' in cursor && cursor.kind === 'group') {
-      depthSeen += 1;
-      cursor = cursor.children[0];
-    }
-    expect(depthSeen).toBe(MAX_GROUP_DEPTH + 1); // groups at depth 0..MAX_GROUP_DEPTH survive
-    expect(cursor).toMatchObject({ id: 'deep-leaf' }); // the leaf itself is NOT dropped
-  });
-
-  it('drops a node with an unrecognized `kind` rather than guessing its shape', () => {
-    const parsed = parsePanelConfig({
-      layers: [
-        { kind: 'stack', id: 'x', name: 'x', children: [] },
-        { id: 'ok', type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color: 0 },
-      ],
-    });
-    expect(parsed.layers).toHaveLength(1);
-    expect(parsed.layers[0]).toMatchObject({ id: 'ok' });
-  });
-
-  it('drops malformed entries inside a group children array while keeping valid siblings', () => {
-    const parsed = parsePanelConfig({
-      layers: [
-        {
-          kind: 'group',
-          id: 'g1',
-          name: 'g1',
-          children: [null, { type: 'sticker' }, { id: 'kept', type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color: 0 }],
-        },
-      ],
-    });
-    const [group] = parsed.layers;
-    if (!('kind' in group) || group.kind !== 'group') throw new Error('expected a group node');
-    expect(group.children).toHaveLength(1);
-    expect(group.children[0]).toMatchObject({ id: 'kept' });
-  });
-
-  it('tryParsePanelConfig rejects a version above PANEL_CONFIG_VERSION', () => {
-    const result = tryParsePanelConfig({ app: 'zpd', version: PANEL_CONFIG_VERSION + 1, layers: [] });
-    expect(result.ok).toBe(false);
+    const first = parsePanelConfig(payload);
+    const second = parsePanelConfig(payload);
+    expect(first.guides.map((guide) => guide.id)).toEqual(['guide-2', 'guide-2-2']);
+    expect(JSON.stringify(second.guides)).toBe(JSON.stringify(first.guides));
   });
 });
 
-describe('parsePanelConfig — never throws on bad input', () => {
-  const garbageInputs: unknown[] = [null, undefined, 42, 'not json', true, [], [1, 2, 3], () => {}];
+describe('v1-v4 deterministic material migration', () => {
+  const legacy = {
+    version: 4,
+    app: 'zpd',
+    panel: { hp: 12 },
+    layers: [
+      group(
+        'mixed',
+        [
+          shape('black', 0, 'Mask'),
+          {
+            id: 'split',
+            name: 'Split path',
+            type: 'path' as const,
+            points: [],
+            closed: true,
+            fill: 1 as const,
+            stroke: 2 as const,
+            strokeWidth: 1,
+          },
+          group('nested', [shape('white', 2)], { hidden: true, name: 'Nested name' }),
+          {
+            id: 'nested-image',
+            name: 'Nested reference',
+            type: 'image' as const,
+            src: 'data:',
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+          },
+        ],
+        { hidden: true, name: 'Mixed name' },
+      ),
+      group('empty', [], { hidden: true, name: 'Empty name' }),
+      {
+        id: 'paintless',
+        name: 'No paint',
+        type: 'path',
+        points: [],
+        closed: false,
+        fill: null,
+        stroke: null,
+        strokeWidth: 0,
+      },
+      {
+        id: 'image',
+        name: 'Reference',
+        type: 'image',
+        src: 'data:',
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+      },
+    ],
+    guides: [],
+  };
 
-  it.each(garbageInputs)('falls back to the default document for garbage input %#', (input) => {
-    expect(() => parsePanelConfig(input)).not.toThrow();
-    expect(parsePanelConfig(input)).toEqual(createDefaultDoc());
+  it.each([1, 2, 3, 4] as const)(
+    'migrates the exact v%s legacy fixture into the canonical material roots',
+    (version) => {
+      const doc = parsePanelConfig({
+        version,
+        app: 'zpd',
+        panel: { hp: 8 },
+        layers: [
+          shape(`gold-v${version}`, 1),
+          shape(`mask-v${version}`, 0),
+          shape(`silk-v${version}`, 2),
+        ],
+        guides:
+          version === 1
+            ? undefined
+            : [{ id: `guide-v${version}`, orientation: 'vertical', position: 4 }],
+      });
+      expect(
+        doc.layers.map((container) => ({ role: container.role, hidden: container.hidden })),
+      ).toEqual([
+        { role: 'copper', hidden: undefined },
+        { role: 'solder-mask', hidden: undefined },
+        { role: 'silkscreen', hidden: undefined },
+      ]);
+      expect(children(doc, 'copper')).toMatchObject([{ id: `gold-v${version}`, color: 1 }]);
+      expect(children(doc, 'solder-mask')).toMatchObject([{ id: `mask-v${version}`, color: 0 }]);
+      expect(children(doc, 'silkscreen')).toMatchObject([{ id: `silk-v${version}`, color: 2 }]);
+      expect(serializePanelConfig(doc).version).toBe(5);
+      expect(doc.guides).toHaveLength(version === 1 ? 0 : 1);
+    },
+  );
+
+  it('partitions mixed groups, splits fill/stroke, preserves shells/order/state, and routes colorless nodes', () => {
+    const doc = parsePanelConfig(legacy);
+    expect(doc.layers.map((container) => container.role)).toEqual([
+      'copper',
+      'solder-mask',
+      'silkscreen',
+    ]);
+
+    const copper = children(doc, 'copper');
+    expect(copper.map((node) => node.id)).toEqual(['mixed-copper', 'empty', 'paintless', 'image']);
+    const copperGroup = copper[0] as GroupNode;
+    expect(copperGroup).toMatchObject({ name: 'Mixed name', hidden: true });
+    expect(copperGroup.children).toHaveLength(2);
+    expect(copperGroup.children[0]).toMatchObject({
+      id: 'split',
+      fill: 1,
+      stroke: null,
+    });
+    expect(copperGroup.children[1]).toMatchObject({ id: 'nested-image', type: 'image' });
+    expect(copper[1]).toMatchObject({
+      kind: 'group',
+      name: 'Empty name',
+      hidden: true,
+      children: [],
+    });
+
+    const maskGroup = children(doc, 'solder-mask')[0] as GroupNode;
+    expect(maskGroup.id).toBe('mixed'); // first painted descendant is black
+    expect(maskGroup.children.map((node) => node.id)).toEqual(['black']);
+
+    const silkGroup = children(doc, 'silkscreen')[0] as GroupNode;
+    expect(silkGroup.id).toBe('mixed-silkscreen');
+    expect(silkGroup.children[0]).toMatchObject({
+      id: 'split-silkscreen',
+      fill: null,
+      stroke: 2,
+    });
+    expect(silkGroup.children[1]).toMatchObject({
+      kind: 'group',
+      id: 'nested',
+      name: 'Nested name',
+      hidden: true,
+    });
   });
 
-  it('fills in missing fields with safe defaults rather than throwing', () => {
-    expect(() => parsePanelConfig({})).not.toThrow();
-    const doc = parsePanelConfig({});
-    expect(doc.panelHp).toBeGreaterThan(0);
-    expect(doc.layers).toEqual([]);
+  it('is byte-identical across repeated parses and deterministically resolves duplicates/fixed collisions', () => {
+    const payload = {
+      version: 4,
+      app: 'zpd',
+      layers: [
+        shape('duplicate', 1),
+        shape('duplicate', 1),
+        shape('pcb-layer-copper', 2),
+        shape('duplicate-2', 0),
+      ],
+    };
+    const first = parsePanelConfig(payload);
+    const second = parsePanelConfig(payload);
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+    expect(children(first, 'copper').map((node) => node.id)).toEqual(['duplicate', 'duplicate-3']);
+    expect(children(first, 'silkscreen')[0].id).toBe('pcb-layer-copper-2');
+    expect(children(first, 'solder-mask')[0].id).toBe('duplicate-2');
   });
 
-  it('ignores extra unknown top-level and per-layer fields', () => {
-    const input = {
-      hp: 6,
-      somethingWeird: 'ignored',
+  it('gives source ids priority when a generated role suffix would collide with a later node', () => {
+    const doc = parsePanelConfig({
+      version: 4,
+      app: 'zpd',
+      layers: [group('g', [shape('black', 0), shape('gold', 1)]), shape('g-copper', 1)],
+    });
+    expect(children(doc, 'copper').map((node) => node.id)).toEqual(['g-copper-2', 'g-copper']);
+  });
+});
+
+describe('malformed v5 recovery', () => {
+  it('rebuilds metadata/order, merges duplicate roles, synthesizes missing roles, and recovers illegal/unknown roots', () => {
+    const payload = {
+      version: 5,
+      app: 'zpd',
       layers: [
         {
-          type: 'shape',
-          shape: 'rect',
-          x: 0,
-          y: 0,
-          width: 1,
-          height: 1,
-          color: 0,
-          extra: 'nope',
+          kind: 'pcb-layer',
+          id: 'renamed',
+          role: 'silkscreen',
+          name: 'Wrong',
+          children: [shape('a', 0)], // membership forces white
+        },
+        shape('illegal', 0),
+        {
+          kind: 'pcb-layer',
+          role: 'silkscreen',
+          hidden: true,
+          children: [shape('a', 1)],
+        },
+        {
+          kind: 'future-wrapper',
+          role: 'future',
+          children: [shape('recovered', 1)],
         },
       ],
     };
-    const doc = parsePanelConfig(input);
-    expect(doc.panelHp).toBe(6);
-    expect(doc.layers[0]).not.toHaveProperty('extra');
-    expect(doc).not.toHaveProperty('somethingWeird');
+    const doc = parsePanelConfig(payload);
+
+    expect(doc.layers.map(({ id, role }) => ({ id, role }))).toEqual(
+      PCB_LAYER_DEFINITIONS.map(({ id, role }) => ({ id, role })),
+    );
+    expect(children(doc, 'copper').map((node) => node.id)).toEqual(['recovered']);
+    expect(children(doc, 'solder-mask').map((node) => node.id)).toEqual(['illegal']);
+    expect(children(doc, 'silkscreen').map((node) => node.id)).toEqual(['a', 'a-2']);
+    expect((children(doc, 'silkscreen')[0] as ShapeLayer).color).toBe(2);
+    expect((children(doc, 'silkscreen')[1] as ShapeLayer).color).toBe(2);
+    expect(doc.layers[2].hidden).toBe(true);
   });
 
-  it.each([-5, 0, NaN, Infinity, '12', null, undefined])(
-    'falls back from invalid/non-positive hp (%s) to the default HP',
-    (hp) => {
-      const doc = parsePanelConfig({ hp });
-      expect(doc.panelHp).toBe(12);
-    },
-  );
-
-  it.each([6, 7, 20])('preserves finite positive in-range hp (%s)', (hp) => {
-    expect(parsePanelConfig({ hp }).panelHp).toBe(hp);
-  });
-
-  it.each([MAX_PANEL_HP + 0.1, 1e9, Number.MAX_VALUE])(
-    'clamps finite hp above the product maximum (%s)',
-    (hp) => {
-      expect(parsePanelConfig({ hp }).panelHp).toBe(MAX_PANEL_HP);
-    },
-  );
-
-  it('reads hp from panel.hp when the top-level hp is absent', () => {
-    const doc = parsePanelConfig({ panel: { hp: 8 } });
-    expect(doc.panelHp).toBe(8);
-  });
-
-  it('ignores a hand-edited panel.widthMm/heightMm that disagrees with hp', () => {
-    const doc = parsePanelConfig({ hp: 12, panel: { hp: 12, widthMm: 999, heightMm: 999 } });
-    expect(doc.panelHp).toBe(12);
-    const config = serializePanelConfig(doc);
-    expect(config.panel.widthMm).toBe(panelWidthMm(12));
-    expect(config.panel.heightMm).toBe(PANEL_HEIGHT_MM);
-  });
-
-  it('keeps an unrecognized patternType as opaque data (patterns registry is not a core dependency)', () => {
+  it('recovers parseable children from malformed metadata and never admits fixed-id collisions', () => {
     const doc = parsePanelConfig({
-      layers: [{ type: 'pattern', patternType: 'totally-unknown-xyz', color: 1, params: { a: 1 } }],
-    });
-    expect(doc.layers).toHaveLength(1);
-    const [layer] = doc.layers;
-    if ('kind' in layer) throw new Error('unreachable');
-    expect(layer.type).toBe('pattern');
-    if (layer.type !== 'pattern') throw new Error('unreachable');
-    expect(layer.patternType).toBe('totally-unknown-xyz');
-    expect(layer.params).toEqual({ a: 1 });
-  });
-
-  it.each([99, -1, 'gold', null, undefined, 3.5])(
-    'clamps an out-of-range color index (%s) to 0',
-    (color) => {
-      const doc = parsePanelConfig({
-        layers: [{ type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color }],
-      });
-      expect(doc.layers[0]).toMatchObject({ color: 0 });
-    },
-  );
-
-  it('drops layers with an unrecognized type', () => {
-    const doc = parsePanelConfig({ layers: [{ type: 'sticker', x: 0, y: 0 }] });
-    expect(doc.layers).toEqual([]);
-  });
-
-  it('drops non-object entries inside the layers array', () => {
-    const doc = parsePanelConfig({
-      layers: [
-        null,
-        42,
-        'nope',
-        { type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color: 0 },
-      ],
-    });
-    expect(doc.layers).toHaveLength(1);
-  });
-
-  it('id-stamps layers that are missing an id', () => {
-    const doc = parsePanelConfig({
-      layers: [{ type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color: 0 }],
-    });
-    expect(typeof doc.layers[0].id).toBe('string');
-    expect(doc.layers[0].id.length).toBeGreaterThan(0);
-  });
-
-  // Image rotation (#147) is defended exactly like shape/text rotation: a
-  // finite value survives, anything else (non-finite, wrong type, absent) is
-  // dropped rather than defaulted to 0, same as the shape/text fields.
-  it('parses a finite image rotation', () => {
-    const doc = parsePanelConfig({
-      layers: [
-        { type: 'image', src: 'data:,', x: 0, y: 0, width: 10, height: 10, rotation: 33 },
-      ],
-    });
-    expect(doc.layers[0]).toMatchObject({ rotation: 33 });
-  });
-
-  it.each([NaN, Infinity, -Infinity, 'left', null, {}])(
-    'drops a non-finite/non-numeric image rotation (%s) rather than default it to 0',
-    (rotation) => {
-      const doc = parsePanelConfig({
-        layers: [{ type: 'image', src: 'data:,', x: 0, y: 0, width: 10, height: 10, rotation }],
-      });
-      expect(doc.layers[0]).not.toHaveProperty('rotation');
-    },
-  );
-
-  it('an image with no rotation field parses without one (undefined, not 0)', () => {
-    const doc = parsePanelConfig({
-      layers: [{ type: 'image', src: 'data:,', x: 0, y: 0, width: 10, height: 10 }],
-    });
-    expect(doc.layers[0]).not.toHaveProperty('rotation');
-  });
-
-  it('drops non-numeric entries from pattern params instead of throwing', () => {
-    const doc = parsePanelConfig({
+      version: 5,
+      app: 'zpd',
       layers: [
         {
+          children: [
+            shape('pcb-layer-solder-mask', 0),
+            { nope: true },
+            group('g', [shape('g', 1)]),
+          ],
+        },
+      ],
+    });
+    expect(children(doc, 'solder-mask')[0].id).toBe('pcb-layer-solder-mask-2');
+    const recoveredGroup = children(doc, 'copper')[0] as GroupNode;
+    expect(recoveredGroup.id).toBe('g');
+    expect(recoveredGroup.children[0].id).toBe('g-2');
+  });
+});
+
+describe('ordinary fragment parsing contracts', () => {
+  it('defensively parses an ordinary fragment without performing full-document partitioning', () => {
+    const parsed = parseLayerNodeFragment([
+      group('g', [shape('same', 0), shape('same', 2)]),
+      { type: 'unknown' },
+    ]);
+    expect(parsed).toHaveLength(1);
+    expect((parsed[0] as GroupNode).children.map((node) => node.id)).toEqual(['same', 'same-2']);
+  });
+
+  it('offers the same legacy partitioner for clipboard compatibility', () => {
+    const parsed = parseLegacyLayerFragment([
+      group('g', [shape('black', 0), shape('gold', 1), shape('white', 2)]),
+    ]);
+    expect(parsed.map(({ material, node }) => [material, node.id])).toEqual([
+      ['copper', 'g-copper'],
+      ['solder-mask', 'g'],
+      ['silkscreen', 'g-silkscreen'],
+    ]);
+    expect(parsed.flatMap(({ node }) => flattenLayerNodes([node]).map((leaf) => leaf.id))).toEqual([
+      'gold',
+      'black',
+      'white',
+    ]);
+  });
+
+  it('retains legacy pattern geometry migration and rich leaf data through v5 round-trip', () => {
+    const migrated = parsePanelConfig({
+      version: 1,
+      app: 'zpd',
+      panel: { hp: 8, widthMm: 999, heightMm: 999 },
+      layers: [
+        {
+          id: 'pattern',
+          name: 'Pattern',
           type: 'pattern',
           patternType: 'dot-grid',
+          params: { pitch: 5, invalid: 'drop' },
           color: 1,
-          params: { pitch: 5, bogus: 'nope', nested: { a: 1 } },
+        },
+        {
+          id: 'path',
+          name: 'Path',
+          type: 'path',
+          closed: true,
+          fill: 2,
+          stroke: null,
+          strokeWidth: 0.5,
+          points: [{ x: 1, y: 2, hin: { x: 0, y: 2 }, hout: { x: 2, y: 2 } }],
+          extraSubpaths: [[{ x: 3, y: 4 }]],
+        },
+        {
+          id: 'text',
+          name: 'Text',
+          type: 'text',
+          content: 'hello',
+          fontFamily: 'Inter',
+          sizeMm: 4,
+          x: 5,
+          y: 6,
+          rotation: 45,
+          color: 2,
         },
       ],
+      guides: [{ orientation: 'vertical', position: 3, hidden: true }],
     });
-    const [layer] = doc.layers;
-    if ('kind' in layer) throw new Error('unreachable');
-    expect(layer.type).toBe('pattern');
-    if (layer.type !== 'pattern') throw new Error('unreachable');
-    expect(layer.params).toEqual({ pitch: 5 });
-  });
-});
-
-describe('tryParsePanelConfig — strict envelope validator', () => {
-  it('accepts a real serializePanelConfig round-trip', () => {
-    const doc = fullFixtureDoc();
-    const result = tryParsePanelConfig(JSON.parse(JSON.stringify(serializePanelConfig(doc))));
-    expect(result).toEqual({ ok: true, doc });
-  });
-
-  it('rejects an empty object (missing app/version/layers)', () => {
-    const result = tryParsePanelConfig({});
-    expect(result.ok).toBe(false);
+    const pattern = children(migrated, 'copper')[0];
+    expect(pattern).toMatchObject({
+      id: 'pattern',
+      params: { pitch: 5 },
+      ...patternCoverGeometry({ widthMm: panelWidthMm(8), heightMm: PANEL_HEIGHT_MM }),
+    });
+    expect(migrated.guides).toEqual([
+      { id: 'guide-1', orientation: 'vertical', position: 3, hidden: true },
+    ]);
+    expect(parsePanelConfig(JSON.parse(JSON.stringify(serializePanelConfig(migrated))))).toEqual(
+      migrated,
+    );
   });
 
-  it.each([null, undefined, 42, 'not json', true, [], () => {}])(
-    'rejects non-object input %#',
-    (input) => {
-      expect(tryParsePanelConfig(input)).toEqual({ ok: false, reason: expect.any(String) });
-    },
-  );
-
-  it('rejects a wrong `app` field', () => {
-    const result = tryParsePanelConfig({ app: 'some-other-app', version: PANEL_CONFIG_VERSION, layers: [] });
-    expect(result).toEqual({ ok: false, reason: expect.stringContaining('app') });
-  });
-
-  it('rejects a missing `layers` array even with a valid envelope', () => {
-    const result = tryParsePanelConfig({ app: 'zpd', version: PANEL_CONFIG_VERSION });
-    expect(result).toEqual({ ok: false, reason: expect.stringContaining('layers') });
-  });
-
-  it('rejects a non-array `layers`', () => {
-    const result = tryParsePanelConfig({ app: 'zpd', version: PANEL_CONFIG_VERSION, layers: 'nope' });
-    expect(result.ok).toBe(false);
-  });
-
-  it.each([0, -1, 999, 1.5, NaN, Infinity, '2', null, undefined])(
-    'rejects an out-of-range, fractional, or non-numeric version (%s)',
-    (version) => {
-      const result = tryParsePanelConfig({ app: 'zpd', version, layers: [] });
-      expect(result).toEqual({ ok: false, reason: expect.any(String) });
-    },
-  );
-
-  it('accepts a v1 envelope (predates the guides field)', () => {
-    const result = tryParsePanelConfig({
-      version: 1,
+  it('caps hostile group nesting while retaining legal leaves and sibling content', () => {
+    let legal: LayerNode = shape('deep-leaf', 1);
+    for (let depth = MAX_GROUP_DEPTH; depth >= 0; depth -= 1) {
+      legal = group(`legal-${depth}`, [legal]);
+    }
+    const tooDeep = group('extra-root', [legal]);
+    const doc = parsePanelConfig({
+      version: 4,
       app: 'zpd',
-      panel: { hp: 12, widthMm: 60.96, heightMm: 128.5 },
-      palette: ['black', 'gold', 'white'],
-      layers: [],
+      layers: [tooDeep, shape('survivor', 2)],
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('unreachable');
-    expect(result.doc.guides).toEqual([]);
-  });
-
-  it('on success, delegates field-level defense to parsePanelConfig (garbage layer entries are dropped, not rejected)', () => {
-    const result = tryParsePanelConfig({
-      app: 'zpd',
-      version: PANEL_CONFIG_VERSION,
-      layers: [null, { type: 'sticker' }, { type: 'shape', shape: 'rect', x: 0, y: 0, width: 1, height: 1, color: 0 }],
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('unreachable');
-    expect(result.doc.layers).toHaveLength(1);
+    const parsedRoot = children(doc, 'copper')[0] as GroupNode;
+    let cursor: LayerNode | undefined = parsedRoot;
+    let groups = 0;
+    while (cursor && 'kind' in cursor) {
+      groups += 1;
+      cursor = cursor.children[0];
+    }
+    expect(groups).toBe(MAX_GROUP_DEPTH + 1);
+    expect(cursor).toBeUndefined();
+    expect(children(doc, 'silkscreen')[0].id).toBe('survivor');
   });
 });

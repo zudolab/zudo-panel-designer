@@ -8,7 +8,8 @@ import { describe, expect, it, vi } from 'vitest';
 import './text'; // registers 'text' as a side effect
 import { getTool } from '../registry/tools';
 import { DEFAULT_FONT_FAMILY } from '../fonts';
-import type { DocState, Pt, TextLayer } from '@zpd/core';
+import { createDefaultDoc, createPcbLayerStack, type DocState, Pt, TextLayer } from '@zpd/core';
+import { projectFlatLayers } from '../flat-projection';
 import type { PanelDims, ToolContext, ToolPointerEvent } from '../types';
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
@@ -57,16 +58,16 @@ const text = getTool('text')!;
 
 describe('text tool — click to place', () => {
   it('inserts a TextLayer at the click point, commits once, then selects it and switches to select', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [] };
+    const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
     const ctx = stubCtx(doc);
 
     text.onPointerDown?.(ptr({ x: 12, y: 34 }), ctx);
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     const committed = vi.mocked(ctx.commit).mock.calls[0][0];
-    expect(committed.layers).toHaveLength(1);
+    expect(projectFlatLayers(committed.layers)).toHaveLength(1);
 
-    const layer = committed.layers[0] as TextLayer;
+    const layer = projectFlatLayers(committed.layers)[0] as TextLayer;
     expect(layer.type).toBe('text');
     expect(layer.content).toBe('TEXT');
     expect(layer.sizeMm).toBe(6);
@@ -92,13 +93,28 @@ describe('text tool — click to place', () => {
       y: 0,
       color: 2,
     };
-    const doc: DocState = { panelHp: 12, guides: [], layers: [existing] };
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ silkscreen: [existing] }),
+    };
     const ctx = stubCtx(doc);
 
     text.onPointerDown?.(ptr({ x: 5, y: 5 }), ctx);
 
     const committed = vi.mocked(ctx.commit).mock.calls[0][0];
-    expect(committed.layers).toHaveLength(2);
-    expect(committed.layers[0]).toBe(existing);
+    expect(projectFlatLayers(committed.layers)).toHaveLength(2);
+    expect(projectFlatLayers(committed.layers)[0]).toBe(existing);
+  });
+});
+
+describe('text tool — material destination (#167)', () => {
+  it('places text inside Silkscreen rather than at the document root', () => {
+    const ctx = stubCtx(createDefaultDoc());
+    text.onPointerDown?.(ptr({ x: 12, y: 24 }), ctx);
+    const committed = vi.mocked(ctx.commit).mock.calls[0]![0];
+    expect(committed.layers[2].children).toEqual([
+      expect.objectContaining({ type: 'text', color: 2 }),
+    ]);
   });
 });

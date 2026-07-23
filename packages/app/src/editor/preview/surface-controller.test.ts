@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { DocState } from '@zpd/core';
+import { createPcbLayerStack, type DocState } from '@zpd/core';
 import {
   createPreviewSurfaceSnapshot,
   type PreviewCanvasSource,
@@ -43,8 +43,8 @@ describe('preview surface controller', () => {
       onError: vi.fn(),
       createGenerator: () => ({ generate, close }),
     });
-    const first: DocState = { panelHp: 12, guides: [], layers: [] };
-    const second: DocState = { ...first, layers: [] };
+    const first: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
+    const second: DocState = { ...first, layers: createPcbLayerStack() };
 
     controller.update(first);
     controller.update(first);
@@ -74,7 +74,7 @@ describe('preview surface controller', () => {
         return generator;
       },
     });
-    controller.update({ panelHp: 12, guides: [], layers: [] });
+    controller.update({ panelHp: 12, guides: [], layers: createPcbLayerStack() });
 
     generatorOptions!.onFontReadyRevision?.(1);
     generatorOptions!.onFontReadyRevision?.(1);
@@ -104,7 +104,7 @@ describe('preview surface controller', () => {
         return generator;
       },
     });
-    controller.update({ panelHp: 12, guides: [], layers: [] });
+    controller.update({ panelHp: 12, guides: [], layers: createPcbLayerStack() });
     controller.close();
     generatorOptions!.onFontReadyRevision?.(1);
     await Promise.resolve();
@@ -130,7 +130,7 @@ describe('preview surface controller', () => {
       }),
     });
 
-    controller.update({ panelHp: 12, guides: [], layers: [] });
+    controller.update({ panelHp: 12, guides: [], layers: createPcbLayerStack() });
     expect(onError).toHaveBeenCalledWith(error);
     expect(scene.applySnapshot).not.toHaveBeenCalled();
     controller.close();

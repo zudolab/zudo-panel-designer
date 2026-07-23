@@ -1,47 +1,39 @@
-// Layers-panel drag-and-drop resolution (#154) — the pure half of the panel's
-// ONE id-based DnD system (the reference implementation's acknowledged-legacy
-// split into a flat index reorder + a tree move system is deliberately NOT
-// reproduced here). The component owns event wiring and pointer→zone math;
-// this module owns everything decidable from data alone: mapping a hovered
-// row + zone to a tree slot, the invalid-drop guards, and executing the move
-// batch through @zpd/core's moveNodeToParent (#150: writes go through the
-// recursive primitives, never index math on the flat projection).
 import {
   findNodeById,
+  findPcbNodeById,
+  getPcbLayer,
   isGroupNode,
   MAX_GROUP_DEPTH,
   maxSubtreeDepth,
-  moveNodeToParent,
+  movePcbNode,
   type LayerNode,
+  type PcbLayerRole,
+  type PcbLayerStack,
 } from '@zpd/core';
 
-// Zones are relative to the hovered ROW as rendered (top-of-stack first, so
-// "before" = visually above = the HIGHER z slot). 'into' only exists for
-// group rows (header hover / empty-group placeholder).
 export type DropZone = 'before' | 'after' | 'into';
 
-// A drop destination in tree coordinates. `anchorId` names the destination
-// sibling the dragged nodes are inserted directly BEFORE (in array order);
-// null appends at the end of the destination's children (= visual top of that
-// stack). Anchor-based, not index-based: the executor re-derives the numeric
-// index per move, so a multi-root batch stays correct while earlier moves
-// shift sibling positions.
+// The fixed material role is part of every destination. parentId=null means
+// the ordinary root of that material, never the document root.
 export interface DropSlot {
+  role: PcbLayerRole;
   parentId: string | null;
   anchorId: string | null;
 }
 
 export type DropRejection = 'cycle' | 'depth-cap';
 
-function childrenOf(tree: LayerNode[], parentId: string | null): readonly LayerNode[] | null {
+function childrenOf(
+  stack: PcbLayerStack,
+  role: PcbLayerRole,
+  parentId: string | null,
+): readonly LayerNode[] | null {
+  const tree = getPcbLayer(stack, role).children;
   if (parentId === null) return tree;
   const found = findNodeById(tree, parentId);
   return found && isGroupNode(found.node) ? found.node.children : null;
 }
 
-// The first sibling at index >= `from` that is not itself being dragged —
-// dragged siblings are skipped because they leave this array as part of the
-// same drop, so anchoring on one would target a vanishing node.
 function firstNonDraggedId(
   siblings: readonly LayerNode[],
   from: number,
@@ -54,141 +46,129 @@ function firstNonDraggedId(
   return null;
 }
 
-// The slot at the visual BOTTOM of a container's rows (array index 0 of the
-// top level or of a group's children) — the drop target for hovering the
-// list's tail area rather than a row. This is what makes "outdent below an
-// expanded group's subtree" reachable at all: with e.g. top-level [G([a])],
-// every ROW zone around `a` resolves inside G or above it, so without a tail
-// target the top-level slot below G could never be produced by a drag (codex
-// review, #154).
+// The tail is local to one material or ordinary group. There is deliberately
+// no document-root tail: fixed containers cannot be reordered or outdented.
 export function resolveTailDropSlot(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
+  role: PcbLayerRole,
   parentId: string | null,
   draggedIds: readonly string[],
 ): DropSlot | null {
-  const siblings = childrenOf(tree, parentId);
+  const siblings = childrenOf(stack, role, parentId);
   if (!siblings) return null;
-  return { parentId, anchorId: firstNonDraggedId(siblings, 0, new Set(draggedIds)) };
+  return {
+    role,
+    parentId,
+    anchorId: firstNonDraggedId(siblings, 0, new Set(draggedIds)),
+  };
 }
 
-// Maps a hovered row + zone to a DropSlot, or null when the row/zone cannot
-// host a drop at all (unknown row id, 'into' on a leaf). Zone semantics:
-//   - 'into'  → inside the hovered GROUP, anchored at its first (array-index
-//               0) child — the exact `moveNodeToParent(child, group, 0)` slot
-//               the issue specifies for a header drop.
-//   - 'before'→ the hovered row's parent, at the slot visually above the row
-//               (array index just past it).
-//   - 'after' → visually below the row. Below an EXPANDED group header sits
-//               the top of that group's own visual stack, so the slot is
-//               inside the group (append = array end); below a collapsed
-//               header (its rows are unmounted) or any leaf it is the
-//               sibling slot before the row in array order.
 export function resolveDropSlot(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   rowId: string,
   zone: DropZone,
   draggedIds: readonly string[],
   collapsedGroupIds: ReadonlySet<string>,
 ): DropSlot | null {
   const dragged = new Set(draggedIds);
-  const found = findNodeById(tree, rowId);
+  const found = findPcbNodeById(stack, rowId);
   if (!found) return null;
-  const { node } = found;
+  const { node, role } = found;
 
   if (zone === 'into') {
     if (!isGroupNode(node)) return null;
-    return { parentId: node.id, anchorId: firstNonDraggedId(node.children, 0, dragged) };
+    return {
+      role,
+      parentId: node.id,
+      anchorId: firstNonDraggedId(node.children, 0, dragged),
+    };
   }
 
   const parentId = found.pathIds[found.pathIds.length - 1] ?? null;
-  const siblings = childrenOf(tree, parentId);
+  const siblings = childrenOf(stack, role, parentId);
   if (!siblings) return null;
   const rowIndex = siblings.findIndex((sibling) => sibling.id === rowId);
   if (rowIndex < 0) return null;
 
   if (zone === 'before') {
-    return { parentId, anchorId: firstNonDraggedId(siblings, rowIndex + 1, dragged) };
+    return {
+      role,
+      parentId,
+      anchorId: firstNonDraggedId(siblings, rowIndex + 1, dragged),
+    };
   }
   if (isGroupNode(node) && !collapsedGroupIds.has(node.id)) {
-    return { parentId: node.id, anchorId: null };
+    return { role, parentId: node.id, anchorId: null };
   }
-  return { parentId, anchorId: firstNonDraggedId(siblings, rowIndex, dragged) };
+  return {
+    role,
+    parentId,
+    anchorId: firstNonDraggedId(siblings, rowIndex, dragged),
+  };
 }
 
-// The silent-reject guards, run during dragover (for the disabled affordance)
-// AND re-run at drop time BEFORE any history write — an invalid drop must
-// never create an undo entry.
-//
-//   - 'cycle': the destination parent is a dragged node or sits inside a
-//     dragged subtree (a group can never become its own descendant).
-//   - 'depth-cap': parser ground truth (serialize.ts's parseLayerNode, per
-//     the #155 review): MAX_GROUP_DEPTH caps GROUP nesting only — a group is
-//     legal at ancestor-group-count 0..MAX_GROUP_DEPTH and a LEAF is never
-//     depth-checked (it may sit inside the deepest legal group). Dropping
-//     node X under a parent whose children gain `chainDepth` group ancestors
-//     puts X's deepest descendant group at chainDepth + maxSubtreeDepth(X)
-//     - 1, which must stay within MAX_GROUP_DEPTH. The issue prose's looser
-//     "targetDepth + maxSubtreeDepth > MAX_GROUP_DEPTH" would reject drops
-//     the parser accepts (off-by-one, same trap #155 hit).
 export function invalidDropReason(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   slot: DropSlot,
   draggedIds: readonly string[],
 ): DropRejection | null {
   const dragged = new Set(draggedIds);
+  const targetTree = getPcbLayer(stack, slot.role).children;
   let chainDepth = 0;
   if (slot.parentId !== null) {
     if (dragged.has(slot.parentId)) return 'cycle';
-    const parent = findNodeById(tree, slot.parentId);
+    const parent = findNodeById(targetTree, slot.parentId);
     if (!parent || !isGroupNode(parent.node)) return 'cycle';
     if (parent.pathIds.some((ancestorId) => dragged.has(ancestorId))) return 'cycle';
     chainDepth = parent.pathIds.length + 1;
   }
   for (const id of draggedIds) {
-    const found = findNodeById(tree, id);
+    const found = findPcbNodeById(stack, id);
     if (!found) return 'cycle';
+    if (isGroupNode(found.node) && findNodeById([found.node], slot.parentId ?? '')) {
+      return 'cycle';
+    }
     const depth = maxSubtreeDepth(found.node);
     if (depth >= 1 && chainDepth + depth - 1 > MAX_GROUP_DEPTH) return 'depth-cap';
   }
   return null;
 }
 
-// Executes one drop as a batch of moveNodeToParent calls over `draggedIds`
-// (which MUST be maximal roots in tree DFS order — maximalSelectedRoots'
-// contract — so inserting each root directly before the shared anchor
-// preserves their relative z). The numeric index is derived per move against
-// the CURRENT tree with the moving node filtered out, because
-// moveNodeToParent interprets the index against the post-removal sibling
-// array. Returns the SAME `tree` reference when every move is a no-op — the
-// caller skips the commit, so a drop onto a node's own slot writes no
-// phantom history entry.
 export function executeDrop(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   draggedIds: readonly string[],
   slot: DropSlot,
-): LayerNode[] {
-  let next = tree;
+): PcbLayerStack {
+  let next = stack;
   for (const id of draggedIds) {
-    const siblings = childrenOf(next, slot.parentId);
-    if (!siblings) return tree;
+    const siblings = childrenOf(next, slot.role, slot.parentId);
+    if (!siblings) return stack;
     const withoutSelf = siblings.filter((sibling) => sibling.id !== id);
     const anchorIndex =
-      slot.anchorId === null ? -1 : withoutSelf.findIndex((sibling) => sibling.id === slot.anchorId);
-    next = moveNodeToParent(next, id, slot.parentId, anchorIndex < 0 ? withoutSelf.length : anchorIndex);
+      slot.anchorId === null
+        ? -1
+        : withoutSelf.findIndex((sibling) => sibling.id === slot.anchorId);
+    next = movePcbNode(
+      next,
+      id,
+      slot.role,
+      slot.parentId,
+      anchorIndex < 0 ? withoutSelf.length : anchorIndex,
+    );
   }
-  // A multi-root batch can shuffle roots through intermediate positions and
-  // still END where it started (e.g. dropping selected [a, G] right back
-  // above their own run): every step rebuilt arrays, so `next` is a fresh
-  // reference even though nothing changed. Restore the identity-on-no-op
-  // contract structurally (codex review, #154) so the caller's
-  // same-reference check skips the commit — no phantom undo entry.
-  return sameTreeStructure(tree, next) ? tree : next;
+  return sameStackStructure(stack, next) ? stack : next;
 }
 
-// Structural equality by node identity: moves reinsert the SAME node objects
-// and only rebuild the group spines around them, so two trees are equal iff
-// every position holds the identical node reference or an identically-id'd
-// group whose children are recursively equal.
+function sameStackStructure(a: PcbLayerStack, b: PcbLayerStack): boolean {
+  if (a === b) return true;
+  return a.every(
+    (container, index) =>
+      container.role === b[index].role &&
+      container.hidden === b[index].hidden &&
+      sameTreeStructure(container.children, b[index].children),
+  );
+}
+
 function sameTreeStructure(a: readonly LayerNode[], b: readonly LayerNode[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;

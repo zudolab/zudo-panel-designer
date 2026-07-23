@@ -25,7 +25,7 @@ test('@smoke pen tool draws a closed path', async ({ page }) => {
 
   await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 1);
   const selectedId = await bridge(page).getSelectedId();
-  const layer = (await bridge(page).getDoc()).layers.find((l) => l.id === selectedId);
+  const layer = await bridge(page).getMaterialLayer(selectedId!);
   expect(layer).toMatchObject({ type: 'path', closed: true });
 });
 
@@ -67,7 +67,7 @@ test('@smoke text tool places a layer and loads the Orbitron font', async ({ pag
 
   const selectedId = await bridge(page).getSelectedId();
   expect(selectedId).not.toBeNull();
-  const placed = (await bridge(page).getDoc()).layers.find((l) => l.id === selectedId);
+  const placed = await bridge(page).getMaterialLayer(selectedId!);
   expect(placed?.type).toBe('text');
 
   // Font <select> is the last <select> once a text layer's inspector is
@@ -77,6 +77,6 @@ test('@smoke text tool places a layer and loads the Orbitron font', async ({ pag
   // self-hosted @fontsource/orbitron — no external font network involved.
   await page.waitForFunction(() => document.fonts.check('16px "Orbitron"'));
 
-  const updated = (await bridge(page).getDoc()).layers.find((l) => l.id === selectedId);
+  const updated = await bridge(page).getMaterialLayer(selectedId!);
   expect(updated).toMatchObject({ fontFamily: 'Orbitron' });
 });

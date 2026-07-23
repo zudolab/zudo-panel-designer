@@ -18,17 +18,18 @@
 // handler for how this registry replaces the old inline branches, and
 // commands.test.ts for the parity table.
 import {
-  deleteNodeById,
-  findNodeById,
-  groupNodes,
+  deletePcbNodeById,
+  findPcbNodeById,
+  groupPcbNodes,
+  getPcbLayer,
   isGroupNode,
   MAX_GROUP_DEPTH,
   maximalSelectedRoots,
   maxSubtreeDepth,
-  ungroupGroupById,
+  ungroupPcbNode,
   type AlignType,
   type DistributeAxis,
-  type LayerNode,
+  type PcbLayerStack,
 } from '@zpd/core';
 import { applyAlign, applyDistribute, canAlign, canDistribute, type Reference } from './align-ops';
 import { downloadPanelConfig } from './download';
@@ -145,10 +146,10 @@ const ALWAYS_ENABLED = () => true;
 // `groupNodes`/`ungroupGroupById` ops deliberately don't enforce
 // MAX_GROUP_DEPTH themselves (the parse boundary and panel drag-into-group
 // are the other two enforcement points — this command is the third).
-function maxRootDepth(tree: LayerNode[], rootIds: readonly string[]): number {
+function maxRootDepth(tree: PcbLayerStack, rootIds: readonly string[]): number {
   let deepest = 0;
   for (const id of rootIds) {
-    const found = findNodeById(tree, id);
+    const found = findPcbNodeById(tree, id);
     if (!found) continue;
     const depth = maxSubtreeDepth(found.node);
     if (depth > deepest) deepest = depth;
@@ -160,10 +161,35 @@ function maxRootDepth(tree: LayerNode[], rootIds: readonly string[]): number {
 // root, and — when there is exactly one — it must not itself be a group
 // (wrapping a single leaf is fine; re-wrapping a lone group is a no-op the
 // user never wants, so it stays disabled rather than nesting one deeper).
-function isGroupableRootSelection(tree: LayerNode[], rootIds: readonly string[]): boolean {
+function materialRootSelection(
+  tree: PcbLayerStack,
+  ids: readonly string[],
+): { rootIds: string[] } | null {
+  const found = ids.map((id) => findPcbNodeById(tree, id)).filter((entry) => entry !== null);
+  if (found.length === 0) return null;
+  const role = found[0].role;
+  if (found.some((entry) => entry.role !== role)) return null;
+  return { rootIds: maximalSelectedRoots(getPcbLayer(tree, role).children, ids) };
+}
+
+function maximalPcbSelectedRoots(tree: PcbLayerStack, ids: readonly string[]): string[] {
+  const selected = new Set(ids);
+  const seen = new Set<string>();
+  return ids.filter((id) => {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    const found = findPcbNodeById(tree, id);
+    return found !== null && !found.pathIds.some((ancestorId) => selected.has(ancestorId));
+  });
+}
+
+function isGroupableRootSelection(tree: PcbLayerStack, ids: readonly string[]): boolean {
+  const selection = materialRootSelection(tree, ids);
+  if (!selection) return false;
+  const { rootIds } = selection;
   if (rootIds.length === 0) return false;
   if (rootIds.length === 1) {
-    const found = findNodeById(tree, rootIds[0]!);
+    const found = findPcbNodeById(tree, rootIds[0]!);
     if (!found || isGroupNode(found.node)) return false;
   }
   return maxRootDepth(tree, rootIds) <= MAX_GROUP_DEPTH;
@@ -304,11 +330,11 @@ const STATIC_COMMANDS: CommandDef[] = [
       // MAXIMAL roots (a descendant of a selected ancestor drops out), then
       // deleteNodeById cascades each root — a group id deletes its whole
       // subtree — wherever it sits in the tree, all in this ONE commit.
-      const roots = maximalSelectedRoots(ctx.doc.layers, ids);
+      const roots = maximalPcbSelectedRoots(ctx.doc.layers, ids);
       if (roots.length === 0) return;
       ctx.commit({
         ...ctx.doc,
-        layers: roots.reduce((tree, id) => deleteNodeById(tree, id), ctx.doc.layers),
+        layers: roots.reduce((tree, id) => deletePcbNodeById(tree, id), ctx.doc.layers),
       });
       ctx.selectIds([]);
     },
@@ -327,9 +353,8 @@ const STATIC_COMMANDS: CommandDef[] = [
     preventDefault: true,
     alwaysClaimsChord: true,
     run: (ctx) => {
-      const roots = maximalSelectedRoots(ctx.doc.layers, ctx.selectedIds);
-      if (!isGroupableRootSelection(ctx.doc.layers, roots)) return;
-      const { tree, group } = groupNodes(ctx.doc.layers, ctx.selectedIds, 'Group');
+      if (!isGroupableRootSelection(ctx.doc.layers, ctx.selectedIds)) return;
+      const { stack: tree, group } = groupPcbNodes(ctx.doc.layers, ctx.selectedIds, 'Group');
       // groupNodes mints and returns the group actually inserted into the
       // tree — selecting anything else (e.g. a locally-fabricated id) would
       // point at a node that was never inserted (the exact bug #148's
@@ -341,7 +366,7 @@ const STATIC_COMMANDS: CommandDef[] = [
     isEnabled: (ctx) =>
       isGroupableRootSelection(
         ctx.doc.layers,
-        maximalSelectedRoots(ctx.doc.layers, ctx.selectedIds),
+        ctx.selectedIds,
       ),
   },
   {
@@ -361,7 +386,7 @@ const STATIC_COMMANDS: CommandDef[] = [
       // reference port's ungroup a silent no-op. See group-ops.ts.
       const tree = ctx.doc.layers;
       const groupIds = ctx.selectedIds.filter((id) => {
-        const found = findNodeById(tree, id);
+        const found = findPcbNodeById(tree, id);
         return found !== null && isGroupNode(found.node);
       });
       if (groupIds.length === 0) return;
@@ -373,10 +398,10 @@ const STATIC_COMMANDS: CommandDef[] = [
       let nextTree = tree;
       const released: string[] = [];
       for (const groupId of groupIds) {
-        const found = findNodeById(nextTree, groupId);
+        const found = findPcbNodeById(nextTree, groupId);
         if (!found || !isGroupNode(found.node)) continue;
         released.push(...found.node.children.map((child) => child.id));
-        nextTree = ungroupGroupById(nextTree, groupId);
+        nextTree = ungroupPcbNode(nextTree, groupId);
       }
       // A group released as another group's "child" above may itself be one
       // of the groups this op is dissolving (the nested-selected-groups
@@ -389,7 +414,7 @@ const STATIC_COMMANDS: CommandDef[] = [
     },
     isEnabled: (ctx) =>
       ctx.selectedIds.some((id) => {
-        const found = findNodeById(ctx.doc.layers, id);
+        const found = findPcbNodeById(ctx.doc.layers, id);
         return found !== null && isGroupNode(found.node);
       }),
   },

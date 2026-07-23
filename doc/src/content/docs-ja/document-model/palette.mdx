@@ -1,41 +1,50 @@
 ---
-title: 3 色パレット
-description: 固定された 3 色パレットと、その物理的な PCB 上の意味（palette.ts より）。
+title: PCB マテリアルスタックと表示パレット
+description: palette.ts で定義される 3 つの固定製造コンテナと表示色。
 sidebar_position: 3
 ---
 
-## 固定された 3 エントリのパレット
+## 3 つの固定マテリアルコンテナ
 
-zpd のドキュメント内のすべての色は、固定された 3 つのエントリのちょうどいずれかです——カスタムカラーモードはありません。これらは物理的な PCB パネルの仕上げによって決まるものであり、任意の UI カラーではありません。
+すべてのドキュメントは、物理的な下から上の順で次の 3 つの製造ルートを
+必ず持ちます。
+
+| コンテナ | Role | 実効表示色 | PCB 上の意味 |
+| --- | --- | --- | --- |
+| Copper | `copper` | gold (`#d4af37`) | 製品の HASL 仕上げによる露出銅 |
+| Solder mask | `solder-mask` | black (`#151515`) | 正のソルダーマスク被覆 |
+| Silkscreen | `silkscreen` | white (`#f2f0e9`) | 印刷されるシルクスクリーン |
+
+Layers UI は目に見える表面を先に示すため、これを逆順の
+**Silkscreen → Solder mask → Copper** で表示します。これらのルートは
+通常グループではなく、構造上の `PcbLayerContainer` です。role、id、
+ラベル、順序、マテリアル色は固定されています。
+
+<Note title="所属コンテナが正式な値">
+  ベクターオブジェクトを所有するコンテナが、投影時の null でないすべての
+  fill と stroke を決めます。そのため、コンテナ間の移動はマテリアル変更に
+  なります。旧来の `color`、`fill`、`stroke` インデックスは後方互換と、
+  パスの fill/stroke が有効かどうかを表すため JSON に残りますが、v5 では
+  コンテナ所属を上書きしません。
+</Note>
+
+ソルダーマスクのアートワークは正の被覆です。描画された部分が銅を覆い、
+マスクのない部分と even-odd パスの穴から下の gold/HASL の銅が見えます。
+ラスター画像レイヤーは設計用の参照だけです。デフォルトでは Copper に
+入りますが、製造データと 3D マテリアルマップからは除外されます。
+
+## 互換用カラーインデックス
 
 ```ts
 type ColorIndex = 0 | 1 | 2;
 ```
 
-| Index | Name | Hex | PCB 上の意味 |
-| --- | --- | --- | --- |
-| `0` | black | `#151515` | ソルダーマスク |
-| `1` | gold | `#d4af37` | 露出銅（ENIG メッキ） |
-| `2` | white | `#f2f0e9` | シルクスクリーン |
+| Index | Name | 所属 role |
+| --- | --- | --- |
+| `0` | black | `solder-mask` |
+| `1` | gold | `copper` |
+| `2` | white | `silkscreen` |
 
-```ts
-const PALETTE: readonly PaletteEntry[] = [
-  { index: 0, name: 'black', hex: '#151515', note: 'soldermask' },
-  { index: 1, name: 'gold', hex: '#d4af37', note: 'exposed copper (ENIG)' },
-  { index: 2, name: 'white', hex: '#f2f0e9', note: 'silkscreen' },
-];
-```
-
-<Note title="Hex は表示専用、契約は name のほう">
-  16 進数の値は、エディタ UI 向けの表示上の近似値です——画面上で正しく見えるように選ばれたものであり、正確なインク／メッキの色見本に一致させたものではありません。色の*名前*（`'black' | 'gold' | 'white'`）こそが、他のパッケージ（patterns、serialize、app）が依拠する実際の契約であり、エクスポートされた `PanelConfig` に書き込まれる `palette` フィールドもこれに含まれます。
-</Note>
-
-## ルックアップヘルパー
-
-```ts
-function paletteEntry(index: ColorIndex): PaletteEntry {
-  return PALETTE[index];
-}
-```
-
-色を持つすべてのレイヤーフィールド（`ShapeLayer.color`、`PatternLayer.color`、`TextLayer.color`、`PathLayer.fill` / `PathLayer.stroke`）は、16 進数の文字列や名前ではなく `ColorIndex` を保持します——インデックスを表示用の hex と物理レイヤーの注記へと解決するのは、`paletteEntry` ただ 1 か所です。
+16 進数の値は表示用の近似であり、製造上の色見本ではありません。
+エクスポートされる `palette` は旧来の読み手向けの派生的・参考用マッピング
+として残ります。正式な製造モデルは v5 の `layers` スタックです。

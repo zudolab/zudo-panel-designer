@@ -4,7 +4,7 @@
 // existing file is edited to add one (see editor/README.md).
 import type { ComponentType } from 'react';
 import type { Camera } from './camera';
-import type { DocState, Layer, Pt, Rect } from '@zpd/core';
+import type { DocState, Layer, PcbLayerRole, Pt, Rect } from '@zpd/core';
 
 export interface PanelDims {
   widthMm: number;
@@ -173,6 +173,10 @@ export interface ToolModule {
 
 export interface InspectorProps<L extends Layer = Layer> {
   layer: L;
+  // Render-time material from Editor's committed doc. Do not derive this
+  // from the event-oriented live ctx getter: its passive-effect ref can be
+  // one render behind immediately after a cross-container move.
+  materialRole: PcbLayerRole | null;
   // Patch the layer. commit:false during a drag/scrub (coalesced), commit:true
   // for a discrete edit that should be its own undo entry.
   onChange(patch: Partial<L>, options?: { commit?: boolean }): void;

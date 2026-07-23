@@ -4,14 +4,11 @@
 // other spec in this suite. State is asserted through the window.__zpdTest
 // bridge's getLayerTree() (raw tree structure), getSelectedIds(), and
 // getHistory() — never by pixel-probing the canvas.
-import { isGroupNode } from '@zpd/core';
 import { expect, test, type Page } from '@playwright/test';
 import { bridge, MOD, openEditor, toScreenPoint } from './helpers';
 
-// demo-doc.ts geometry: demo-rect (8,14) 24x16 -> center (20,22);
-// demo-ellipse (30,40) 22x22 -> center (41,51).
+// demo-doc.ts geometry: demo-rect (8,14) 24x16 -> center (20,22).
 const RECT_CENTER = { x: 20, y: 22 };
-const ELLIPSE_CENTER = { x: 41, y: 51 };
 // Clears the pattern cover square too (see editor-select-modifiers.spec.ts's
 // EMPTY_SPACE for the same margin reasoning).
 const EMPTY_SPACE = { x: -42, y: 60 };
@@ -23,14 +20,14 @@ async function click(page: Page, mm: { x: number; y: number }, modifiers: string
   for (const key of [...modifiers].reverse()) await page.keyboard.up(key);
 }
 
-// Selects demo-rect + demo-ellipse, ⌘G's them, and returns the minted group
-// id read straight back out of getLayerTree() — never a locally-fabricated
-// id (group-ops.ts's GroupNodesResult contract: the caller must select the
-// node actually inserted into the tree).
-async function groupRectAndEllipse(page: Page): Promise<string> {
-  await click(page, RECT_CENTER);
-  await click(page, ELLIPSE_CENTER, ['Shift']);
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+// Selects two ordinary Silkscreen leaves, ⌘G's them, and returns the minted
+// group id read straight back out of getLayerTree() — never a locally
+// fabricated id. Fixed material containers cannot be grouped together, so
+// this deliberately uses Rect + Text from the same container.
+async function groupRectAndText(page: Page): Promise<string> {
+  await page.getByRole('button', { name: 'Select layer Rect' }).click();
+  await page.getByRole('button', { name: 'Select layer Text' }).click({ modifiers: ['Shift'] });
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-text']);
 
   await page.keyboard.press(`${MOD}+g`);
   const tree = await bridge(page).getLayerTree();
@@ -45,14 +42,14 @@ test('@smoke ⌘G groups a multi-selection into a tree shape; panel shows the tr
   await openEditor(page);
   const historyBefore = await bridge(page).getHistory();
 
-  const groupId = await groupRectAndEllipse(page);
+  const groupId = await groupRectAndText(page);
 
   const tree = await bridge(page).getLayerTree();
   const group = tree.find((n) => n.id === groupId);
   if (!group || group.kind !== 'group') throw new Error('group node missing from getLayerTree()');
-  expect(group.children.map((c) => c.id)).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(group.children.map((c) => c.id)).toEqual(['demo-rect', 'demo-text']);
   // The two grouped leaves no longer sit at the top level.
-  expect(tree.some((n) => n.id === 'demo-rect' || n.id === 'demo-ellipse')).toBe(false);
+  expect(tree.some((n) => n.id === 'demo-rect' || n.id === 'demo-text')).toBe(false);
   expect(await bridge(page).getSelectedIds()).toEqual([groupId]);
 
   // ONE undo entry for the whole group op.
@@ -80,7 +77,7 @@ test('@smoke canvas click on a grouped member selects the group; Meta-click sele
   page,
 }) => {
   await openEditor(page);
-  const groupId = await groupRectAndEllipse(page);
+  const groupId = await groupRectAndText(page);
 
   // Deselect first so the next click proves a FRESH promotion, not a
   // carried-over selection.
@@ -104,7 +101,7 @@ test('@smoke ⌘⇧G restores the flat shape; undo/redo of group/ungroup are eac
   const originalTree = await bridge(page).getLayerTree();
   const historyBefore = await bridge(page).getHistory();
 
-  const groupId = await groupRectAndEllipse(page);
+  const groupId = await groupRectAndText(page);
   const historyAfterGroup = await bridge(page).getHistory();
   expect(historyAfterGroup.past.length).toBe(historyBefore.past.length + 1);
 
@@ -115,7 +112,7 @@ test('@smoke ⌘⇧G restores the flat shape; undo/redo of group/ungroup are eac
   const ungroupedTree = await bridge(page).getLayerTree();
   expect(ungroupedTree.some((n) => n.id === groupId)).toBe(false);
   expect(ungroupedTree.map((n) => n.id)).toEqual(originalTree.map((n) => n.id));
-  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(await bridge(page).getSelectedIds()).toEqual(['demo-rect', 'demo-text']);
 
   // Undo #1 reverts the UNGROUP as one step: the group reappears intact.
   await page.keyboard.press(`${MOD}+z`);
@@ -124,7 +121,7 @@ test('@smoke ⌘⇧G restores the flat shape; undo/redo of group/ungroup are eac
   if (!restoredGroup || restoredGroup.kind !== 'group') {
     throw new Error('undo did not restore the group as one step');
   }
-  expect(restoredGroup.children.map((c) => c.id)).toEqual(['demo-rect', 'demo-ellipse']);
+  expect(restoredGroup.children.map((c) => c.id)).toEqual(['demo-rect', 'demo-text']);
 
   // Undo #2 reverts the GROUP as one step: back to the pristine flat doc.
   await page.keyboard.press(`${MOD}+z`);
@@ -136,8 +133,9 @@ test('@smoke ⌘⇧G restores the flat shape; undo/redo of group/ungroup are eac
   await page.keyboard.press(`${MOD}+Shift+z`);
   const afterRedoGroup = await bridge(page).getLayerTree();
   const redoneGroup = afterRedoGroup.find((n) => n.id === groupId);
-  if (!redoneGroup || redoneGroup.kind !== 'group') throw new Error('redo did not restore the group');
-  expect(redoneGroup.children.map((c) => c.id)).toEqual(['demo-rect', 'demo-ellipse']);
+  if (!redoneGroup || redoneGroup.kind !== 'group')
+    throw new Error('redo did not restore the group');
+  expect(redoneGroup.children.map((c) => c.id)).toEqual(['demo-rect', 'demo-text']);
 
   await page.keyboard.press(`${MOD}+Shift+z`);
   const afterRedoUngroup = await bridge(page).getLayerTree();
@@ -181,10 +179,7 @@ test('@smoke a one-child group still shows combined chrome: the multi-rotate kno
   await page.mouse.move(end.x, end.y, { steps: 10 });
   await page.mouse.up();
 
-  const doc = await bridge(page).getDoc();
-  const rect = doc.layers
-    .flatMap((n) => (isGroupNode(n) ? n.children : [n]))
-    .find((l) => l.id === 'demo-rect') as { rotation?: number } | undefined;
+  const rect = (await bridge(page).getMaterialLayer('demo-rect')) as { rotation?: number } | null;
   expect(rect?.rotation).not.toBeUndefined();
   expect(rect?.rotation).not.toBe(0);
 });
@@ -212,7 +207,9 @@ function nestedGroupChain(depth: number) {
   return node;
 }
 
-test('@smoke ⌘G that would exceed the depth cap rejects with NO history entry', async ({ page }) => {
+test('@smoke ⌘G that would exceed the depth cap rejects with NO history entry', async ({
+  page,
+}) => {
   // Seed a doc with a 9-deep group chain (see nestedGroupChain) plus a
   // sibling leaf at the top level. Selecting [outermost-group, sibling-leaf]
   // and wrapping them one level deeper needs
@@ -242,7 +239,7 @@ test('@smoke ⌘G that would exceed the depth cap rejects with NO history entry'
               y: 40,
               width: 4,
               height: 4,
-              color: 1,
+              color: 0,
             },
           ],
           guides: [],

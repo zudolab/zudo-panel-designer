@@ -1,20 +1,46 @@
 ---
-title: Panel finishes & sizing
-description: The three fixed PCB finishes and the fixed panel dimensions zpd designs against.
+title: PCB material layers & sizing
+description: The three fixed PCB material layers and the fixed panel dimensions zpd designs against.
 sidebar_position: 2
 ---
 
-## Three fixed finishes
+## Three fixed material layers
 
-A zpd panel is a real PCB, and its visual "colors" are actual fabrication layers, not arbitrary UI colors. Every panel uses the same three finishes:
+A zpd panel is a real PCB, and its visual "colors" represent fabrication
+materials rather than arbitrary UI paint. Every panel uses the same three
+fixed layers:
 
-| Finish | PCB fab layer |
+| PCB material layer | Display/fabrication appearance |
 | --- | --- |
-| Black | Soldermask |
-| Gold | Exposed copper, ENIG-plated |
-| White | Silkscreen |
+| Copper | Gold, representing exposed copper with the product's HASL surface finish |
+| Solder mask | Black coverage above copper |
+| Silkscreen | White printing at the top |
 
-This palette is fixed — there is no fourth color and no custom-color mode. See [The 3-color palette](../document-model/palette.mdx) for the exact color indexes and hex values used in the editor.
+These material roles are fixed—there is no fourth material or custom-color
+mode. The three legacy color indexes remain a display and import-compatibility
+mapping; see [Material stack and display colors](../document-model/palette.mdx)
+for the exact values used in the editor.
+
+## Fixed material stack
+
+The physical board is built bottom to top: **Copper → Solder mask →
+Silkscreen**. The Layers UI intentionally reads in the opposite visual
+direction, top to bottom: **Silkscreen → Solder mask → Copper**.
+
+Those three entries are fixed containers, not ordinary groups. They cannot be
+renamed, deleted, grouped, selected, or reordered. Ordinary nested groups
+still work inside a container, and moving artwork between containers changes
+its effective material. Copper is the requested gold/HASL finish, Solder mask
+is black, and Silkscreen is white—even if imported legacy children carry a
+misleading color field.
+
+Solder-mask artwork is **positive coverage**: painted mask covers copper;
+absence of mask and holes in an even-odd path reveal the copper below.
+
+<Info>
+This material model is groundwork for future Gerber output. zpd does not yet
+export Gerber files.
+</Info>
 
 ## Panel width: HP
 

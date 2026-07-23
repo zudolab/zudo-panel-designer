@@ -73,7 +73,7 @@ Two more selection-driven operations live outside this file, as their own module
 
 - **Click** appends a grid-snapped corner anchor.
 - **Click-drag** on the anchor just placed pulls out mirrored `hout`/`hin` bezier handles, turning it into a smooth anchor.
-- **Click near the first anchor** (path needs ≥3 anchors) closes the path into a filled shape (`fill: gold`, no stroke).
+- **Click near the first anchor** (path needs ≥3 anchors) closes the path into a filled shape in the Copper container (fill enabled, no stroke).
 - **Enter** finishes the path open instead (a stroke, no fill) — needs ≥2 anchors.
 - **Esc** cancels the in-progress draft.
 
@@ -81,7 +81,7 @@ The whole multi-click gesture never touches `ctx.doc` until the path is finished
 
 ### Text (`T`)
 
-`tools/text.tsx` is intentionally the smallest tool: a pointer-down creates a `TextLayer` at the click point (default content `"TEXT"`, size 6mm, color white — the silkscreen layer), commits it, selects it, and immediately switches the active tool back to `select` so the freshly placed text is draggable/resizable/editable right away.
+`tools/text.tsx` is intentionally the smallest tool: a pointer-down creates a `TextLayer` at the click point (default content `"TEXT"`, size 6mm) in the Silkscreen container, commits it, selects it, and immediately switches the active tool back to `select` so the freshly placed text is draggable/resizable/editable right away.
 
 ### Pan (`H` / Space-drag)
 

@@ -13,13 +13,35 @@ Every geometric value in the document model — layer `x`/`y`, `width`/`height`,
 ```ts
 interface DocState {
   panelHp: number;
-  layers: Layer[]; // bottom -> top (index 0 renders first)
+  layers: PcbLayerStack; // Copper -> Solder mask -> Silkscreen
   guides: Guide[]; // ruler guides — view furniture, not layers
 }
 ```
 
 - `panelHp` — the panel's width, expressed in HP (see [Panel sizing](./panel-sizing.mdx)).
-- `layers` — a flat, ordered array. Index `0` is the **bottom** of the stack and renders first; later entries render on top of earlier ones.
+- `layers` — the fixed physical stack in bottom-to-top order. Each root owns ordinary layer/group children:
+
+  ```ts
+  type PcbLayerRole = 'copper' | 'solder-mask' | 'silkscreen';
+
+  interface PcbLayerContainer {
+    kind: 'pcb-layer';
+    id: `pcb-layer-${PcbLayerRole}`;
+    role: PcbLayerRole;
+    children: LayerNode[];
+    hidden?: boolean;
+  }
+
+  type PcbLayerStack = [
+    PcbLayerContainer<'copper'>,
+    PcbLayerContainer<'solder-mask'>,
+    PcbLayerContainer<'silkscreen'>,
+  ];
+  ```
+
+  These roots are not selectable or mutable ordinary groups. `LayerNode` is
+  either a leaf `Layer` or an ordinary nested `GroupNode`; only those ordinary
+  nodes can be renamed, deleted, grouped, and moved.
 - `guides` — the document's ruler guides, a **required** array (see [Guides](#guides)).
 
 ## The `Layer` union
@@ -36,10 +58,10 @@ interface LayerBase {
 
 | Type | Manufacturable? | Summary |
 | --- | --- | --- |
-| `shape` | Yes | Rectangle or ellipse, filled with one palette color. |
+| `shape` | Yes | Rectangle or ellipse, filled with its owning container's material. |
 | `pattern` | Yes | A named, parameterized pattern from `@zpd/patterns` (opaque to core). |
 | `path` | Yes | A bezier path — filled, stroked, or both — from the pen tool or an image trace. |
-| `text` | Yes | Rendered text in a fixed font/size, filled with one palette color. |
+| `text` | Yes | Rendered text in a fixed font/size and its owning material. |
 | `image` | No (design-time only) | A raster reference image; the panel is fabricated from vector layers traced from it, not the raster itself. |
 
 ### Shape layer
@@ -65,6 +87,9 @@ interface PatternLayer extends LayerBase {
   patternType: string;
   params: Record<string, number>;
   color: ColorIndex;
+  x: number;
+  y: number;
+  size: number;
 }
 ```
 
@@ -93,6 +118,10 @@ interface PathLayer extends LayerBase {
 
 `extraSubpaths` holds additional closed subpaths produced by image tracing — the holes/islands of one color region. They render together with the primary subpath using even-odd fill, so holes stay holes.
 
+`color`, `fill`, and `stroke` are compatibility fields. Container membership
+forces every non-null paint to the owning material; for paths, `null` versus
+non-null still records whether fill or stroke is enabled.
+
 ### Text layer
 
 ```ts
@@ -118,6 +147,7 @@ interface ImageLayer extends LayerBase {
   y: number;
   width: number;
   height: number;
+  rotation?: number;
 }
 ```
 
@@ -143,24 +173,30 @@ A `horizontal` guide is the line `y = position` (spanning the panel width); a `v
 `DocState` is the in-memory working document. `PanelConfig` is the versioned, exported shape a user downloads and hands off for fabrication:
 
 ```ts
-const PANEL_CONFIG_VERSION = 2;
+const PANEL_CONFIG_VERSION = 5;
 
 interface PanelConfig {
-  version: 2;
+  version: 5;
   app: 'zpd';
   panel: { hp: number; widthMm: number; heightMm: number };
   palette: string[];
-  layers: Layer[];
+  layers: PcbLayerStack;
   guides: Guide[];
 }
 ```
 
 `hp`, `layers`, and `guides` are authoritative and round-trip. `panel.widthMm`, `panel.heightMm`, and `palette` are **derived, advisory output** for a human/order reader — computed at export time from `hp` and the fixed palette — and are not re-trusted when the file is loaded back in.
 
-**v2** added the top-level `guides` array. A v1 config (or any config missing `guides`) still loads cleanly, with `guides` defaulting to `[]`: `parsePanelConfig` doesn't branch on `version` — every field defends itself — so old files need no dedicated migration path. See [PanelConfig Format → Versioning](../export/panel-config-format.mdx#versioning).
+**v5** added the fixed PCB material stack. v1–v4 free-root documents are
+deterministically partitioned by their legacy paint into Copper, Solder mask,
+and Silkscreen. Groups that span multiple materials are split while preserving
+ordinary structure where possible, ids are repaired deterministically, and
+all non-null paint is normalized to container membership. Malformed v5 roots
+are likewise canonicalized into the fixed order. See [PanelConfig Format →
+Versioning](../export/panel-config-format.mdx#versioning).
 
 <Warning title="parsePanelConfig never throws">
-  `parsePanelConfig` is fed whatever JSON a user hand-edited or an old/foreign tool produced, so every field is defended individually rather than letting one bad field fail the whole document: an invalid or missing `hp` falls back to the default panel size, an invalid `color` index clamps to `0` (black), and any layer with an unrecognized `type` is silently dropped. Garbage or non-object input yields the default document.
+  `parsePanelConfig` is fed whatever JSON a user hand-edited or an old/foreign tool produced, so every field is defended individually rather than letting one bad field fail the whole document. Invalid panel/layer fields fall back or are dropped, v1–v4 are migrated, malformed v5 stacks are canonicalized, and unsupported or future config versions are rejected by the exact-version boundary used for persisted autosave data.
 </Warning>
 
 See the full source in `packages/core/src/serialize.ts` for the field-by-field parsing rules.

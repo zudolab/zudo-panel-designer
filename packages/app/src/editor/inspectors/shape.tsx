@@ -1,14 +1,12 @@
 import type { ShapeLayer } from '@zpd/core';
 import { registerInspector } from '../registry/inspectors';
-import { ColorPicker, Field, NumberField } from '../components/inspector-ui';
+import { Field, MaterialField, NumberField } from '../components/inspector-ui';
 import type { InspectorProps } from '../types';
 
-function ShapeInspector({ layer, onChange }: InspectorProps<ShapeLayer>) {
+function ShapeInspector({ layer, materialRole, onChange }: InspectorProps<ShapeLayer>) {
   return (
     <div className="flex flex-col gap-2">
-      <Field label="Color">
-        <ColorPicker value={layer.color} onPick={(c) => c !== null && onChange({ color: c })} />
-      </Field>
+      <MaterialField role={materialRole} />
       <Field label="x (mm)">
         <NumberField value={layer.x} onCommit={(v) => onChange({ x: v })} />
       </Field>
@@ -22,7 +20,11 @@ function ShapeInspector({ layer, onChange }: InspectorProps<ShapeLayer>) {
         <NumberField value={layer.height} onCommit={(v) => onChange({ height: v })} />
       </Field>
       <Field label="rotation (°)">
-        <NumberField step={1} value={layer.rotation ?? 0} onCommit={(v) => onChange({ rotation: v })} />
+        <NumberField
+          step={1}
+          value={layer.rotation ?? 0}
+          onCommit={(v) => onChange({ rotation: v })}
+        />
       </Field>
     </div>
   );

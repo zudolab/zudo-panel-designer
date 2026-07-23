@@ -52,7 +52,7 @@ unproject(cam, screen) // { x: (screen.x - cam.offsetX) / cam.pxPerMm, y: (scree
 2. パネルの背後にワークスペースの背景を塗ります。
 3. パネル矩形にドロップシャドウと黒のべた塗りを、画面空間で描きます。
 4. **Show content outside the panel** がオンのときは、[パネル外のゴーストパス](#パネル外のゴーストパス)を実行します。パネルの端からはみ出したレイヤーの内容を、減光した状態で、下のクリップ済みパスより *先に*、パネル外の切り離された領域に描きます。
-5. **レイヤーパス全体に対する 1 回の `setTransform` 相当の処理**: `ctx.save()`、パネル矩形へのクリップ、`ctx.translate(offsetX, offsetY)`、`ctx.scale(pxPerMm, pxPerMm)`。ここから対応する `ctx.restore()` までは **キャンバスの 1 単位 = 1mm** となり、パターンジェネレータ自身の座標契約（[パターン → ジェネレータ契約](../patterns/generator-contract.mdx)を参照）と一致します。非表示でないすべてのレイヤーが、この単一の変換の中で配列順（後のレイヤーが上）に一度ずつ描かれます。
+5. **レイヤーパス全体に対する 1 回の `setTransform` 相当の処理**: `ctx.save()`、パネル矩形へのクリップ、`ctx.translate(offsetX, offsetY)`、`ctx.scale(pxPerMm, pxPerMm)`。ここから対応する `ctx.restore()` までは **キャンバスの 1 単位 = 1mm** となり、パターンジェネレータ自身の座標契約（[パターン → ジェネレータ契約](../patterns/generator-contract.mdx)を参照）と一致します。`projectPcbLayerStack()` が表示中の通常の子を物理的な Copper → Solder mask → Silkscreen 順へ平坦化し、祖先/コンテナの表示状態を畳み込み、null でない paint を所有マテリアルへ強制してから各投影 leaf を描きます。
 6. 復元し、パネルの輪郭を画面空間でストロークします。
 7. [ガイド](./guides.mdx)を描きます。ビューポート全体にわたる細い線で、レイヤーの内容の上、選択クロムの下に描かれます。
 8. **クリップされない** 選択クロムを描きます（選択中のレイヤーごとに 1 つの破線 bbox、2 つ以上選択されているときはそれらをまとめた合成 bbox、そして正確に 1 つだけ選択されているときにのみリサイズ/回転ハンドルとパスノードのアンカー/ハンドル）。
@@ -62,13 +62,13 @@ unproject(cam, screen) // { x: (screen.x - cam.offsetX) / cam.pxPerMm, y: (scree
 
 `drawLayer()` は mm 空間の変換の中で `layer.type` によって分岐します。
 
-- **shape** — レイヤーのパレット色で塗りつぶした `ctx.rect` / `ctx.ellipse`。楕円の半径は `Math.abs()` を取ります。`ctx.ellipse` は負の半径で `IndexSizeError` を投げるためです。一方、負の幅/高さは（`rect` の分岐がすでに扱っているように）有効な（反転した）矩形として成立します。
+- **shape** — 投影された所有マテリアルで塗りつぶした `ctx.rect` / `ctx.ellipse`。楕円の半径は `Math.abs()` を取ります。`ctx.ellipse` は負の半径で `IndexSizeError` を投げるためです。一方、負の幅/高さは（`rect` の分岐がすでに扱っているように）有効な（反転した）矩形として成立します。
 - **pattern** — `patternType` で `PATTERN_GENERATORS` から検索します。レイヤー自身の `x`／`y`／`size` の正方形には、まず独自のネストした変換がかかります——`ctx.save()`、`ctx.translate(x, y)`、`(0,0)`–`(size,size)` へのクリップ（呼び出し側が保持しているどんなクリップとも合成される、独立したクリップ操作として）、その後 `ctx.restore()` です。そしてジェネレータの `draw()` はその内側で、`widthMm`／`heightMm` を `size` にセットして呼ばれます（[パターン → ジェネレータ契約](../patterns/generator-contract.mdx)を参照）。そのため、パネル空間ではなく、オブジェクトローカルな正方形空間で描画します。パターンが実際に描かれるのは、その `size` が有限・正・`MAX_PATTERN_SIZE_MM` 以内のときだけです。不正または法外なサイズ（たとえば手編集したインポート）は、ジェネレータの描画ループを無制限のスパンで回してしまう代わりに、黙ってスキップされます。
-- **path** — `Path2D`（`@zpd/core` の `buildPath2D`）に組み立て、閉じているときは `evenodd` ルールで塗り（トレースされた穴/島が穴のまま保たれるよう。[画像のトレース](./image-tracing.mdx)を参照）、ストロークの色/幅が設定されていればストロークします。
+- **path** — `Path2D`（`@zpd/core` の `buildPath2D`）に組み立て、閉じているときは `evenodd` ルールで塗ります（穴を保ち、ソルダーマスクの開口から銅が見えるようにするためです）。ストロークが有効で幅が設定されていればストロークし、どちらの paint も投影された所有マテリアルを使います。
 - **text** — 毎回の描画で `ensureFont()` を fire-and-forget で呼びます。実際のフェイスがまだ読み込まれていなければ、ブラウザのフォールバックフェイスを直ちに描き、フォントが解決すると、それを変更したツールやインスペクタからの次の再描画要求で本物のグリフを反映します。複数行の内容は `\n` で分割し、行の高さは 1.25 倍です。
 - **image** — キャッシュされた `<img>` が読み込み済みならそれを描き、そうでなければ破線のプレースホルダー輪郭を描きます（画像は `Editor.tsx` のアセット読み込みエフェクトによってレイヤー ID をキーにデコード/キャッシュされます）。
 
-回転した `shape` / `text` レイヤーは、型ごとの描画が走る前に、`ctx.translate` / `ctx.rotate` / `ctx.translate` によって自身の bbox 中心を軸に回転されます。`path` / `pattern` / `image` レイヤーには回転フィールドがありません。
+回転した `shape` / `text` / `image` レイヤーは、型ごとの描画が走る前に、`ctx.translate` / `ctx.rotate` / `ctx.translate` によって自身の bbox 中心を軸に回転されます。`path` / `pattern` レイヤーには回転フィールドがありません。
 
 ## パネル外のゴーストパス
 

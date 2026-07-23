@@ -3,113 +3,89 @@ title: Defensive Parsing
 sidebar_position: 2
 ---
 
-`parsePanelConfig()` (`packages/core/src/serialize.ts`) turns arbitrary JSON
-back into a `DocState` the editor can load. It is written to **never throw**,
-because its input is whatever JSON a user hand-edited, an old export, or a
-foreign tool produced — not necessarily a well-formed `PanelConfig`.
+`parsePanelConfig()` (`packages/core/src/serialize.ts`) is a total,
+non-throwing repair boundary for arbitrary JSON. `tryParsePanelConfig()` is
+the stricter import/autosave gate: it first requires `app: "zpd"`, an integer
+version from 1 through 5, and a `layers` array, then delegates field recovery
+to `parsePanelConfig()`.
 
-:::note
-Every field is defended **individually** — clamped, defaulted, or dropped —
-rather than validating the document as a whole and rejecting it on the first
-bad value. One malformed field degrades gracefully instead of sinking the
-entire import.
-:::
-
-:::tip
-`parsePanelConfig()` never fails, which is exactly wrong for the in-app import UI — it needs to reject a file that isn't a zpd panel config at all, not silently coerce it into *some* valid-looking `DocState` (per the fallback rules below — the full default starter document for non-object garbage, or a mostly-empty one for an object missing the right fields). `tryParsePanelConfig()` is the strict sibling used there: it checks the envelope markers first (`app`, a supported `version`, a `layers` array) and only then delegates to `parsePanelConfig()` for the field-by-field defense below. See [Round-Trip → Importing](./round-trip.mdx#importing).
-:::
-
-## Top-level input
+## Top-level recovery
 
 | Input | Result |
 |---|---|
-| Not a plain object (`null`, a primitive, an array, a function, …) | Falls back to `createDefaultDoc()` entirely. |
-| A plain object missing `layers` | `layers` becomes `[]`. |
-| `layers` present but not an array | Treated as `[]`. |
-| A plain object missing `guides` | `guides` becomes `[]` (a v1 or guide-less config). |
-| `guides` present but not an array | Treated as `[]`. |
-| Unrecognized top-level keys | Silently ignored — they do not appear on the parsed `DocState`. |
+| Not a plain object | The complete `createDefaultDoc()` fixed-stack starter. |
+| Object with missing/non-array `layers` | A canonical three-container stack with empty children. |
+| Missing/non-array `guides` | `[]`. |
+| Invalid/missing/non-positive `hp` | `DEFAULT_PANEL_HP`; values above `MAX_PANEL_HP` are clamped. |
+| Hand-edited panel dimensions or palette | Ignored; they are derived advisory output. |
+| Unknown keys | Dropped. |
 
-## `panelHp`
+`parsePanelConfig()` treats an absent/non-integer version as legacy v4 for
+repair purposes. The strict sibling rejects a missing, future, or otherwise
+unsupported version instead.
 
-`parseHp()` reads `input.hp`, falling back to `input.panel.hp` when the
-top-level `hp` is absent. Missing, non-numeric, non-finite, zero, or negative
-values fall back to `DEFAULT_PANEL_HP` (the same default used for a brand-new
-document). Finite positive values through `MAX_PANEL_HP` are preserved,
-including unlisted in-range values handled by `panelWidthMm()`'s nominal-pitch
-fallback. Anything above `MAX_PANEL_HP` is clamped to that maximum, which is
-derived from the largest entry in `PANEL_SIZES` (currently 20 HP). Panel
-dimensions and default pattern cover geometry are derived only after this
-sanitization, so hostile magnitudes cannot create enormous draw spans.
+## Fixed-stack canonicalization
 
-A hand-edited `panel.widthMm` / `panel.heightMm` that disagrees with `hp` is
-ignored on import — those fields are advisory output only (see
-[PanelConfig Format](./panel-config-format.mdx#envelope-shape)); they are
-always recomputed from `hp` when the document is re-serialized.
+Every object input returns the same physical bottom-to-top roots:
 
-## Layers
+1. Copper
+2. Solder mask
+3. Silkscreen
 
-Each entry in the `layers` array is parsed independently by `parseLayer()`:
+For v1–v4 free-root documents, ordinary leaves and groups are partitioned by
+their legacy paint. A group spanning materials is split while preserving its
+ordinary shells, order, names, and visibility where possible. A path whose
+fill and stroke map to different materials is split into material-specific
+copies. Images, paintless paths, and empty groups default to Copper.
 
-- **Non-object entries** (`null`, numbers, strings, …) inside the array are
-  dropped.
-- **Unrecognized `type`** — a value outside `shape` / `pattern` / `path` /
-  `text` / `image` — is dropped rather than guessed at.
-- **`id`** — kept if it is a non-empty string; otherwise a fresh id is
-  minted via `mintId('layer')`.
-- **`name`** — kept if a string; otherwise defaults to `""`.
-- **`hidden`** — kept only if a boolean; otherwise the field is omitted
-  entirely from the parsed layer (not set to `false`).
-- **Extra/unknown per-layer fields** are dropped — they do not survive onto
-  the parsed layer object.
+For v5, wrapper ids, labels, and order are not trusted. Valid roles are merged
+into the canonical roots, missing roles are synthesized, duplicate roles are
+combined, and recoverable children of malformed wrappers are legacy-
+partitioned. Every non-null vector paint is normalized to its final container
+membership. Fixed wrappers can never be recovered as selectable ordinary
+groups.
 
-### Per-field fallbacks by layer type
+## Ordinary nodes and ids
 
-| Layer type | Field | Bad-input behavior |
-|---|---|---|
-| all | `color` / `fill` / `stroke` | Any value other than exactly `0`, `1`, or `2` clamps to `0` (black). |
-| all numeric fields (`x`, `y`, `width`, `height`, `sizeMm`, `strokeWidth`, …) | — | Non-number or non-finite values default to `0`. |
-| all | `rotation` | Kept only if a finite number; otherwise the field is omitted (no default rotation is written). |
-| `shape` | `shape` | Anything other than `"ellipse"` defaults to `"rect"`. |
-| `pattern` | `patternType` | Kept **verbatim** even if unrecognized — core has no dependency on the patterns registry that would validate it (see [Round-Trip](./round-trip.mdx)). Non-string values default to `"unknown"`. |
-| `pattern` | `params` | Not a plain object → `{}`. Otherwise, only numeric, finite values survive per key; non-numeric entries (including nested objects) are dropped. |
-| `path` | `points` | Not an array → `[]`. Each point that isn't a plain object is dropped from the array (rather than failing the whole path). |
-| `path` | `points[].hin` / `hout` | Kept only if both `x` and `y` are finite numbers; otherwise the handle is omitted. |
-| `path` | `extraSubpaths` | Only set if the input is an array (each subpath parsed the same way as `points`); presence/absence — even an empty array — is preserved exactly, rather than normalized away, so round-tripping stays exact. |
-| `path` | `closed` | `true` only if the input is exactly `true`; anything else becomes `false`. |
-| `path` | `fill` / `stroke` | `null` stays `null`; anything else runs through the `color` clamp above. |
-| `text` | `content` / `fontFamily` | Non-string values default to `""`. |
-| `image` | `src` | Non-string values default to `""`. |
+`parseLayerNode()` accepts ordinary `kind: "group"` nodes recursively up to
+`MAX_GROUP_DEPTH`, plus the five leaf types. Malformed/non-object nodes and
+unknown types are dropped independently. Unknown fields do not survive.
+
+Ids are allocated deterministically across the whole ordinary tree. Missing or
+empty ids receive a deterministic type/group fallback; collisions with an
+earlier id or a fixed root receive stable numeric suffixes. Repeating the same
+parse produces byte-identical output. No time/random `mintId()` call occurs at
+this persistence boundary.
+
+Common field behavior:
+
+| Field | Recovery |
+|---|---|
+| `name` | Non-string becomes `""`. |
+| `hidden` | Kept only when boolean; otherwise omitted. |
+| finite geometry/rotation | Non-finite values fall back or are omitted, depending on whether the field is required. |
+| `color`, non-null `fill`/`stroke` | Invalid indexes first fall back to `0`, then final container membership normalizes them. |
+| path `fill`/`stroke` | `null` remains disabled; non-null remains enabled in the owning material. |
+| path points/handles/subpaths | Invalid entries are dropped individually; handles require finite `x` and `y`. |
+| pattern `params` | Only finite numeric entries survive. |
+| pattern geometry | Invalid size falls back to safe panel-cover geometry and is capped by `MAX_PATTERN_SIZE_MM`. |
 
 ## Guides
 
-Each entry in the `guides` array is parsed independently by `parseGuide()`, mirroring the layer policy — a malformed entry is **dropped** rather than defaulted, so it can't silently plant a bogus 0mm line:
+A guide survives only with a valid horizontal/vertical orientation and finite
+position. Missing ids use a deterministic one-based
+`guide-${sourceIndex + 1}` fallback, then all explicit/generated collisions are
+repaired with stable suffixes.
+`hidden` is retained only when boolean. One malformed guide never drops the
+others.
 
-- **`orientation`** — kept only if it is exactly `'horizontal'` or `'vertical'`; any other value drops the whole guide (a guide with no valid axis can't define a line).
-- **`position`** — kept only if it is a finite number; a missing or non-finite `position` drops the guide (it is *not* defaulted to `0`).
-- **`id`** — kept if a non-empty string; otherwise a fresh id is minted via `mintId('guide')`, the same policy as layers.
-- **`hidden`** — kept only if a boolean; otherwise omitted entirely.
+## Why two entry points?
 
-A missing or non-array `guides` field (a v1 or hand-edited config) yields `[]`, and malformed entries inside the array are dropped individually — one bad guide never sinks the rest, exactly as for layers. This is the whole of the v1→v2 migration: no version branch, just per-field defense (see [PanelConfig Format → Versioning](./panel-config-format.mdx#versioning)).
+- `parsePanelConfig()` is useful for trusted migration and low-level recovery:
+  it never throws and always returns a safe `DocState`.
+- `tryParsePanelConfig()` prevents a random JSON file, foreign app envelope,
+  or future format from being silently accepted by the import UI and
+  autosave. See [Round-Trip → Importing](./round-trip.mdx#importing).
 
-## Why this matters
-
-Because parsing never throws, the editor (and anything that reuses
-`@zpd/core`) can treat "load this JSON" as a total function: worst case it
-degrades to a safe document, never an unhandled exception. The exact
-fallback depends on the shape of the input:
-
-- **Non-object garbage** (`null`, a primitive, an array, a function, …)
-  falls back to `createDefaultDoc()` in full — the same document a
-  brand-new session starts with, dot-grid layer and all.
-- **A plain object with missing or invalid fields** — including the empty
-  object `{}` — is repaired field by field: `panelHp` becomes
-  `DEFAULT_PANEL_HP` and `layers` becomes `[]`. This is **not** the
-  new-session document: it has the default panel size but an empty layer
-  list, with no dot-grid layer.
-
-This is exercised directly in `packages/core/src/serialize.test.ts`, which
-feeds `parsePanelConfig` inputs like `null`, `42`, `'not json'`, `true`,
-`[]`, and a bare function — asserting each never throws and equals
-`createDefaultDoc()` — and separately checks that `parsePanelConfig({})`
-yields a positive `panelHp` with an empty `layers` array.
+The repaired result is still PanelConfig JSON, not Gerber data. Gerber export
+remains future work.

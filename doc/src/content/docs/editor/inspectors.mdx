@@ -19,7 +19,7 @@ interface InspectorProps<L extends Layer = Layer> {
 
 `onChange` patches the layer and pushes the result through the document history:
 
-- `commit: true` (the **default**) — a discrete edit becomes its own undo entry. Used for things like a number field's blur/Enter, a color pick, or a checkbox toggle.
+- `commit: true` (the **default**) — a discrete edit becomes its own undo entry. Used for things like a number field's blur/Enter or a checkbox toggle.
 - `commit: false` — the change is *streamed* (`ctx.replace`) rather than committed, for continuous input like a slider drag. The caller is expected to have opened one undo entry with `ctx.beginGesture()` first; every subsequent `commit: false` call coalesces into that same entry until the gesture ends.
 
 When no inspector is registered for a layer's type, `InspectorHost` shows a plain "No inspector registered" message instead of crashing — a half-built extension wave still renders.
@@ -30,22 +30,22 @@ All five built-in inspectors are composed from `components/inspector-ui.tsx`:
 
 - `Field` / `Row` — a labeled row (a `<label>` vs. a plain `<div>` — `Row` is used when the control is a button, since a `<label>` would otherwise steal the button's accessible name).
 - `NumberField` — a numeric input that commits exactly one undo entry per discrete edit (blur, Enter, or a single arrow-key step). While focused it holds a local draft string so typing "250" doesn't collapse through 0/2/25 as commits, and a cleared/`NaN` draft reverts to the last valid value rather than committing 0.
-- `ColorPicker` — one swatch button per `PALETTE` entry (black/gold/white), plus an optional "none" (`∅`) swatch when `allowNone` is set (used by the path inspector's fill/stroke, which can each be null).
+- `MaterialField` — a read-only swatch and label for the selected object's owning fixed container. Material changes happen by moving the object in Layers, never through a per-object color picker.
 - `ActionButton` — a full-width button for an inspector's "open a dialog" affordance (e.g. Pattern's Browse…, Image's Convert to vector…).
 
 ## Built-in inspectors
 
 | Layer type | File | Fields |
 |---|---|---|
-| `shape` | `inspectors/shape.tsx` | Color, x, y, width, height, rotation (°) |
-| `text` | `inspectors/text.tsx` | Text content, font, color, size (mm), x, y, rotation (°) |
-| `path` | `inspectors/path.tsx` | Fill (or none), stroke (or none), stroke width (mm), closed |
+| `shape` | `inspectors/shape.tsx` | Material (read-only), x, y, width, height, rotation (°) |
+| `text` | `inspectors/text.tsx` | Text content, font, material (read-only), size (mm), x, y, rotation (°) |
+| `path` | `inspectors/path.tsx` | Material (read-only), fill enabled, stroke enabled, stroke width (mm), closed |
 | `image` | `inspectors/image.tsx` | x, y, width, height, "Convert to vector…" |
-| `pattern` | `inspectors/pattern.tsx` | "Browse…" (pattern picker), color, x, y, size (mm), "Cover panel", one slider per pattern param |
+| `pattern` | `inspectors/pattern.tsx` | "Browse…" (pattern picker), material (read-only), x, y, size (mm), "Cover panel", one slider per pattern param |
 
 ### Shape
 
-Rect/ellipse layers get position, size, and rotation fields plus a `ColorPicker`. All geometry fields are plain `NumberField`s — the same fields Select's resize handles write to, so dragging a handle and typing a width produce identical patches.
+Rect/ellipse layers show their owning material and expose position, size, and rotation fields. All geometry fields are plain `NumberField`s — the same fields Select's resize handles write to, so dragging a handle and typing a width produce identical patches.
 
 ### Text
 
@@ -53,7 +53,7 @@ Adds a `<textarea>` for the multi-line content and a font `<select>` populated f
 
 ### Path
 
-Fill and stroke each use `ColorPicker` with `allowNone`, since a path can be fill-only (closed shapes from the pen tool or a trace) or stroke-only (open paths). Node/handle positions are **not** editable here — they're edited directly on the canvas by dragging with the Select tool (Alt breaks the mirrored-handle constraint), which the inspector notes in a caption.
+The owning material is read-only. **Fill enabled** and **Stroke enabled** preserve whether a path is fill-only, stroke-only, both, or neither; when enabled, the paint is forced to the owning material. Node/handle positions are **not** editable here — they're edited directly on the canvas by dragging with the Select tool (Alt breaks the mirrored-handle constraint), which the inspector notes in a caption.
 
 ### Image
 
@@ -61,7 +61,7 @@ Only geometry (x/y/width/height) is editable — an image layer is a design-time
 
 ### Pattern
 
-Shows the current pattern's display name behind a **Browse…** button that opens the [pattern picker](./add-actions-and-dialogs.mdx#dialogs-built-in-dialogs-pattern-picker-dialog) (disabled if that dialog isn't registered), a `ColorPicker`, the square's geometry, and one `<input type="range">` per `PatternParamDef` the pattern declares (see [Patterns → Generator contract](../patterns/generator-contract.mdx)).
+Shows the current pattern's display name behind a **Browse…** button that opens the [pattern picker](./add-actions-and-dialogs.mdx#dialogs-built-in-dialogs-pattern-picker-dialog) (disabled if that dialog isn't registered), its read-only owning material, the square's geometry, and one `<input type="range">` per `PatternParamDef` the pattern declares (see [Patterns → Generator contract](../patterns/generator-contract.mdx)).
 
 A `pattern` layer is a movable **square** — `x`, `y`, and `size` (mm), all plain `NumberField`s like the shape/image inspectors — since [pattern squares became draggable on the canvas](./tools.mdx#built-in-tools-select-v-pattern-squares). `size` is clamped into `[0.1, MAX_PATTERN_SIZE_MM]` on commit (`@zpd/core`'s `MAX_PATTERN_SIZE_MM`, a DoS guard against a generator looping over an absurd span — see [Rendering & Camera](./rendering-and-camera.mdx#the-repaint-loop)), and a commit that would leave the value unchanged after clamping is skipped, so typing an out-of-range number and having it silently clamp back never writes a phantom undo entry. A **Cover panel** button beneath the geometry fields recenters and resizes the square back to `patternCoverGeometry()` — its original cover-the-panel-at-any-aspect-ratio placement — with the same no-op guard (a click that would leave `x`/`y`/`size` unchanged commits nothing).
 

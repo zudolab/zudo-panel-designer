@@ -14,7 +14,6 @@ import {
   beginGesture as coreBeginGesture,
   commit as coreCommit,
   createHistory,
-  flattenLayerNodes,
   redo as coreRedo,
   replace as coreReplace,
   reset as coreReset,
@@ -35,21 +34,21 @@ import { rotateHandleScreenPos } from '../renderer';
 import type { PanelDims, ToolContext, ToolPointerEvent } from '../types';
 import type { Camera } from '../camera';
 import { projectFlatLayers } from '../flat-projection';
+import { canonicalDoc, type DocFixture } from '../test-doc';
 import { resetTextGeometryForTests, setTextMeasureForTests } from '../text-geometry';
 
 const CAMERA: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 }; // identity: screen px == mm
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
-function makeHarness(initialDoc: DocState) {
-  let history: HistoryState<DocState> = createHistory(initialDoc);
+function makeHarness(initialFixture: DocFixture) {
+  let history: HistoryState<DocState> = createHistory(canonicalDoc(initialFixture));
   let selectedIds: readonly string[] = [];
   let beginGestureCalls = 0;
   let replaceCalls = 0;
 
   // Same derivation the Editor performs: selectedIds normalized against the
   // live doc; selectedId/selectedLayer non-null only for exactly one id.
-  const readSelectedIds = () =>
-    normalizeSelectedIds(selectedIds, flattenLayerNodes(history.present.layers));
+  const readSelectedIds = () => normalizeSelectedIds(selectedIds, history.present.layers);
   const readSelectedId = () => {
     const ids = readSelectedIds();
     return ids.length === 1 ? ids[0] : null;
@@ -72,7 +71,9 @@ function makeHarness(initialDoc: DocState) {
       return readSelectedId();
     },
     get selectedLayer() {
-      return flattenLayerNodes(history.present.layers).find((l) => l.id === readSelectedId()) ?? null;
+      return (
+        projectFlatLayers(history.present.layers).find((l) => l.id === readSelectedId()) ?? null
+      );
     },
     get flatLayers() {
       return projectFlatLayers(history.present.layers);
@@ -121,7 +122,8 @@ function makeHarness(initialDoc: DocState) {
     getHistory: () => history,
     getBeginGestureCalls: () => beginGestureCalls,
     getReplaceCalls: () => replaceCalls,
-    layerById: (id: string) => history.present.layers.find((l) => l.id === id) as Layer,
+    layerById: (id: string) =>
+      projectFlatLayers(history.present.layers).find((l) => l.id === id) as Layer,
   };
 }
 
@@ -617,7 +619,7 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
     select.onPointerMove?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
     select.onPointerUp?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
 
-    const layers = getHistory().present.layers;
+    const layers = projectFlatLayers(getHistory().present.layers);
     expect(layers).toHaveLength(2);
     // original stays put, at its original index
     expect(layers[0]).toMatchObject({ id: 's1', x: 10, y: 10 });
@@ -632,8 +634,12 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
     expect(getBeginGestureCalls()).toBe(1);
     expect(getHistory().past).toHaveLength(1);
     ctx.undo();
-    expect(getHistory().present.layers).toHaveLength(1);
-    expect(getHistory().present.layers[0]).toMatchObject({ id: 's1', x: 10, y: 10 });
+    expect(projectFlatLayers(getHistory().present.layers)).toHaveLength(1);
+    expect(projectFlatLayers(getHistory().present.layers)[0]).toMatchObject({
+      id: 's1',
+      x: 10,
+      y: 10,
+    });
   });
 
   it('Alt-drag on a multi-selection clones each member directly above its source', () => {
@@ -648,7 +654,7 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
     select.onPointerMove?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
     select.onPointerUp?.(ptr({ x: 25, y: 20 }), ctx);
 
-    const layers = getHistory().present.layers;
+    const layers = projectFlatLayers(getHistory().present.layers);
     expect(layers).toHaveLength(4);
     expect(layers.map((l) => l.id).filter((id) => id === 's1' || id === 's2')).toEqual([
       's1',
@@ -669,7 +675,7 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
     expect(getBeginGestureCalls()).toBe(1);
     expect(getHistory().past).toHaveLength(1);
     ctx.undo();
-    expect(getHistory().present.layers.map((l) => l.id)).toEqual(['s1', 's2']);
+    expect(projectFlatLayers(getHistory().present.layers).map((l) => l.id)).toEqual(['s1', 's2']);
   });
 
   it('Alt is sampled AT the threshold crossing — pressing it later does not duplicate', () => {
@@ -685,8 +691,12 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
     select.onPointerMove?.(ptr({ x: 30, y: 25 }, { altKey: true }), ctx); // too late
     select.onPointerUp?.(ptr({ x: 30, y: 25 }), ctx);
 
-    expect(getHistory().present.layers).toHaveLength(1);
-    expect(getHistory().present.layers[0]).toMatchObject({ id: 's1', x: 25, y: 20 });
+    expect(projectFlatLayers(getHistory().present.layers)).toHaveLength(1);
+    expect(projectFlatLayers(getHistory().present.layers)[0]).toMatchObject({
+      id: 's1',
+      x: 25,
+      y: 20,
+    });
   });
 
   it('an Alt-click that never crosses the threshold duplicates NOTHING and writes NO history', () => {
@@ -703,10 +713,14 @@ describe('select tool — Alt-drag duplicate (#49)', () => {
     select.onPointerMove?.(ptr({ x: 15.5, y: 14.5 }, { altKey: true }), ctx);
     select.onPointerUp?.(ptr({ x: 15.5, y: 14.5 }, { altKey: true }), ctx);
 
-    expect(getHistory().present.layers).toHaveLength(1);
+    expect(projectFlatLayers(getHistory().present.layers)).toHaveLength(1);
     expect(getBeginGestureCalls()).toBe(0);
     expect(getHistory().past).toHaveLength(0);
-    expect(getHistory().present.layers[0]).toMatchObject({ id: 's1', x: 10, y: 10 });
+    expect(projectFlatLayers(getHistory().present.layers)[0]).toMatchObject({
+      id: 's1',
+      x: 10,
+      y: 10,
+    });
   });
 });
 
@@ -952,7 +966,7 @@ describe('select tool — replace composition (#49 review)', () => {
     expect(getReplaceCalls()).toBe(0);
     select.onPointerMove?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
     expect(getReplaceCalls()).toBe(1);
-    expect(getHistory().present.layers).toHaveLength(2);
+    expect(projectFlatLayers(getHistory().present.layers)).toHaveLength(2);
     select.onPointerUp?.(ptr({ x: 25, y: 20 }, { altKey: true }), ctx);
   });
 

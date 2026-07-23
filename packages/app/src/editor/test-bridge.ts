@@ -16,6 +16,7 @@ import {
   type Layer,
   type LayerNode,
   type PanelConfig,
+  type PcbLayerRole,
 } from '@zpd/core';
 import type { Camera } from './camera';
 import { projectFlatLayers } from './flat-projection';
@@ -38,6 +39,11 @@ export interface ZpdTestLayerSummary {
   hidden: boolean;
 }
 
+// A projected leaf plus the fixed container that supplies its effective
+// material. This is deliberately observational: callers get a frozen copy,
+// and all writes still travel through ordinary editor input.
+export type ZpdTestMaterialLayer = Readonly<Layer & { material: PcbLayerRole }>;
+
 // The tree view (#150): the e2e contract for group structure. `hidden` here
 // is the node's OWN flag (raw tree state) — the folded ancestor-hidden view
 // is what getLayers() exposes via the flat projection.
@@ -45,12 +51,23 @@ export type ZpdTestLayerTreeNode =
   | ({ kind: 'layer' } & ZpdTestLayerSummary)
   | { kind: 'group'; id: string; name: string; hidden: boolean; children: ZpdTestLayerTreeNode[] };
 
+export interface ZpdTestPcbLayerContainer {
+  readonly kind: 'pcb-layer';
+  readonly id: string;
+  readonly role: PcbLayerRole;
+  readonly hidden: boolean;
+  readonly children: ZpdTestLayerTreeNode[];
+}
+
 export interface ZpdTestBridge {
   getDoc(): DocState;
   getHistory(): HistoryState<DocState>;
   getLayers(): ZpdTestLayerSummary[];
+  getMaterialLayers(): ZpdTestMaterialLayer[];
+  getMaterialLayer(id: string): ZpdTestMaterialLayer | null;
   // Read-only structural view of doc.layers — see ZpdTestLayerTreeNode.
   getLayerTree(): ZpdTestLayerTreeNode[];
+  getPcbLayerStack(): ZpdTestPcbLayerContainer[];
   getLayerCount(): number;
   getPanelHp(): number;
   // getSelectedId stays (existing specs read it): non-null only when exactly
@@ -100,8 +117,36 @@ function summarizeTree(nodes: LayerNode[]): ZpdTestLayerTreeNode[] {
           hidden: !!node.hidden,
           children: summarizeTree(node.children),
         }
-      : { kind: 'layer' as const, id: node.id, type: node.type, name: node.name, hidden: !!node.hidden },
+      : {
+          kind: 'layer' as const,
+          id: node.id,
+          type: node.type,
+          name: node.name,
+          hidden: !!node.hidden,
+        },
   );
+}
+
+function materialLayers(doc: DocState): ZpdTestMaterialLayer[] {
+  const roleById = new Map<string, PcbLayerRole>();
+  for (const container of doc.layers) {
+    const visit = (nodes: LayerNode[]): void => {
+      for (const node of nodes) {
+        if (isGroupNode(node)) visit(node.children);
+        else roleById.set(node.id, container.role);
+      }
+    };
+    visit(container.children);
+  }
+  return projectFlatLayers(doc.layers).map((layer) =>
+    deepFreeze(structuredClone({ ...layer, material: roleById.get(layer.id)! })),
+  );
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
 }
 
 export function installTestBridge(source: TestBridgeSource): void {
@@ -116,7 +161,19 @@ export function installTestBridge(source: TestBridgeSource): void {
         name: l.name,
         hidden: !!l.hidden,
       })),
-    getLayerTree: () => summarizeTree(source.getDoc().layers),
+    getMaterialLayers: () => materialLayers(source.getDoc()),
+    getMaterialLayer: (id) =>
+      materialLayers(source.getDoc()).find((layer) => layer.id === id) ?? null,
+    getLayerTree: () =>
+      source.getDoc().layers.flatMap((container) => summarizeTree(container.children)),
+    getPcbLayerStack: () =>
+      source.getDoc().layers.map((container) => ({
+        kind: 'pcb-layer' as const,
+        id: container.id,
+        role: container.role,
+        hidden: !!container.hidden,
+        children: summarizeTree(container.children),
+      })),
     // LEAF count (matches getLayers().length) — a group node is structure,
     // not a countable layer.
     getLayerCount: () => projectFlatLayers(source.getDoc().layers).length,

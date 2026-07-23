@@ -43,9 +43,7 @@ async function regionCount(
 }
 
 async function getPattern(page: Page) {
-  const layer = (await bridge(page).getDoc()).layers.find(
-    (l) => l.id === 'layer-default-dot-grid',
-  );
+  const layer = await bridge(page).getMaterialLayer('layer-default-dot-grid');
   if (layer?.type !== 'pattern') throw new Error('expected the default pattern layer');
   return layer;
 }

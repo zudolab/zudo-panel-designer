@@ -1,22 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clonePcbNode,
   cloneNodeWithFreshIds,
   collectLeafIds,
   deleteNodeById,
   depthOfNodeById,
   findNodeById,
   groupNodes,
+  groupPcbNodes,
+  deletePcbNodeById,
+  findPcbNodeById,
+  insertPcbNode,
   mapLeavesById,
+  mapPcbLeavesById,
   maxSubtreeDepth,
   maximalSelectedRoots,
   moveNodeToParent,
+  movePcbNode,
   renameById,
   replaceNodeWithNodes,
   toggleHiddenById,
+  togglePcbLayerHidden,
   topmostAncestorId,
   ungroupGroupById,
   updateLeafById,
 } from './group-ops';
+import { createPcbLayerStack } from './palette';
 import type { GroupNode, LayerNode, ShapeLayer } from './types';
 
 function shape(id: string, extra: Partial<ShapeLayer> = {}): ShapeLayer {
@@ -425,7 +434,7 @@ describe('renameById', () => {
 describe('updateLeafById', () => {
   it('reaches a leaf nested three groups deep (depth-3)', () => {
     const tree: LayerNode[] = [group('g1', [group('g2', [group('g3', [shape('a', { x: 1 })])])])];
-    const next = updateLeafById(tree, 'a', (leaf) => ({ ...leaf, x: 42 } as ShapeLayer));
+    const next = updateLeafById(tree, 'a', (leaf) => ({ ...leaf, x: 42 }) as ShapeLayer);
     const g1 = next[0] as GroupNode;
     const g2 = g1.children[0] as GroupNode;
     const g3 = g2.children[0] as GroupNode;
@@ -445,8 +454,16 @@ describe('updateLeafById', () => {
 
 describe('mapLeavesById', () => {
   it('applies the mapper to every listed leaf in one pass', () => {
-    const tree: LayerNode[] = [shape('a', { x: 1 }), group('g1', [shape('b', { x: 2 })]), shape('c', { x: 3 })];
-    const next = mapLeavesById(tree, ['a', 'b'], (leaf) => ({ ...leaf, x: (leaf as ShapeLayer).x + 100 } as ShapeLayer));
+    const tree: LayerNode[] = [
+      shape('a', { x: 1 }),
+      group('g1', [shape('b', { x: 2 })]),
+      shape('c', { x: 3 }),
+    ];
+    const next = mapLeavesById(
+      tree,
+      ['a', 'b'],
+      (leaf) => ({ ...leaf, x: (leaf as ShapeLayer).x + 100 }) as ShapeLayer,
+    );
     expect((next[0] as ShapeLayer).x).toBe(101);
     const g1 = next[1] as GroupNode;
     expect((g1.children[0] as ShapeLayer).x).toBe(102);
@@ -461,6 +478,22 @@ describe('mapLeavesById', () => {
   it('returns the same reference when none of the ids match', () => {
     const tree: LayerNode[] = [shape('a')];
     expect(mapLeavesById(tree, ['missing'], (leaf) => leaf)).toBe(tree);
+  });
+});
+
+describe('mapPcbLeavesById', () => {
+  it('updates matching leaves under their fixed material roots without touching containers', () => {
+    const stack = createPcbLayerStack({ copper: [shape('copper')], silkscreen: [shape('silk')] });
+    const next = mapPcbLeavesById(stack, ['silk'], (leaf) => ({ ...leaf, name: 'Silk' }));
+    expect(next[0]).toBe(stack[0]);
+    expect(next[1]).toBe(stack[1]);
+    expect(next[2]).not.toBe(stack[2]);
+    expect(next[2].children[0]).toMatchObject({ id: 'silk', name: 'Silk' });
+  });
+
+  it('returns the exact stack when every matching mapper result is unchanged', () => {
+    const stack = createPcbLayerStack({ copper: [shape('copper')] });
+    expect(mapPcbLeavesById(stack, ['copper'], (leaf) => leaf)).toBe(stack);
   });
 });
 
@@ -486,5 +519,78 @@ describe('replaceNodeWithNodes', () => {
   it('returns the same reference when the id is not found', () => {
     const tree: LayerNode[] = [shape('a')];
     expect(replaceNodeWithNodes(tree, 'missing', [shape('x')])).toBe(tree);
+  });
+});
+
+describe('fixed PCB-stack operations', () => {
+  it('inserts and locates ordinary nodes inside a material while normalizing compatibility paint', () => {
+    const stack = createPcbLayerStack();
+    const next = insertPcbNode(stack, 'copper', shape('a', { color: 0 }));
+    expect((findPcbNodeById(next, 'a')?.node as ShapeLayer).color).toBe(1);
+    expect(findPcbNodeById(next, 'a')?.role).toBe('copper');
+    expect(findPcbNodeById(next, 'pcb-layer-copper')).toBeNull();
+    expect(insertPcbNode(next, 'silkscreen', shape('a'))).toBe(next);
+    expect(insertPcbNode(next, 'silkscreen', shape('pcb-layer-copper'))).toBe(next);
+  });
+
+  it('moves a subtree across containers, recursively normalizes material, and preserves no-op identity', () => {
+    const subtree = group('g', [shape('a', { color: 1 }), shape('b', { color: 1 })]);
+    const stack = createPcbLayerStack({ copper: [subtree] });
+    expect(movePcbNode(stack, 'missing', 'silkscreen', null, 0)).toBe(stack);
+
+    const moved = movePcbNode(stack, 'g', 'silkscreen', null, 0);
+    expect(moved[0].children).toEqual([]);
+    const movedGroup = moved[2].children[0] as GroupNode;
+    expect(movedGroup).not.toBe(subtree);
+    expect(movedGroup.id).toBe(subtree.id);
+    expect((movedGroup.children[0] as ShapeLayer).color).toBe(2);
+    expect((movedGroup.children[1] as ShapeLayer).color).toBe(2);
+  });
+
+  it('returns no clone when the requested clone destination is rejected', () => {
+    const stack = createPcbLayerStack({ copper: [shape('a')] });
+    const result = clonePcbNode(stack, 'a', 'missing-parent');
+    expect(result.stack).toBe(stack);
+    expect(result.node).toBeNull();
+  });
+
+  it('groups only roots from one material and keeps fixed roots unavailable to ordinary operations', () => {
+    const stack = createPcbLayerStack({
+      copper: [shape('a')],
+      silkscreen: [shape('b')],
+    });
+    expect(groupPcbNodes(stack, ['a', 'b'], 'Mixed')).toEqual({ stack, group: null });
+    expect(deletePcbNodeById(stack, 'pcb-layer-copper')).toBe(stack);
+
+    const grouped = groupPcbNodes(stack, ['a'], 'Copper group');
+    expect(grouped.group?.name).toBe('Copper group');
+    expect(grouped.stack[0].children[0]).toBe(grouped.group);
+  });
+
+  it('toggles persisted fixed visibility without touching children and preserves unaffected containers', () => {
+    const stack = createPcbLayerStack({ copper: [shape('a')] });
+    const next = togglePcbLayerHidden(stack, 'copper');
+    expect(next[0].hidden).toBe(true);
+    expect(next[0].children).toBe(stack[0].children);
+    expect(next[1]).toBe(stack[1]);
+    expect(next[2]).toBe(stack[2]);
+  });
+
+  it('counts only ordinary groups when enforcing the depth cap', () => {
+    let deepest: LayerNode = shape('leaf');
+    // Nine groups occupy legal ordinary depths 0..8 at the container root.
+    for (let index = 8; index >= 0; index -= 1) {
+      deepest = group(`g-${index}`, [deepest]);
+    }
+    const empty = createPcbLayerStack();
+    const inserted = insertPcbNode(empty, 'copper', deepest);
+    expect(inserted).not.toBe(empty);
+    // Wrapping that root would shift its deepest group to depth 9.
+    expect(groupPcbNodes(inserted, ['g-0'], 'too deep')).toEqual({
+      stack: inserted,
+      group: null,
+    });
+    // The fixed material wrapper itself consumed no depth level.
+    expect(findPcbNodeById(inserted, 'leaf')?.pathIds).toHaveLength(9);
   });
 });

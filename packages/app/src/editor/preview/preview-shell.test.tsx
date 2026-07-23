@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { DocState } from '@zpd/core';
+import { createPcbLayerStack, type DocState } from '@zpd/core';
 import type { PreviewCameraControls, PreviewPhysicalDimensions } from './contracts';
 import {
   LazyPreviewViewer,
@@ -21,7 +21,7 @@ const dimensions: PreviewPhysicalDimensions = {
   heightMm: 128.5,
   thicknessMm: 2.5,
 };
-const doc: DocState = { panelHp: 12, guides: [], layers: [] };
+const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
 
 function deferredViewerModule() {
   let resolve!: (module: PreviewViewerModule) => void;
@@ -111,7 +111,7 @@ describe('PreviewShell', () => {
 
     expect(screen.getByText('Loading 3D preview…')).toBeTruthy();
     expect(screen.getByText(/60\.6 mm wide by 128\.5 mm high by 2\.5 mm thick/)).toBeTruthy();
-    expect(screen.getByText(/exposed gold is metallic/i)).toBeTruthy();
+    expect(screen.getByText(/exposed copper with the gold\/HASL finish is metallic/i)).toBeTruthy();
     const instructions = screen.getByText(/Drag to rotate/).textContent ?? '';
     expect(instructions).toContain('wheel, pinch, or plus and minus');
     expect(instructions).toContain('One-finger touch rotates by default');

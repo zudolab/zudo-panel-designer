@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import type { DocState } from '@zpd/core';
+import { createPcbLayerStack, type DocState } from '@zpd/core';
 import { useDocHistory } from './use-doc-history';
 
-const DOC_A: DocState = { panelHp: 12, guides: [], layers: [] };
-const DOC_B: DocState = { panelHp: 6, guides: [], layers: [] };
-const DOC_C: DocState = { panelHp: 3, guides: [], layers: [] };
+const DOC_A: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
+const DOC_B: DocState = { panelHp: 6, guides: [], layers: createPcbLayerStack() };
+const DOC_C: DocState = { panelHp: 3, guides: [], layers: createPcbLayerStack() };
 
 describe('useDocHistory — reset (#69)', () => {
   it('swaps present to the next doc without pushing an undo entry', () => {

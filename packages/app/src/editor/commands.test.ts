@@ -6,7 +6,16 @@
 // effect by rendering <App/>).
 import './registry';
 import { describe, expect, it, vi } from 'vitest';
-import { MAX_GROUP_DEPTH, type DocState, type GroupNode, type LayerNode, type Pt, type ShapeLayer, type TextLayer } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  MAX_GROUP_DEPTH,
+  type DocState,
+  type GroupNode,
+  type LayerNode,
+  type Pt,
+  type ShapeLayer,
+  type TextLayer,
+} from '@zpd/core';
 import { downloadPanelConfig } from './download';
 import {
   allCommands,
@@ -28,6 +37,7 @@ import type { ToolContext, ToolKeyEvent } from './types';
 // command is wired to call it with ctx.doc.
 vi.mock('./download', () => ({ downloadPanelConfig: vi.fn() }));
 import { projectFlatLayers } from './flat-projection';
+import { canonicalDoc, type DocFixture } from './test-doc';
 
 // The live flatLayers view, attached AFTER construction so it tracks the
 // ctx's CURRENT doc (stubCommandCtx Object.assigns doc overrides later).
@@ -39,8 +49,11 @@ function withLiveFlatLayers(ctx: ToolContext): ToolContext {
   return ctx;
 }
 
-function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
-  const doc: DocState = { panelHp: 12, guides: [], layers: [] };
+type ToolFixtureOverrides = Omit<Partial<ToolContext>, 'doc'> & { doc?: DocFixture };
+type CommandFixtureOverrides = Omit<Partial<CommandContext>, 'doc'> & { doc?: DocFixture };
+
+function stubCtx(overrides: ToolFixtureOverrides = {}): ToolContext {
+  const doc: DocFixture = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
   const ctx = {
     doc,
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
@@ -65,11 +78,12 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     openDialog: vi.fn(),
     closeDialog: vi.fn(),
     ...overrides,
+    ...(overrides.doc ? { doc: canonicalDoc(overrides.doc) } : {}),
   } as unknown as ToolContext;
   return withLiveFlatLayers(ctx);
 }
 
-function stubCommandCtx(overrides: Partial<CommandContext> = {}): CommandContext {
+function stubCommandCtx(overrides: CommandFixtureOverrides = {}): CommandContext {
   const base = stubCtx() as CommandContext;
   base.clipboard = {
     handleCopy: vi.fn(),
@@ -80,7 +94,7 @@ function stubCommandCtx(overrides: Partial<CommandContext> = {}): CommandContext
   base.zoomIn = vi.fn();
   base.zoomOut = vi.fn();
   base.zoomFit = vi.fn();
-  return Object.assign(base, overrides);
+  return Object.assign(base, overrides, overrides.doc ? { doc: canonicalDoc(overrides.doc) } : {});
 }
 
 function keyEvent(overrides: Partial<ToolKeyEvent> & { key: string }): ToolKeyEvent {
@@ -326,7 +340,7 @@ describe('dispatchCommand — parity table against the pre-refactor Editor.tsx b
   });
 
   it('Delete/Backspace delete the selection as one commit, WITHOUT preventDefault (matches pre-#76)', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] };
     const ctx = stubCommandCtx({ doc, selectedIds: ['a'] });
     const e = keyEvent({ key: 'Delete' });
     const match = dispatchCommand(e, ctx);
@@ -344,7 +358,7 @@ describe('dispatchCommand — parity table against the pre-refactor Editor.tsx b
   // descendant of a selected ancestor pre-collapses (maximal roots) — all in
   // the ONE commit the flat delete already used.
   it('Delete cascades a selected group (with a redundant descendant id) in ONE commit', () => {
-    const doc: DocState = {
+    const doc: DocFixture = {
       panelHp: 12,
       guides: [],
       layers: [
@@ -356,7 +370,7 @@ describe('dispatchCommand — parity table against the pre-refactor Editor.tsx b
     dispatchCommand(keyEvent({ key: 'Delete' }), ctx);
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
-    expect(committed.layers).toEqual([]); // G's subtree (a, b) cascaded, c deleted
+    expect(projectFlatLayers(committed.layers)).toEqual([]); // G's subtree (a, b) cascaded, c deleted
     expect(ctx.selectIds).toHaveBeenCalledWith([]);
   });
 
@@ -507,7 +521,7 @@ describe('edit-group (⌘G) — #155', () => {
 
   it('run(): ONE commit, and selection becomes the group id RETURNED by groupNodes (not a fabricated one)', () => {
     const cmd = allCommands().find((c) => c.id === 'edit-group')!;
-    const doc: DocState = {
+    const doc: DocFixture = {
       panelHp: 12,
       guides: [],
       layers: [rect('a', 0, 0), rect('b', 5, 5)],
@@ -517,8 +531,8 @@ describe('edit-group (⌘G) — #155', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
-    expect(committed.layers.length).toBe(1);
-    const newGroup = committed.layers[0] as GroupNode;
+    expect(committed.layers).toHaveLength(3);
+    const newGroup = committed.layers[0].children[0] as GroupNode;
     expect(newGroup.children.map((n) => n.id)).toEqual(['a', 'b']);
 
     expect(ctx.selectIds).toHaveBeenCalledTimes(1);
@@ -531,7 +545,7 @@ describe('edit-group (⌘G) — #155', () => {
 
   it('run(): a disabled selection (lone group) is a safe no-op', () => {
     const cmd = allCommands().find((c) => c.id === 'edit-group')!;
-    const doc: DocState = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
     const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
     cmd.run(ctx);
     expect(ctx.commit).not.toHaveBeenCalled();
@@ -539,7 +553,7 @@ describe('edit-group (⌘G) — #155', () => {
   });
 
   it('dispatchCommand: ⌘G groups the selection with preventDefault', () => {
-    const doc: DocState = {
+    const doc: DocFixture = {
       panelHp: 12,
       guides: [],
       layers: [rect('a', 0, 0), rect('b', 5, 5)],
@@ -553,7 +567,7 @@ describe('edit-group (⌘G) — #155', () => {
   });
 
   it('dispatchCommand: ⌘⇧G does NOT match edit-group (shift excludes it)', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] };
     const ctx = stubCommandCtx({ doc, selectedIds: ['a', 'b'] });
     const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true, shiftKey: true }), ctx);
     expect(match?.id).not.toBe('edit-group');
@@ -564,7 +578,7 @@ describe('edit-group (⌘G) — #155', () => {
   // match at all, dispatchCommand would never preventDefault, and the
   // browser's own Find would fire instead — a real, user-visible regression.
   it('dispatchCommand: ⌘G still preventDefaults (and matches) even when edit-group is DISABLED — no run()', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [] };
     const ctx = stubCommandCtx({ doc, selectedIds: [] }); // 0 selected — disabled
     const e = keyEvent({ key: 'g', metaKey: true });
     const match = dispatchCommand(e, ctx);
@@ -585,7 +599,7 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
 
   it('enablement: true iff at least one selected id is a group node', () => {
     const cmd = allCommands().find((c) => c.id === 'edit-ungroup')!;
-    const doc: DocState = {
+    const doc: DocFixture = {
       panelHp: 12,
       guides: [],
       layers: [group('G', [rect('a', 0, 0)]), rect('b', 5, 5)],
@@ -599,7 +613,7 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
   it('run(): looks the group up in the TREE (not the flat projection) — a real regression class per #155', () => {
     // A flat-projection lookup can never resolve a group id (groups aren't
     // leaves), which made the reference port's ungroup silently do nothing.
-    const doc: DocState = {
+    const doc: DocFixture = {
       panelHp: 12,
       guides: [],
       layers: [group('G', [rect('a', 0, 0), rect('b', 5, 5)])],
@@ -610,14 +624,18 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
-    expect(committed.layers.map((n) => n.id).sort()).toEqual(['a', 'b']);
+    expect(
+      projectFlatLayers(committed.layers)
+        .map((n) => n.id)
+        .sort(),
+    ).toEqual(['a', 'b']);
     expect(ctx.selectIds).toHaveBeenCalledTimes(1);
     const selectedAfter = (ctx.selectIds as ReturnType<typeof vi.fn>).mock.calls[0][0] as string[];
     expect([...selectedAfter].sort()).toEqual(['a', 'b']);
   });
 
   it('run(): multiple selected groups fold into ONE commit, selection = every released child', () => {
-    const doc: DocState = {
+    const doc: DocFixture = {
       panelHp: 12,
       guides: [],
       layers: [group('G1', [rect('a', 0, 0)]), group('G2', [rect('b', 5, 5)]), rect('c', 10, 10)],
@@ -628,7 +646,11 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
-    expect(committed.layers.map((n) => n.id).sort()).toEqual(['a', 'b', 'c']);
+    expect(
+      projectFlatLayers(committed.layers)
+        .map((n) => n.id)
+        .sort(),
+    ).toEqual(['a', 'b', 'c']);
     const selectedAfter = (ctx.selectIds as ReturnType<typeof vi.fn>).mock.calls[0][0] as string[];
     expect([...selectedAfter].sort()).toEqual(['a', 'b']); // "c" was never a group, untouched
   });
@@ -637,7 +659,7 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
     // G-outer directly contains G-inner; both are selected. The outer
     // dissolve releases G-inner (still a group at that point); the loop then
     // re-resolves G-inner in the UPDATED tree and dissolves it too.
-    const doc: DocState = {
+    const doc: DocFixture = {
       panelHp: 12,
       guides: [],
       layers: [group('G-outer', [group('G-inner', [rect('a', 0, 0)]), rect('b', 5, 5)])],
@@ -648,14 +670,18 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
 
     expect(ctx.commit).toHaveBeenCalledTimes(1);
     const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
-    expect(committed.layers.map((n) => n.id).sort()).toEqual(['a', 'b']);
+    expect(
+      projectFlatLayers(committed.layers)
+        .map((n) => n.id)
+        .sort(),
+    ).toEqual(['a', 'b']);
     const selectedAfter = (ctx.selectIds as ReturnType<typeof vi.fn>).mock.calls[0][0] as string[];
     // Neither intermediate group id lingers, and nothing is duplicated.
     expect([...selectedAfter].sort()).toEqual(['a', 'b']);
   });
 
   it('run(): no group ids in the selection is a safe no-op', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [rect('a', 0, 0)] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [rect('a', 0, 0)] };
     const ctx = stubCommandCtx({ doc, selectedIds: ['a'] });
     const cmd = allCommands().find((c) => c.id === 'edit-ungroup')!;
     cmd.run(ctx);
@@ -664,7 +690,7 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
   });
 
   it('dispatchCommand: ⌘⇧G ungroups with preventDefault; key case (uppercase "G" from Shift) still matches', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
     const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
     const e = keyEvent({ key: 'G', metaKey: true, shiftKey: true });
     const match = dispatchCommand(e, ctx);
@@ -674,7 +700,7 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
   });
 
   it('dispatchCommand: ⌘G (no shift) does NOT match edit-ungroup', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
     const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
     const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true }), ctx);
     expect(match?.id).not.toBe('edit-ungroup');
@@ -683,7 +709,7 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
   // codex review (#155): same alwaysClaimsChord reasoning as edit-group —
   // ⌘⇧G shadows the browser's Find Previous.
   it('dispatchCommand: ⌘⇧G still preventDefaults (and matches) even when edit-ungroup is DISABLED — no run()', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [rect('a', 0, 0)] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [rect('a', 0, 0)] };
     const ctx = stubCommandCtx({ doc, selectedIds: ['a'] }); // no group selected — disabled
     const e = keyEvent({ key: 'g', metaKey: true, shiftKey: true });
     const match = dispatchCommand(e, ctx);
@@ -696,17 +722,34 @@ describe('edit-ungroup (⌘⇧G) — #155', () => {
 
 describe('Group/Ungroup do not collide with any other dispatchable chord (#155)', () => {
   it('⌘G is not claimed by any tool-switch or other command besides edit-group', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] };
     const ctx = stubCommandCtx({ doc, selectedIds: ['a', 'b'] });
     const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true }), ctx);
     expect(match?.id).toBe('edit-group');
   });
 
   it('⌘⇧G is not claimed by any tool-switch or other command besides edit-ungroup', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
+    const doc: DocFixture = { panelHp: 12, guides: [], layers: [group('G', [rect('a', 0, 0)])] };
     const ctx = stubCommandCtx({ doc, selectedIds: ['G'] });
     const match = dispatchCommand(keyEvent({ key: 'g', metaKey: true, shiftKey: true }), ctx);
     expect(match?.id).toBe('edit-ungroup');
+  });
+});
+
+describe('fixed material command boundaries (#167)', () => {
+  it('disables mixed-material grouping without committing a phantom history entry', () => {
+    const copper = rect('copper', 0, 0);
+    const silk = { ...rect('silk', 20, 0), color: 2 as const };
+    const doc: DocFixture = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [copper], silkscreen: [silk] }),
+    };
+    const ctx = stubCommandCtx({ doc, selectedIds: [copper.id, silk.id] });
+    const groupCommand = allCommands().find((command) => command.id === 'edit-group')!;
+    expect(groupCommand.isEnabled(ctx)).toBe(false);
+    groupCommand.run(ctx);
+    expect(ctx.commit).not.toHaveBeenCalled();
   });
 });
 
@@ -753,12 +796,12 @@ describe('chordless commands (zoom / align / file / text) have run() wired to a 
   });
 
   it('file-download-json calls downloadPanelConfig with ctx.doc', () => {
-    const doc: DocState = { panelHp: 6, guides: [], layers: [] };
+    const doc: DocFixture = { panelHp: 6, guides: [], layers: [] };
     const ctx = stubCommandCtx({ doc });
     allCommands()
       .find((c) => c.id === 'file-download-json')!
       .run(ctx);
-    expect(downloadPanelConfig).toHaveBeenCalledWith(doc);
+    expect(downloadPanelConfig).toHaveBeenCalledWith(ctx.doc);
   });
 });
 

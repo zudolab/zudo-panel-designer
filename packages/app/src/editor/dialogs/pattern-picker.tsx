@@ -14,7 +14,14 @@
 // CSS visibility does not stop React's useLayoutEffect canvas draws below,
 // and the paged/sentinel approach is simpler to test.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { mintId, patternCoverGeometry, updateLeafById, type PatternLayer } from '@zpd/core';
+import {
+  insertPcbNode,
+  isGroupNode,
+  mintId,
+  patternCoverGeometry,
+  updatePcbNodeById,
+  type PatternLayer,
+} from '@zpd/core';
 import {
   defaultParams,
   PATTERN_GENERATORS,
@@ -152,8 +159,10 @@ function PatternPickerDialog({ props, close, ctx }: DialogProps<PatternPickerPro
     if (props.layerId) {
       const layerId = props.layerId;
       // Recursive write (#150): the pattern leaf may be nested inside a group.
-      const nextLayers = updateLeafById(ctx.doc.layers, layerId, (l) =>
-        l.type === 'pattern' ? { ...l, patternType: gen.name, params: defaultParams(gen.name) } : l,
+      const nextLayers = updatePcbNodeById(ctx.doc.layers, layerId, (l) =>
+        !isGroupNode(l) && l.type === 'pattern'
+          ? { ...l, patternType: gen.name, params: defaultParams(gen.name) }
+          : l,
       );
       ctx.commit({ ...ctx.doc, layers: nextLayers });
     } else {
@@ -168,7 +177,7 @@ function PatternPickerDialog({ props, close, ctx }: DialogProps<PatternPickerPro
         // covers the panel, matching the pre-square whole-panel fill.
         ...patternCoverGeometry(ctx.panel),
       };
-      ctx.commit({ ...ctx.doc, layers: [...ctx.doc.layers, layer] });
+      ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'copper', layer) });
       ctx.select(layer.id);
     }
     close();

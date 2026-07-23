@@ -6,7 +6,13 @@
 // pointer release closes the gesture so the next scrub opens a fresh entry.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { MAX_PATTERN_SIZE_MM, patternCoverGeometry, type PatternLayer, type Pt } from '@zpd/core';
+import {
+  createPcbLayerStack,
+  MAX_PATTERN_SIZE_MM,
+  patternCoverGeometry,
+  type PatternLayer,
+  type Pt,
+} from '@zpd/core';
 import type { ToolContext } from '../types';
 import './pattern';
 import { getInspector } from '../registry/inspectors';
@@ -15,7 +21,7 @@ afterEach(cleanup);
 
 function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
   return {
-    doc: { panelHp: 12, layers: [] },
+    doc: { panelHp: 12, guides: [], layers: createPcbLayerStack({ copper: [layer] }) },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     selectedIds: [],
@@ -54,10 +60,20 @@ const layer: PatternLayer = {
 const Inspector = getInspector('pattern')!;
 
 describe('pattern inspector — slider scrub == one undo entry', () => {
+  it('shows Copper as read-only material context without a color picker', () => {
+    const onChange = vi.fn();
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={stubCtx()} />);
+
+    expect(screen.getByText('Copper')).toBeTruthy();
+    expect(screen.queryByText('Color')).toBeNull();
+    expect(screen.queryByTitle(/gold/i)).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('opens the gesture once per scrub and streams every input as commit:false', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={ctx} />);
 
     const pitch = screen.getAllByRole('slider')[0];
 
@@ -80,7 +96,7 @@ describe('pattern inspector — slider scrub == one undo entry', () => {
   it('opens a fresh gesture for the next scrub after release', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={ctx} />);
 
     const pitch = screen.getAllByRole('slider')[0];
 
@@ -100,7 +116,7 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
   it('commits x, y, and size as discrete edits', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={ctx} />);
 
     const xField = screen.getByLabelText('x (mm)');
     fireEvent.change(xField, { target: { value: '12' } });
@@ -123,7 +139,7 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
   it('clamps size into the renderer draw-guard range (0 < size <= MAX_PATTERN_SIZE_MM)', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
-    render(<Inspector layer={layer} onChange={onChange} ctx={ctx} />);
+    render(<Inspector layer={layer} materialRole="copper" onChange={onChange} ctx={ctx} />);
 
     const sizeField = screen.getByLabelText('size (mm)');
     fireEvent.change(sizeField, { target: { value: '5000' } });
@@ -138,14 +154,19 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
   it('"Cover panel" applies patternCoverGeometry(panel) via the shared core helper, one commit', () => {
     const onChange = vi.fn();
     const ctx = stubCtx(); // panel 60 × 128.5
-    render(<Inspector layer={{ ...layer, x: 20, y: 30, size: 12 }} onChange={onChange} ctx={ctx} />);
+    render(
+      <Inspector
+        layer={{ ...layer, x: 20, y: 30, size: 12 }}
+        materialRole="copper"
+        onChange={onChange}
+        ctx={ctx}
+      />,
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Cover panel' }));
 
     expect(onChange).toHaveBeenCalledTimes(1);
-    expect(onChange).toHaveBeenCalledWith(
-      patternCoverGeometry({ widthMm: 60, heightMm: 128.5 }),
-    );
+    expect(onChange).toHaveBeenCalledWith(patternCoverGeometry({ widthMm: 60, heightMm: 128.5 }));
   });
 
   // No-op guards (#97 self-review): an unchanged commit would write a phantom
@@ -154,7 +175,14 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
     const cover = patternCoverGeometry({ widthMm: 60, heightMm: 128.5 });
-    render(<Inspector layer={{ ...layer, ...cover }} onChange={onChange} ctx={ctx} />);
+    render(
+      <Inspector
+        layer={{ ...layer, ...cover }}
+        materialRole="copper"
+        onChange={onChange}
+        ctx={ctx}
+      />,
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Cover panel' }));
     expect(onChange).not.toHaveBeenCalled();
@@ -164,7 +192,12 @@ describe('pattern inspector — x/y/size + Cover panel (#97)', () => {
     const onChange = vi.fn();
     const ctx = stubCtx();
     render(
-      <Inspector layer={{ ...layer, size: MAX_PATTERN_SIZE_MM }} onChange={onChange} ctx={ctx} />,
+      <Inspector
+        layer={{ ...layer, size: MAX_PATTERN_SIZE_MM }}
+        materialRole="copper"
+        onChange={onChange}
+        ctx={ctx}
+      />,
     );
 
     const sizeField = screen.getByLabelText('size (mm)');

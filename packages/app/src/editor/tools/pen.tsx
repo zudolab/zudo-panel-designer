@@ -11,6 +11,7 @@
 import { createRoot, type Root } from 'react-dom/client';
 import {
   buildPath2D,
+  insertPcbNode,
   mintId,
   snapToGrid,
   type PathLayer,
@@ -138,7 +139,7 @@ function finishClosed(ctx: ToolContext): void {
   const current = draft;
   if (!canClosePath(current)) return;
   const layer = buildClosedPathLayer(current);
-  ctx.commit({ ...ctx.doc, layers: [...ctx.doc.layers, layer] });
+  ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'copper', layer) });
   ctx.select(layer.id);
   ctx.setActiveTool('select');
   resetDraft(ctx);
@@ -148,7 +149,7 @@ function finishOpen(ctx: ToolContext): void {
   const current = draft;
   if (!canFinishOpen(current)) return;
   const layer = buildOpenPathLayer(current);
-  ctx.commit({ ...ctx.doc, layers: [...ctx.doc.layers, layer] });
+  ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'copper', layer) });
   ctx.select(layer.id);
   ctx.setActiveTool('select');
   resetDraft(ctx);
