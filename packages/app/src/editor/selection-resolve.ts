@@ -16,17 +16,16 @@
 //     resolveSelectionLeaves / expandSelectionToLeafIds rather than assuming
 //     `flatLayers.find(id)` resolves — a group id matches no flat leaf.
 import {
-  findNodeById,
+  findPcbNodeById,
   isGroupNode,
   maximalSelectedRoots,
   mergeBboxes,
   normalizeRect,
   rotatableLayer,
   rotatedRectAABB,
-  topmostAncestorId,
   walkLayerNodes,
   type Layer,
-  type LayerNode,
+  type PcbLayerStack,
   type Rect,
 } from '@zpd/core';
 import { layerBbox, layerRotation } from './renderer';
@@ -36,8 +35,9 @@ import { reconcileTextGeometry } from './text-geometry';
 // ancestor group id when it lives inside a group, else the leaf's own id
 // (also the fallback for an id not found in the tree — callers pass ids they
 // just hit-tested, so that branch is pure defense).
-export function topmostAncestorIdForLeaf(tree: LayerNode[], leafId: string): string {
-  return topmostAncestorId(tree, leafId) ?? leafId;
+export function topmostAncestorIdForLeaf(stack: PcbLayerStack, leafId: string): string {
+  const found = findPcbNodeById(stack, leafId);
+  return found?.pathIds[0] ?? leafId;
 }
 
 // Expands selection ids (leaf or group) to their descendant LEAF ids —
@@ -46,20 +46,20 @@ export function topmostAncestorIdForLeaf(tree: LayerNode[], leafId: string): str
 // Hidden state is NOT considered here (that's resolveSelectionLeaves's job) —
 // callers that need visibility filtering must not re-implement it off this.
 export function expandSelectionToLeafIds(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   selectedIds: readonly string[],
 ): string[] {
   if (selectedIds.length === 0) return [];
   const selected = new Set(selectedIds);
   const out: string[] = [];
-  const walk = (nodes: LayerNode[], underSelected: boolean): void => {
+  const walk = (nodes: PcbLayerStack[number]['children'], underSelected: boolean): void => {
     for (const node of nodes) {
       const covered = underSelected || selected.has(node.id);
       if (isGroupNode(node)) walk(node.children, covered);
       else if (covered) out.push(node.id);
     }
   };
-  walk(tree, false);
+  for (const container of stack) walk(container.children, false);
   return out;
 }
 
@@ -70,13 +70,13 @@ export function expandSelectionToLeafIds(
 // just the deterministic tiebreak for an externally violated invariant.
 // This is what a plain click on a multi-selection member collapses to.
 export function selectionOwnerId(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   selectedIds: readonly string[],
   leafId: string,
 ): string | null {
-  if (selectedIds.includes(leafId)) return leafId;
-  const found = findNodeById(tree, leafId);
+  const found = findPcbNodeById(stack, leafId);
   if (!found) return null;
+  if (selectedIds.includes(leafId)) return leafId;
   for (const ancestorId of found.pathIds) {
     if (selectedIds.includes(ancestorId)) return ancestorId;
   }
@@ -87,21 +87,23 @@ export function selectionOwnerId(
 // any selected ancestor of it — Meta is the group escape hatch, and keeping
 // the ancestor would create the forbidden [group, descendant] overlap.
 export function toggleLeafSelection(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   selectedIds: readonly string[],
   leafId: string,
 ): string[] {
   if (selectedIds.includes(leafId)) return selectedIds.filter((id) => id !== leafId);
-  const ancestors = new Set(findNodeById(tree, leafId)?.pathIds ?? []);
+  const found = findPcbNodeById(stack, leafId);
+  if (!found) return [...selectedIds];
+  const ancestors = new Set(found.pathIds);
   return [...selectedIds.filter((id) => !ancestors.has(id)), leafId];
 }
 
 // Every id in the subtree rooted at `id` INCLUDING the root itself, or just
 // {id} when it is a leaf / not found. Used to strip descendants when a group
 // id joins the selection.
-function subtreeIds(tree: LayerNode[], id: string): Set<string> {
+function subtreeIds(stack: PcbLayerStack, id: string): Set<string> {
   const out = new Set<string>([id]);
-  const found = findNodeById(tree, id);
+  const found = findPcbNodeById(stack, id);
   if (found) walkLayerNodes([found.node], (node) => out.add(node.id));
   return out;
 }
@@ -111,13 +113,14 @@ function subtreeIds(tree: LayerNode[], id: string): Set<string> {
 // of it (e.g. a leaf the user Meta-picked earlier) — the overlap invariant
 // again, resolved toward the ancestor because Shift acted at group level.
 export function togglePromotedSelection(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   selectedIds: readonly string[],
   leafId: string,
 ): string[] {
-  const promoted = topmostAncestorIdForLeaf(tree, leafId);
+  if (!findPcbNodeById(stack, leafId)) return [...selectedIds];
+  const promoted = topmostAncestorIdForLeaf(stack, leafId);
   if (selectedIds.includes(promoted)) return selectedIds.filter((id) => id !== promoted);
-  const covered = subtreeIds(tree, promoted);
+  const covered = subtreeIds(stack, promoted);
   return [...selectedIds.filter((id) => !covered.has(id)), promoted];
 }
 
@@ -127,16 +130,31 @@ export function togglePromotedSelection(
 // DFS order, overlap-free (a swept group absorbs a previously Meta-selected
 // descendant leaf; ancestor wins because the sweep acted at group level).
 export function promoteMarqueeSelection(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   hitLeafIds: readonly string[],
   baseIds: readonly string[],
 ): string[] {
   const union = [...baseIds];
   for (const leafId of hitLeafIds) {
-    const promoted = topmostAncestorIdForLeaf(tree, leafId);
+    const promoted = topmostAncestorIdForLeaf(stack, leafId);
     if (!union.includes(promoted)) union.push(promoted);
   }
-  return maximalSelectedRoots(tree, union);
+  return maximalPcbSelectedRoots(stack, union);
+}
+
+// Fixed material containers are transparent selection boundaries. Collapse
+// selected ordinary descendants independently inside each container, then
+// concatenate in persisted physical order. Container ids are never admitted.
+export function maximalPcbSelectedRoots(
+  stack: PcbLayerStack,
+  selectedIds: readonly string[],
+): string[] {
+  const ordinaryIds = selectedIds.filter((id) => findPcbNodeById(stack, id) !== null);
+  const out: string[] = [];
+  for (const container of stack) {
+    out.push(...maximalSelectedRoots(container.children, ordinaryIds));
+  }
+  return out;
 }
 
 export type SelectionOverlayMode = 'none' | 'single' | 'combined';
@@ -150,15 +168,15 @@ export type SelectionOverlayMode = 'none' | 'single' | 'combined';
 // bounds-less selection as combined would just push a null-bounds guard into
 // every consumer (matches the reference implementation, pgen §13.3).
 export function resolveSelectionOverlayMode(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   selectedIds: readonly string[],
 ): SelectionOverlayMode {
   if (selectedIds.length === 0) return 'none';
-  const leafCount = expandSelectionToLeafIds(tree, selectedIds).length;
+  const leafCount = expandSelectionToLeafIds(stack, selectedIds).length;
   if (leafCount === 0) return 'none';
   if (leafCount > 1) return 'combined';
   for (const id of selectedIds) {
-    const found = findNodeById(tree, id);
+    const found = findPcbNodeById(stack, id);
     if (found && isGroupNode(found.node)) return 'combined';
   }
   return 'single';
@@ -187,11 +205,11 @@ export interface SelectionLeavesResolution {
 // pass ctx.flatLayers / projectFlatLayers(tree), never an ad-hoc flatten
 // (text geometry treats array identity as incarnation state, see #150).
 export function resolveSelectionLeaves(
-  tree: LayerNode[],
+  stack: PcbLayerStack,
   selectedIds: readonly string[],
   flatLayers: readonly Layer[],
 ): SelectionLeavesResolution {
-  const leafIds = expandSelectionToLeafIds(tree, selectedIds);
+  const leafIds = expandSelectionToLeafIds(stack, selectedIds);
   if (leafIds.length === 0) {
     return { visibleLeafIds: [], editableLeafIds: [], rotatableLeafIds: [], combinedBounds: null };
   }

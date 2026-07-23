@@ -1,9 +1,8 @@
-// Right sidebar: panel-size select (real HP table), the FIXED palette legend
-// (the physical PCB finish decides these three colors), the layer list, and the
-// inspector host — all in a scrolling inner stack. The Help panel (#36) is a
+// Right sidebar: panel-size select, material-aware layer list, and inspector
+// host — all in a scrolling inner stack. The Help panel (#36) is a
 // non-scrolling footer BELOW that stack: always visible, never scrolled below
 // the fold, even when the panel stack above overflows.
-import { PALETTE, PANEL_HEIGHT_MM, PANEL_SIZES, type DocState, type Layer } from '@zpd/core';
+import { PANEL_HEIGHT_MM, PANEL_SIZES, type DocState, type Layer } from '@zpd/core';
 import type { ToolContext } from '../types';
 import { AlignPanel } from './align-panel';
 import { CollapsibleSection } from './collapsible-section';
@@ -82,21 +81,6 @@ export function Sidebar({
           </label>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Palette (fixed)">
-          <ul className="flex flex-col gap-1.5">
-            {PALETTE.map((entry) => (
-              <li key={entry.name} className="flex items-center gap-2 text-xs">
-                <span
-                  className="h-4 w-4 rounded border border-neutral-600"
-                  style={{ background: entry.hex }}
-                />
-                <span className="capitalize text-neutral-200">{entry.name}</span>
-                <span className="text-neutral-500">— {entry.note}</span>
-              </li>
-            ))}
-          </ul>
-        </CollapsibleSection>
-
         <CollapsibleSection title="Layers">
           <LayerList ctx={ctx} selectedIds={selectedIds} />
         </CollapsibleSection>
@@ -105,7 +89,9 @@ export function Sidebar({
           <AlignPanel ctx={ctx} selectedIds={selectedIds} />
         </CollapsibleSection>
 
-        <CollapsibleSection title={selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}>
+        <CollapsibleSection
+          title={selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}
+        >
           <div className="flex flex-col gap-2">
             {/* Combined (multi/group) selections only (#157) — renders
                 nothing for a single-leaf or all-non-rotatable selection, so
