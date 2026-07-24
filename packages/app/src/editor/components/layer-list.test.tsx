@@ -769,3 +769,118 @@ describe('LayerList tree rendering (#153)', () => {
     expect(selectIds).toHaveBeenLastCalledWith(['G']);
   });
 });
+
+// ─── Cross-container move buttons (#192) ────────────────────────────────────
+// Stack order is [copper, solder-mask, silkscreen]; the panel renders it
+// reversed (Silkscreen on top). "Bring forward" (▲, dir=1) crosses UP toward
+// silkscreen; "Send backward" (▼, dir=-1) crosses DOWN toward copper — the
+// button's own dir lines up 1:1 with pcbBoundaryCrossContainerSlot's dir.
+function fullStackCtx(config: {
+  copper?: LayerNode[];
+  'solder-mask'?: LayerNode[];
+  silkscreen?: LayerNode[];
+}) {
+  let doc = {
+    panelHp: 12,
+    layers: stack(config.copper ?? [], {
+      'solder-mask': config['solder-mask'],
+      silkscreen: config.silkscreen,
+    }),
+    guides: [],
+  };
+  const commit = vi.fn();
+  const selectIds = vi.fn();
+  const ctx = {
+    get doc() {
+      return doc;
+    },
+    get flatLayers() {
+      return projectFlatLayers(doc.layers);
+    },
+    selectedIds: [] as readonly string[],
+    commit,
+    select: vi.fn(),
+    selectIds,
+  } as unknown as ToolContext;
+  return {
+    ctx,
+    commit,
+    selectIds,
+    setDoc(next: typeof doc) {
+      doc = next;
+    },
+  };
+}
+
+function findRole(layers: PcbLayerStack, role: 'copper' | 'solder-mask' | 'silkscreen') {
+  return layers.find((container) => container.role === role)!;
+}
+
+describe('LayerList cross-container move buttons (#192)', () => {
+  it('send-backward on the bottom root-level item of Solder mask crosses into Copper’s top, with material flip', () => {
+    const { ctx, commit } = fullStackCtx({
+      copper: [{ ...shape('c1', 'C1'), color: 1 }],
+      'solder-mask': [{ ...shape('sm1', 'SM1'), color: 0 }],
+    });
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    const row = screen.getByRole('button', { name: 'Select layer SM1' }).closest('li')!;
+    fireEvent.click(within(row).getByTitle('Send backward'));
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    expect(findRole(nextDoc.layers, 'solder-mask').children).toEqual([]);
+    const copperIds = findRole(nextDoc.layers, 'copper').children.map((n) => n.id);
+    expect(copperIds).toEqual(['c1', 'sm1']);
+    const moved = findRole(nextDoc.layers, 'copper').children.find((n) => n.id === 'sm1') as ShapeLayer;
+    expect(moved.color).toBe(1);
+  });
+
+  it('bring-forward on the top root-level item of Copper crosses into Solder mask’s bottom, with material flip', () => {
+    const { ctx, commit } = fullStackCtx({
+      copper: [{ ...shape('c1', 'C1'), color: 1 }, { ...shape('c2', 'C2'), color: 1 }],
+      'solder-mask': [{ ...shape('sm1', 'SM1'), color: 0 }],
+    });
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    const row = screen.getByRole('button', { name: 'Select layer C2' }).closest('li')!;
+    fireEvent.click(within(row).getByTitle('Bring forward'));
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    expect(findRole(nextDoc.layers, 'copper').children.map((n) => n.id)).toEqual(['c1']);
+    const smIds = findRole(nextDoc.layers, 'solder-mask').children.map((n) => n.id);
+    expect(smIds).toEqual(['c2', 'sm1']);
+    const moved = findRole(nextDoc.layers, 'solder-mask').children.find((n) => n.id === 'c2') as ShapeLayer;
+    expect(moved.color).toBe(0);
+  });
+
+  it('a grouped item at its group boundary still no-ops, even when the group sits at the container boundary', () => {
+    const { ctx, commit } = fullStackCtx({
+      copper: [{ ...shape('c1', 'C1'), color: 1 }],
+      'solder-mask': [group('G', 'Group', [shape('l1', 'L1')])],
+    });
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    const row = screen.getByRole('button', { name: 'Select layer L1' }).closest('li')!;
+    fireEvent.click(within(row).getByTitle('Send backward'));
+
+    expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('bring-forward at the absolute top (Silkscreen) and send-backward at the absolute bottom (Copper) are silent no-ops', () => {
+    const { ctx, commit } = fullStackCtx({
+      copper: [{ ...shape('c1', 'C1'), color: 1 }],
+      silkscreen: [{ ...shape('sk1', 'SK1'), color: 2 }],
+    });
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    const skRow = screen.getByRole('button', { name: 'Select layer SK1' }).closest('li')!;
+    fireEvent.click(within(skRow).getByTitle('Bring forward'));
+
+    const cRow = screen.getByRole('button', { name: 'Select layer C1' }).closest('li')!;
+    fireEvent.click(within(cRow).getByTitle('Send backward'));
+
+    expect(commit).not.toHaveBeenCalled();
+  });
+});
