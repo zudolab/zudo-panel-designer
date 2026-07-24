@@ -19,6 +19,7 @@ import {
   isGroupNode,
   movePcbNode,
   PALETTE,
+  pcbBoundaryCrossContainerSlot,
   PCB_LAYER_DEFINITIONS,
   projectPcbLayerStack,
   togglePcbLayerHidden,
@@ -430,15 +431,32 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
   // group) is #154's DnD job; this button stays independent of that and
   // needs no change when DnD lands. Per the issue spec, group ROWS don't get
   // this affordance (no move buttons in the group header) — only leaves.
+  //
+  // #192: when the same-parent move clamps back to the node's own slot (a
+  // boundary hit), a ROOT-LEVEL leaf still has one more place to go — the
+  // physically adjacent material container. pcbBoundaryCrossContainerSlot
+  // (#189) already encodes that adjacency (and returns null for a grouped
+  // leaf, so group-boundary items keep the plain clamp/no-op below) — this
+  // button's `dir` (1 = bring forward, -1 = send backward) lines up 1:1 with
+  // its own dir parameter, no inversion needed.
   const move = (id: string, dir: 1 | -1) => {
     const slot = locateLocalSlot(stack, id);
     if (!slot) return;
     const next = movePcbNode(stack, id, slot.role, slot.parentId, slot.index + dir);
-    // moveNodeToParent returns the SAME reference when the move clamps back
-    // to the node's own slot (already at the top/bottom of its local stack)
-    // — don't write a phantom undo entry for that.
-    if (next === stack) return;
-    ctx.commit({ ...ctx.doc, layers: next });
+    if (next !== stack) {
+      ctx.commit({ ...ctx.doc, layers: next });
+      return;
+    }
+    // moveNodeToParent returned the SAME reference: the node is already at
+    // the top/bottom of its local stack. Try crossing into the adjacent
+    // container; if that also comes up empty (grouped item, or already at
+    // the absolute top/bottom of the whole panel), stay a silent no-op — no
+    // phantom undo entry.
+    const crossSlot = pcbBoundaryCrossContainerSlot(stack, id, dir);
+    if (!crossSlot) return;
+    const crossed = movePcbNode(stack, id, crossSlot.role, crossSlot.parentId, crossSlot.index);
+    if (crossed === stack) return;
+    ctx.commit({ ...ctx.doc, layers: crossed });
   };
 
   const remove = (id: string) => {
