@@ -768,6 +768,50 @@ describe('LayerList tree rendering (#153)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Select group Group' }), { metaKey: true });
     expect(selectIds).toHaveBeenLastCalledWith(['G']);
   });
+
+  it('duplicating a leaf inserts a fresh-id clone directly above the source and selects it', () => {
+    const { ctx, commit, selectIds } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    const dRow = screen.getByRole('button', { name: 'Select layer D' }).closest('li')!;
+    fireEvent.click(within(dRow).getByTitle('Duplicate'));
+
+    // One commit = one undo entry.
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    // Clone lands immediately after its source in the same container (array
+    // order is bottom-to-top, so "after 'd'" renders directly ABOVE D).
+    const ids = copperChildren(nextDoc.layers).map((n) => n.id);
+    expect(ids.slice(0, 3)).toEqual(['a', 'G', 'd']);
+    expect(ids).toHaveLength(4);
+    const clone = copperChildren(nextDoc.layers)[3];
+    expect(clone.id).not.toBe('d');
+    expect(clone).toMatchObject({ name: 'D', type: 'shape' });
+    expect(selectIds).toHaveBeenLastCalledWith([clone.id]);
+  });
+
+  it('duplicating a group deep-clones the subtree with fresh ids and selects the clone', () => {
+    const { ctx, commit, selectIds } = nodeTreeCtx(fixtureTree());
+    render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    // Scope to the group's own HEADER div — its <li> also nests the children
+    // <ul>, whose leaf rows carry their own Duplicate buttons.
+    const groupLi = screen.getByRole('button', { name: 'Select group Group' }).closest('li')!;
+    const header = groupLi.querySelector(':scope > div') as HTMLElement;
+    fireEvent.click(within(header).getByTitle('Duplicate'));
+
+    expect(commit).toHaveBeenCalledTimes(1);
+    const [nextDoc] = commit.mock.calls[0];
+    const children = copperChildren(nextDoc.layers);
+    // [a, G, G-clone, d] — clone inserted immediately after the source group.
+    expect(children.map((n) => n.id)).toEqual(['a', 'G', children[2].id, 'd']);
+    const cloneGroup = children[2] as GroupNode;
+    expect(cloneGroup.id).not.toBe('G');
+    expect(cloneGroup).toMatchObject({ kind: 'group', name: 'Group' });
+    expect(cloneGroup.children.map((c) => c.id)).not.toEqual(['b', 'c']);
+    expect(cloneGroup.children.map((c) => c.name)).toEqual(['B', 'C']);
+    expect(selectIds).toHaveBeenLastCalledWith([cloneGroup.id]);
+  });
 });
 
 // ─── Cross-container move buttons (#192) ────────────────────────────────────

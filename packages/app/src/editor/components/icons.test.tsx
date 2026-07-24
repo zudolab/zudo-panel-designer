@@ -29,6 +29,7 @@ const REQUIRED_ICON_NAMES = [
   'ChevronRight',
   'Folder',
   'Ungroup',
+  'Copy',
   'Path',
   'Star',
   'StarOutline',
