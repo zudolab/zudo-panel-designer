@@ -86,6 +86,10 @@ test('@smoke fixed PCB containers preserve material, persistence, and physical o
     material: 'copper',
     color: 1,
   });
+  // Add-rectangle selects the rect it just created (#191) -- deselect again
+  // before the text tool so its own default routing is exercised too,
+  // rather than anchoring above the still-selected copper rect.
+  await deselectAll(page);
   await page.keyboard.press('t');
   await page.mouse.click(300, 300);
   const textId = await bridge(page).getSelectedId();
@@ -158,10 +162,17 @@ test('@smoke selection-relative insertion places new objects directly above the 
   // topmost maximal root: Silkscreen sits above Copper in stack/paint order,
   // so the new ellipse lands in Silkscreen, not Copper, and Copper is
   // untouched by this insertion.
+  //
+  // MOD (not Shift): the layer list's Shift-click is a tree-aware RANGE
+  // select across all VISIBLE rows between the anchor and the click
+  // (selection.ts's nextListSelection) -- with Solder mask's rows sitting
+  // between Copper's and Silkscreen's in the (reversed, topmost-first) list,
+  // a Shift-range here would sweep in every row in between, not just these
+  // two. MOD+click is the additive per-row toggle (toggleLeafSelection).
   await page.getByRole('button', { name: 'Select layer Gold base' }).click();
   await page
     .getByRole('button', { name: 'Select layer White over black' })
-    .click({ modifiers: ['Shift'] });
+    .click({ modifiers: [MOD] });
   expect(await bridge(page).getSelectedIds()).toEqual(
     expect.arrayContaining(['gold-base', 'white-over-black']),
   );
