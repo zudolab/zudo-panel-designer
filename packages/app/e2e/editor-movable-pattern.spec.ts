@@ -17,8 +17,11 @@ import {
 
 // Matches renderer.ts's WORKSPACE_BG ('#26282c').
 const WORKSPACE_BG: readonly [number, number, number] = [38, 40, 44];
-// The panel's base fill is the black soldermask (renderer.ts paints
-// PALETTE[0] under the layer pass).
+// Under negative solder-mask semantics (#179) the on-panel board reads as the
+// full soldermask sheet (PALETTE[0]) composited ABOVE copper — the copper
+// dot-grid cover pattern is hidden beneath it except at mask openings. So the
+// on-panel surface is solid PALETTE[0] here; the pattern's move is observed
+// off-panel via the ghost pass (which renders positively outside the panel).
 const PANEL_BASE = hexToRgb(PALETTE[0].hex);
 const TOLERANCE = 8;
 
@@ -75,10 +78,12 @@ test('@smoke movable pattern: click-selects, drag off-panel keeps intersection +
   const gutterA = { x: 100, y: 55 };
   const gutterB = { x: 110, y: 70 };
 
-  // Baseline: the strip is covered by the square (dots over the base fill);
-  // the gutter is beyond the square — pure workspace background even though
-  // the ghost pass is ON by default (#97: the square bounds the ghost).
-  expect(await regionCount(page, stripA, stripB, PANEL_BASE)).toBeGreaterThan(0);
+  // Baseline: on-panel is solid soldermask black — the copper pattern under
+  // the strip is hidden by the mask sheet (no opening there), so the strip
+  // reads PALETTE[0] whether or not the square covers it. The gutter is beyond
+  // the square — pure workspace background (the ghost pass is ON by default but
+  // #97: the square bounds the ghost).
+  expect(await regionCount(page, stripA, stripB, PANEL_BASE)).toBe(0);
   expect(await regionCount(page, gutterA, gutterB, WORKSPACE_BG)).toBe(0);
 
   // 2. Drag the SELECTED pattern +40mm right — a move, not a marquee (#97's
@@ -96,23 +101,26 @@ test('@smoke movable pattern: click-selects, drag off-panel keeps intersection +
   expect(moved.size).toBe(before.size); // move never resizes
   expect(await bridge(page).getSelectedIds()).toEqual(['layer-default-dot-grid']);
 
-  // 3. Only square ∩ panel renders on-panel: the uncovered strip is now the
-  // bare base fill (no dots) …
+  // 3. On-panel stays solid soldermask black — copper (covered or uncovered by
+  // the moved square) is hidden under the mask sheet, so the strip is
+  // unchanged …
   expect(await regionCount(page, stripA, stripB, PANEL_BASE)).toBe(0);
-  // … and the square's off-panel part ghosts in the gutter (dimmed dots).
+  // … while the square's off-panel part now ghosts into the gutter (dimmed
+  // dots): the real visual signal that the pattern moved.
   expect(await regionCount(page, gutterA, gutterB, WORKSPACE_BG)).toBeGreaterThan(0);
 
   // 4. Arrow-key nudge moves the selected pattern too (#97 nudge inclusion).
   await page.keyboard.press('ArrowRight');
   expect((await getPattern(page)).x).toBeCloseTo(moved.x + 0.1, 3);
 
-  // 5. Undo the nudge, then the drag — position and paint fully restore.
+  // 5. Undo the nudge, then the drag — position and paint fully restore: the
+  // gutter ghost clears (square back on-panel), on-panel stays masked black.
   await page.keyboard.press(`${MOD}+z`);
   expect((await getPattern(page)).x).toBeCloseTo(moved.x, 3);
   await page.keyboard.press(`${MOD}+z`);
   const restored = await getPattern(page);
   expect(restored.x).toBeCloseTo(before.x, 5);
   expect(restored.y).toBeCloseTo(before.y, 5);
-  expect(await regionCount(page, stripA, stripB, PANEL_BASE)).toBeGreaterThan(0);
+  expect(await regionCount(page, stripA, stripB, PANEL_BASE)).toBe(0);
   expect(await regionCount(page, gutterA, gutterB, WORKSPACE_BG)).toBe(0);
 });

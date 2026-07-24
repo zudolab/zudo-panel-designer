@@ -442,6 +442,7 @@ test('@smoke save -> reload round-trips every leaf rotation, including a rotated
     'demo-ellipse',
     'demo-path',
     'demo-image',
+    'demo-mask-opening',
     'demo-rect',
     'demo-text',
   ]);
