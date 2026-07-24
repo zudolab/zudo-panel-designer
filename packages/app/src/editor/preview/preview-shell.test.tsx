@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createPcbLayerStack, type DocState } from '@zpd/core';
@@ -258,16 +259,16 @@ describe('PreviewShell', () => {
 
 describe('eager import boundary', () => {
   it('reaches the eventual renderer only through the dynamic shim and has no Three.js import', () => {
-    const directory = resolve(process.cwd(), 'packages/app/src/editor/preview');
+    const directory = dirname(fileURLToPath(import.meta.url));
     const shellSource = readFileSync(`${directory}/preview-shell.tsx`, 'utf8');
     const loaderSource = readFileSync(`${directory}/load-viewer.ts`, 'utf8');
     const dialogSource = readFileSync(
-      resolve(process.cwd(), 'packages/app/src/editor/dialogs/preview-3d.tsx'),
+      join(directory, '..', 'dialogs', 'preview-3d.tsx'),
       'utf8',
     );
     const debugSource = readFileSync(`${directory}/debug-state.ts`, 'utf8');
     const testBridgeSource = readFileSync(
-      resolve(process.cwd(), 'packages/app/src/editor/test-bridge.ts'),
+      join(directory, '..', 'test-bridge.ts'),
       'utf8',
     );
     const eagerSources = `${shellSource}\n${loaderSource}\n${dialogSource}\n${debugSource}\n${testBridgeSource}`;
