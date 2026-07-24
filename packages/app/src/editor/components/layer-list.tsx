@@ -14,6 +14,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  clonePcbNode,
   deletePcbNodeById,
   findPcbNodeById,
   isGroupNode,
@@ -39,6 +40,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  Copy,
   Eye,
   EyeOff,
   Folder,
@@ -535,6 +537,16 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
     if (next !== stack) ctx.commit({ ...ctx.doc, layers: next });
   };
 
+  const duplicate = (id: string) => {
+    // clonePcbNode deep-clones the node (fresh ids root-to-leaf for a group)
+    // and inserts the copy directly above its source in the same container —
+    // one undo entry. Select the clone so the copy becomes the active layer.
+    const result = clonePcbNode(stack, id);
+    if (result.stack === stack || !result.node) return;
+    ctx.commit({ ...ctx.doc, layers: result.stack });
+    ctx.selectIds([result.node.id]);
+  };
+
   const toggleMaterialVisibility = (role: PcbLayerRole) => {
     const next = togglePcbLayerHidden(stack, role);
     if (next !== stack) ctx.commit({ ...ctx.doc, layers: next });
@@ -731,6 +743,17 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
             {layer.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
           </button>
           <button
+            title="Duplicate"
+            aria-label={`Duplicate ${layer.name || layer.type}`}
+            className="flex min-h-6 min-w-6 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+            onClick={(e) => {
+              e.stopPropagation();
+              duplicate(layer.id);
+            }}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </button>
+          <button
             title="Delete"
             aria-label={`Delete ${layer.name || layer.type}`}
             className="flex min-h-6 min-w-6 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
@@ -879,6 +902,17 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
               }}
             >
               <UngroupIcon className="h-3.5 w-3.5" />
+            </button>
+            <button
+              title="Duplicate"
+              aria-label={`Duplicate group ${name}`}
+              className="flex min-h-6 min-w-6 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+              onClick={(e) => {
+                e.stopPropagation();
+                duplicate(group.id);
+              }}
+            >
+              <Copy className="h-3.5 w-3.5" />
             </button>
             <button
               title="Delete group and children"

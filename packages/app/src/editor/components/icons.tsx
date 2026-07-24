@@ -331,6 +331,18 @@ export function ClosePath({ className }: IconProps) {
   );
 }
 
+// Two overlapping rounded rectangles ("duplicate"/"copy"). Not present in
+// pgen's UI set (pgen used a `⧉` glyph); authored to match this module's
+// stroked contract for the layers panel's Duplicate action.
+export function Copy({ className }: IconProps) {
+  return (
+    <Svg className={className} strokeWidth={1.6}>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15 H4 A1 1 0 0 1 3 14 V4 A1 1 0 0 1 4 3 H14 A1 1 0 0 1 15 4 V5" />
+    </Svg>
+  );
+}
+
 // composer-palette-icons.tsx:253 (iconLayer, stacked layers).
 export function Layer({ className }: IconProps) {
   return (
