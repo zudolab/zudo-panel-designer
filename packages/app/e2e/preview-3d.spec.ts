@@ -81,7 +81,7 @@ function normalizedPoint(xMm: number, yMm: number, widthMm = FIXTURE_WIDTH_MM) {
 
 async function expectSurfacePixel(
   page: Page,
-  map: 'baseColor' | 'metalness' | 'roughness',
+  map: 'baseColor' | 'metalness' | 'roughness' | 'height',
   xMm: number,
   yMm: number,
   rgba: readonly [number, number, number, number],
@@ -197,6 +197,9 @@ test('@smoke 3D preview is lazy, physically faithful, interactive, and leak-free
       environmentIntensity: 1.35,
     },
   });
+  // The emboss bump strength is visually calibrated, so assert presence and
+  // sanity rather than an exact value.
+  expect(initial.materialParameters.bumpScale).toBeGreaterThan(0);
   expect(initial.camera.position.x).toBeGreaterThan(0);
   expect(initial.camera.position.y).toBeGreaterThan(0);
   expect(initial.camera.position.z).toBeGreaterThan(0);
@@ -215,6 +218,15 @@ test('@smoke 3D preview is lazy, physically faithful, interactive, and leak-free
   await expectSurfacePixel(page, 'baseColor', 14, 14, [242, 240, 233, 255]); // silk over mask
   await expectSurfacePixel(page, 'metalness', 14, 14, [0, 0, 0, 255]);
   await expectSurfacePixel(page, 'roughness', 14, 14, [214, 214, 214, 255]);
+
+  // Combined height map (bump source): substrate 0 < mask-only 84 < open
+  // copper 168 < mask-over-copper 252 (additive 'lighter' composite), and
+  // silkscreen ink never adds height.
+  await expectSurfacePixel(page, 'height', 4, 4, [252, 252, 252, 255]); // mask draped over copper
+  await expectSurfacePixel(page, 'height', 10, 10, [168, 168, 168, 255]); // open copper
+  await expectSurfacePixel(page, 'height', 24, 94, [84, 84, 84, 255]); // mask over bare substrate
+  await expectSurfacePixel(page, 'height', 33, 32, [0, 0, 0, 255]); // opening over nothing
+  await expectSurfacePixel(page, 'height', 14, 14, [168, 168, 168, 255]); // silk adds no height
 
   // The bounded pattern is sampled through the wide plain opening: painted
   // checker cells read as copper, while unpainted cells and the strip past

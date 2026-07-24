@@ -17,7 +17,7 @@ function snapshot(revision: number): PreviewSurfaceSnapshot {
     heightMm: 128.5,
     thicknessMm: 2.5,
     rasterSize: { widthPx: 120, heightPx: 257, effectivePixelsPerMm: 2 },
-    canvases: { baseColor: source, metalness: source, roughness: source },
+    canvases: { baseColor: source, metalness: source, roughness: source, height: source },
   });
 }
 

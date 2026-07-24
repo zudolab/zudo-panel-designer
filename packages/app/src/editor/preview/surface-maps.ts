@@ -52,11 +52,25 @@ export const PCB_SUBSTRATE_SURFACE_MATERIAL: PcbSurfaceMaterial = Object.freeze(
 
 type PreviewSurfaceMapName = keyof PreviewSurfaceMaps;
 
+// The height map is not a per-material coefficient lookup like the other
+// maps — it is an additive composite of physical layer thicknesses — so the
+// material-value helpers below exclude it.
+type MaterialSurfaceMapName = Exclude<PreviewSurfaceMapName, 'height'>;
+
 const PREVIEW_SURFACE_MAP_NAMES = [
   'baseColor',
   'metalness',
   'roughness',
+  'height',
 ] as const satisfies readonly PreviewSurfaceMapName[];
+
+// Height field coefficients pinned by epic #176: black substrate is 0, copper
+// coverage adds ~0.66, and the punched mask sheet adds ~0.33 under additive
+// 'lighter' compositing, ordering the four physical levels as
+// substrate 0 < mask-only ~0.33 < open copper ~0.66 < mask-over-copper ~1.0.
+// Silkscreen ink is negligibly thin and never contributes height.
+export const PREVIEW_HEIGHT_COPPER_COLOR = '#a8a8a8';
+export const PREVIEW_HEIGHT_MASK_COLOR = '#545454';
 
 function scalarCanvasColor(value: number): string {
   const byte = Math.round(Math.min(1, Math.max(0, value)) * 255);
@@ -65,7 +79,7 @@ function scalarCanvasColor(value: number): string {
 }
 
 function surfaceMapMaterialValue(
-  mapName: PreviewSurfaceMapName,
+  mapName: MaterialSurfaceMapName,
   material: PcbSurfaceMaterial,
 ): string {
   switch (mapName) {
@@ -79,13 +93,13 @@ function surfaceMapMaterialValue(
 }
 
 export function surfaceMapColorForPalette(
-  mapName: PreviewSurfaceMapName,
+  mapName: MaterialSurfaceMapName,
   color: ColorIndex,
 ): string {
   return surfaceMapMaterialValue(mapName, PCB_SURFACE_MATERIALS[color]);
 }
 
-export function surfaceMapSubstrateColor(mapName: PreviewSurfaceMapName): string {
+export function surfaceMapSubstrateColor(mapName: MaterialSurfaceMapName): string {
   return surfaceMapMaterialValue(mapName, PCB_SUBSTRATE_SURFACE_MATERIAL);
 }
 
@@ -172,30 +186,64 @@ export function paintCopperCoverage(
   );
 }
 
-// Negative solder-mask composite (epic #176): every pixel starts as bare
-// substrate, copper is painted positively, then a punched, map-valued mask
-// sheet is composited ABOVE copper — a mask leaf is an opening, and the map
-// stays fully opaque so WebGL always reads a real material coefficient.
-function paintSurfaceMap(options: {
+interface SurfaceMapPaintTarget {
   readonly canvas: PreviewCanvasSource;
-  readonly mapName: PreviewSurfaceMapName;
   readonly widthMm: number;
   readonly heightMm: number;
   readonly slices: PcbLayerSlices;
   readonly maskSheetFactory: MaskSheetFactory;
   readonly signal: AbortSignal;
-}): void {
-  const { canvas, mapName, widthMm, heightMm, slices, maskSheetFactory, signal } = options;
+}
+
+function enterPanelSpace(
+  target: CanvasRenderingContext2D,
+  canvas: PreviewCanvasSource,
+  widthMm: number,
+  heightMm: number,
+): void {
+  target.save();
+  target.setTransform(canvas.width / widthMm, 0, 0, canvas.height / heightMm, 0, 0);
+  target.beginPath();
+  target.rect(0, 0, widthMm, heightMm);
+  target.clip();
+}
+
+// Fills the shared scratch sheet with `fillStyle` and punches every visible
+// mask leaf out of it. `punchColorFor` only needs opacity — alpha is what
+// punches (see mask-sheet.ts).
+function punchedMaskSheet(
+  paintTarget: SurfaceMapPaintTarget,
+  fillStyle: string,
+  punchColorFor: (color: ColorIndex) => string,
+): PreviewCanvasSource {
+  const { canvas, widthMm, heightMm, slices, maskSheetFactory } = paintTarget;
+  const sheet = acquireMaskSheet(maskSheetFactory, canvas.width, canvas.height);
+  const sheetCtx = sheet.ctx;
+  sheetCtx.setTransform(1, 0, 0, 1, 0, 0);
+  sheetCtx.globalAlpha = 1;
+  sheetCtx.globalCompositeOperation = 'source-over';
+  // The sheet is filled in THIS map's soldermask value before punching —
+  // never recolored via bare drawImage, which would preserve source RGB.
+  sheetCtx.fillStyle = fillStyle;
+  sheetCtx.fillRect(0, 0, canvas.width, canvas.height);
+  sheetCtx.save();
+  sheetCtx.setTransform(canvas.width / widthMm, 0, 0, canvas.height / heightMm, 0, 0);
+  paintMaskPunches(sheetCtx, slices.solderMask, { colorFor: punchColorFor });
+  sheetCtx.restore();
+  return sheet.canvas;
+}
+
+// Negative solder-mask composite (epic #176): every pixel starts as bare
+// substrate, copper is painted positively, then a punched, map-valued mask
+// sheet is composited ABOVE copper — a mask leaf is an opening, and the map
+// stays fully opaque so WebGL always reads a real material coefficient.
+function paintSurfaceMap(
+  paintTarget: SurfaceMapPaintTarget,
+  mapName: MaterialSurfaceMapName,
+): void {
+  const { canvas, widthMm, heightMm, slices, signal } = paintTarget;
   const ctx = canvas2dContext(canvas);
   throwIfAborted(signal);
-
-  const enterPanelSpace = (target: CanvasRenderingContext2D): void => {
-    target.save();
-    target.setTransform(canvas.width / widthMm, 0, 0, canvas.height / heightMm, 0, 0);
-    target.beginPath();
-    target.rect(0, 0, widthMm, heightMm);
-    target.clip();
-  };
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
@@ -203,7 +251,7 @@ function paintSurfaceMap(options: {
   ctx.fillStyle = surfaceMapSubstrateColor(mapName);
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  enterPanelSpace(ctx);
+  enterPanelSpace(ctx, canvas, widthMm, heightMm);
   paintCopperCoverage(ctx, slices.copper, {
     color: surfaceMapColorForPalette(mapName, 1),
     signal,
@@ -213,26 +261,14 @@ function paintSurfaceMap(options: {
   // Hidden mask container means NO sheet at all — bare copper on substrate —
   // while an empty visible container still composites a full covering sheet.
   if (!slices.solderMaskHidden) {
-    const sheet = acquireMaskSheet(maskSheetFactory, canvas.width, canvas.height);
-    const sheetCtx = sheet.ctx;
-    sheetCtx.setTransform(1, 0, 0, 1, 0, 0);
-    sheetCtx.globalAlpha = 1;
-    sheetCtx.globalCompositeOperation = 'source-over';
-    // The sheet is filled in THIS map's soldermask value before punching —
-    // never recolored via bare drawImage, which would preserve source RGB.
-    sheetCtx.fillStyle = surfaceMapColorForPalette(mapName, 0);
-    sheetCtx.fillRect(0, 0, canvas.width, canvas.height);
-    sheetCtx.save();
-    sheetCtx.setTransform(canvas.width / widthMm, 0, 0, canvas.height / heightMm, 0, 0);
-    paintMaskPunches(sheetCtx, slices.solderMask, {
-      colorFor: (color) => surfaceMapColorForPalette(mapName, color),
-    });
-    sheetCtx.restore();
+    const sheet = punchedMaskSheet(paintTarget, surfaceMapColorForPalette(mapName, 0), (color) =>
+      surfaceMapColorForPalette(mapName, color),
+    );
     throwIfAborted(signal);
-    ctx.drawImage(sheet.canvas, 0, 0);
+    ctx.drawImage(sheet, 0, 0);
   }
 
-  enterPanelSpace(ctx);
+  enterPanelSpace(ctx, canvas, widthMm, heightMm);
   paintSliceLayers(
     ctx,
     slices.silkscreen,
@@ -243,6 +279,40 @@ function paintSurfaceMap(options: {
     signal,
   );
   ctx.restore();
+}
+
+// Combined top-surface height field: black substrate, copper coverage painted
+// positively, then the punched mask sheet ADDED via 'lighter' so mask
+// draping over copper stacks both thicknesses (epic #176). Silkscreen never
+// paints here — its ink adds no meaningful height.
+function paintHeightMap(paintTarget: SurfaceMapPaintTarget): void {
+  const { canvas, widthMm, heightMm, slices, signal } = paintTarget;
+  const ctx = canvas2dContext(canvas);
+  throwIfAborted(signal);
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  enterPanelSpace(ctx, canvas, widthMm, heightMm);
+  paintCopperCoverage(ctx, slices.copper, { color: PREVIEW_HEIGHT_COPPER_COLOR, signal });
+  ctx.restore();
+
+  // Hidden mask container adds no mask thickness anywhere; an empty visible
+  // container still adds the full covering sheet's thickness.
+  if (!slices.solderMaskHidden) {
+    const sheet = punchedMaskSheet(
+      paintTarget,
+      PREVIEW_HEIGHT_MASK_COLOR,
+      () => PREVIEW_HEIGHT_MASK_COLOR,
+    );
+    throwIfAborted(signal);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(sheet, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+  }
 }
 
 function shouldWatchInitialFontResult(result: FontInitialResult): boolean {
@@ -344,15 +414,16 @@ export function createPreviewSurfaceMapGenerator(
         if (canvas.width !== rasterSize.widthPx || canvas.height !== rasterSize.heightPx) {
           throw new Error('Preview canvas factory returned an incorrectly sized canvas');
         }
-        paintSurfaceMap({
+        const paintTarget: SurfaceMapPaintTarget = {
           canvas,
-          mapName,
           widthMm,
           heightMm,
           slices,
           maskSheetFactory,
           signal: input.ticket.signal,
-        });
+        };
+        if (mapName === 'height') paintHeightMap(paintTarget);
+        else paintSurfaceMap(paintTarget, mapName);
         canvases[mapName] = canvas;
       }
 

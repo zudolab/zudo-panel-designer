@@ -23,12 +23,17 @@ export interface PreviewSurfaceMaps {
   readonly baseColor: PreviewSurfaceMap<'srgb'>;
   readonly metalness: PreviewSurfaceMap<'linear-scalar'>;
   readonly roughness: PreviewSurfaceMap<'linear-scalar'>;
+  // Combined top-surface height field (epic #176): substrate 0, copper adds
+  // ~0.66, the punched mask sheet adds ~0.33 additively. Consumed as a bump
+  // map, so it perturbs shading normals rather than silhouette geometry.
+  readonly height: PreviewSurfaceMap<'linear-scalar'>;
 }
 
 export const PREVIEW_MAP_COLOR_SPACES = Object.freeze({
   baseColor: 'srgb',
   metalness: 'linear-scalar',
   roughness: 'linear-scalar',
+  height: 'linear-scalar',
 } as const satisfies Record<keyof PreviewSurfaceMaps, PreviewMapColorSpace>);
 
 // Document millimeters use a top-left origin with +x right and +y down. The
@@ -174,6 +179,10 @@ export function createPreviewSurfaceSnapshot(
     roughness: Object.freeze({
       source: input.canvases.roughness,
       colorSpace: PREVIEW_MAP_COLOR_SPACES.roughness,
+    }),
+    height: Object.freeze({
+      source: input.canvases.height,
+      colorSpace: PREVIEW_MAP_COLOR_SPACES.height,
     }),
   });
 
@@ -353,6 +362,7 @@ export interface PreviewDebugSummary {
     readonly metalness: number;
     readonly roughness: number;
     readonly environmentIntensity: number;
+    readonly bumpScale: number;
   };
 }
 
@@ -367,6 +377,6 @@ export function createPreviewAccessibilityCopy(
   return Object.freeze({
     stageInstructions:
       'Drag to rotate. Use Pan to move the board, use the wheel, pinch, or plus and minus to zoom, and use Reset to restore the view.',
-    panelSummary: `PCB preview: ${dimensions.widthMm} mm wide by ${dimensions.heightMm} mm high by ${dimensions.thicknessMm} mm thick. Black soldermask and white silkscreen are matte; exposed copper with the gold/HASL finish is metallic.`,
+    panelSummary: `PCB preview: ${dimensions.widthMm} mm wide by ${dimensions.heightMm} mm high by ${dimensions.thicknessMm} mm thick. Black soldermask covers the board except where drawn openings expose it; exposed copper with the gold/HASL finish is metallic and reads slightly raised, with the mask draping over covered copper as a subtle emboss. White silkscreen is matte.`,
   });
 }

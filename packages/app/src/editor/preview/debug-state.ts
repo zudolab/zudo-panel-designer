@@ -38,7 +38,12 @@ export const ZERO_PREVIEW_DEBUG_SUMMARY: PreviewDebugSummary = Object.freeze({
     distance: 0,
     panModeEnabled: false,
   }),
-  materialParameters: Object.freeze({ metalness: 0, roughness: 0, environmentIntensity: 0 }),
+  materialParameters: Object.freeze({
+    metalness: 0,
+    roughness: 0,
+    environmentIntensity: 0,
+    bumpScale: 0,
+  }),
 });
 
 const entries = new Map<number, PreviewDebugEntry>();
