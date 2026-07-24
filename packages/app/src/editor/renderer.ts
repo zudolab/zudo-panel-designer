@@ -10,6 +10,8 @@ import {
   normalizeRect,
   PALETTE,
   pathBbox,
+  PCB_SUBSTRATE,
+  projectPcbLayerSlices,
   rectCenter,
   rectCorners,
   rotatableLayer,
@@ -17,6 +19,7 @@ import {
   type ColorIndex,
   type Guide,
   type Layer,
+  type PcbLayerSlices,
   type PcbLayerStack,
   type Pt,
   type Rect,
@@ -25,6 +28,7 @@ import {
 import { patternByName } from '@zpd/patterns';
 import type { Camera } from './camera';
 import { projectFlatLayers } from './flat-projection';
+import { acquireMaskSheet, paintMaskPunches, type MaskSheetFactory } from './mask-sheet';
 import { guideScreenCoord, type GuideDraft } from './guides';
 import { outsidePanelRegion } from './outside-panel-region';
 import { getTextGeometry, reconcileTextGeometry } from './text-geometry';
@@ -496,10 +500,17 @@ export function renderScene(
   cam: Camera,
   extras: RenderExtras,
 ): void {
-  // Editor.tsx normally supplies the identity-stable flat fast path, while
-  // standalone callers may supply the persisted PCB stack. Normalize both at
-  // this boundary so painting, ghosts, text geometry, and chrome always share
-  // one effective-material array in physical bottom-to-top order.
+  // Editor.tsx supplies the persisted PCB stack (role-aware, needed for the
+  // inverted mask compositing below — #179); legacy/standalone callers may
+  // still supply a flat Layer[]. Both are normalized to one effective-material
+  // flat array here (identity-stable per committed tree via core's WeakMap)
+  // so ghosts, text geometry, and chrome always share it. `slices` is non-null
+  // exactly when role info exists — the flat fallback keeps painting
+  // positively because roles cannot be recovered from a pre-flattened array.
+  const slices =
+    (doc.layers[0] as PcbLayerStack[0] | undefined)?.kind === 'pcb-layer'
+      ? projectPcbLayerSlices(doc.layers as PcbLayerStack)
+      : null;
   const layers = projectFlatLayers(doc.layers);
   reconcileTextGeometry(layers, extras.requestRepaint);
   const ctx = canvas.getContext('2d');
@@ -525,12 +536,14 @@ export function renderScene(
   const panelPxW = panel.widthMm * cam.pxPerMm;
   const panelPxH = panel.heightMm * cam.pxPerMm;
 
-  // panel drop shadow + black soldermask base fill
+  // panel drop shadow + base fill. With a role-aware stack the base is bare
+  // FR4 substrate — black mask coverage moved into the composited sheet ABOVE
+  // copper (#179) — while the legacy flat path keeps the old black base.
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.55)';
   ctx.shadowBlur = 24;
   ctx.shadowOffsetY = 6;
-  ctx.fillStyle = PALETTE[0].hex;
+  ctx.fillStyle = slices ? PCB_SUBSTRATE.hex : PALETTE[0].hex;
   ctx.fillRect(cam.offsetX, cam.offsetY, panelPxW, panelPxH);
   ctx.restore();
 
@@ -577,16 +590,23 @@ export function renderScene(
     ctx.restore();
   }
 
-  // all layers, clipped to the panel, drawn in mm space via one transform
+  // panel-clipped main pass. Everything here — including the mask-sheet
+  // composite — stays INSIDE this one clip so the pass remains disjoint from
+  // the ghost pass above (every pixel painted by exactly one pass).
   ctx.save();
   ctx.beginPath();
   ctx.rect(cam.offsetX, cam.offsetY, panelPxW, panelPxH);
   ctx.clip();
-  ctx.translate(cam.offsetX, cam.offsetY);
-  ctx.scale(cam.pxPerMm, cam.pxPerMm);
-  for (const layer of layers) {
-    if (layer.hidden) continue;
-    paintLayer(ctx, layer, layerPaintOptions);
+  if (slices) {
+    paintInvertedPanelStack(ctx, slices, cam, panelPxW, panelPxH, dpr, layerPaintOptions);
+  } else {
+    // legacy flat input: positive z-order paint (pre-#179 behavior)
+    ctx.translate(cam.offsetX, cam.offsetY);
+    ctx.scale(cam.pxPerMm, cam.pxPerMm);
+    for (const layer of layers) {
+      if (layer.hidden) continue;
+      paintLayer(ctx, layer, layerPaintOptions);
+    }
   }
   ctx.restore();
 
@@ -604,6 +624,78 @@ export function renderScene(
 
   // active tool's draft preview hook (pen path in Wave 5, etc.)
   extras.renderDraft?.(makeDraftContext(ctx, cam, panel));
+}
+
+// The persistent editor surface's one scratch sheet. mask-sheet.ts caches the
+// ALLOCATION by factory identity (this module-level closure), never pixels —
+// the sheet is re-filled and re-punched every frame (epic #176 pin 13).
+const editorMaskSheetFactory: MaskSheetFactory = (widthPx, heightPx) => {
+  const sheet = document.createElement('canvas');
+  sheet.width = widthPx;
+  sheet.height = heightPx;
+  return sheet;
+};
+
+// Inverted solder-mask compositing (#179, epic #176): substrate base (already
+// filled by the caller) → copper positively → fully-black mask sheet with
+// punched openings → silkscreen positively → ALL image layers from every
+// container as a design-aid overlay (images never punch; an in-z-order copper
+// image would vanish under a full sheet). Runs entirely inside the caller's
+// panel clip — see the disjoint-pass note at the call site.
+function paintInvertedPanelStack(
+  ctx: CanvasRenderingContext2D,
+  slices: PcbLayerSlices,
+  cam: Camera,
+  panelPxW: number,
+  panelPxH: number,
+  dpr: number,
+  options: LayerPaintOptions,
+): void {
+  const inMmSpace = (paint: () => void): void => {
+    ctx.save();
+    ctx.translate(cam.offsetX, cam.offsetY);
+    ctx.scale(cam.pxPerMm, cam.pxPerMm);
+    paint();
+    ctx.restore();
+  };
+
+  inMmSpace(() => {
+    for (const layer of slices.copper) {
+      if (layer.hidden || layer.type === 'image') continue;
+      paintLayer(ctx, layer, options);
+    }
+  });
+
+  // Hidden mask container ⇒ NO sheet: bare copper on substrate (epic pin 4).
+  // An empty visible container still composites the full black sheet.
+  if (!slices.solderMaskHidden) {
+    // The sheet lives in the DEVICE-PIXEL space of the panel rect — same
+    // dpr*zoom scale as the main pass, so punched opening edges land 1:1 on
+    // device pixels instead of blurring when zoomed.
+    const sheetW = Math.max(1, Math.round(panelPxW * dpr));
+    const sheetH = Math.max(1, Math.round(panelPxH * dpr));
+    const sheet = acquireMaskSheet(editorMaskSheetFactory, sheetW, sheetH);
+    sheet.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    sheet.ctx.fillStyle = PALETTE[0].hex;
+    sheet.ctx.fillRect(0, 0, sheetW, sheetH);
+    const punchScale = dpr * cam.pxPerMm;
+    sheet.ctx.setTransform(punchScale, 0, 0, punchScale, 0, 0);
+    paintMaskPunches(sheet.ctx, slices.solderMask, { colorFor: editorPaletteColor });
+    // Drawn in CSS-px space (the ambient dpr transform maps it back onto the
+    // sheet's own device pixels), inside the caller's panel clip.
+    ctx.drawImage(sheet.canvas, cam.offsetX, cam.offsetY, panelPxW, panelPxH);
+  }
+
+  inMmSpace(() => {
+    for (const layer of slices.silkscreen) {
+      if (layer.hidden || layer.type === 'image') continue;
+      paintLayer(ctx, layer, options);
+    }
+    for (const layer of slices.flat) {
+      if (layer.hidden || layer.type !== 'image') continue;
+      paintLayer(ctx, layer, options);
+    }
+  });
 }
 
 function makeDraftContext(

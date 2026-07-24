@@ -400,11 +400,13 @@ export function Editor() {
     canvas.style.width = `${canvasSize.w}px`;
     canvas.style.height = `${canvasSize.h}px`;
     const activeTool = getTool(activeToolId);
-    // renderScene (and every flat-consumer below it) reads Layer[] — project
-    // the tree at this render boundary (#146/#150). projectFlatLayers keeps
-    // the array identity stable per committed tree, so text geometry's
-    // incarnation tracking sees one incarnation per commit, not per repaint.
-    renderScene(canvas, { ...doc, layers: projectFlatLayers(doc.layers) }, panel, camera, {
+    // renderScene needs the ROLE-AWARE stack (#179): it derives the role
+    // slices for inverted mask compositing AND the flat projection for
+    // ghosts/chrome itself. Pre-flattening here would erase container
+    // membership before rendering. Identity stability is preserved — core's
+    // WeakMap projection returns one flat array per committed tree, so text
+    // geometry's incarnation tracking still sees one incarnation per commit.
+    renderScene(canvas, doc, panel, camera, {
       // Expanded to leaf ids (#151): the chrome pass matches flat leaves only,
       // so a raw group id would draw no selection chrome at all.
       selectedIds: chromeLeafIds,

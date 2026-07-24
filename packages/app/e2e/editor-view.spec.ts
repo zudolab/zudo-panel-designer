@@ -6,11 +6,13 @@
 // changes what gets PAINTED, not any document state, so window.__zpdTest
 // (read-only, doc/camera/selection only) can't observe it — only the pixel
 // data can.
+import path from 'node:path';
 import { PANEL_HEIGHT_MM, panelWidthMm } from '@zpd/core';
 import { expect, type Page, test } from '@playwright/test';
 import {
   bridge,
   countPixelsDiffering,
+  importPanelJson,
   openEditor,
   readCanvasRegion,
   toScreenPoint,
@@ -160,4 +162,66 @@ test('@smoke show-outside-panel toggle ghosts off-panel shapes and the pattern s
 
   // 4. Past the square's edge stays background in BOTH states.
   expect(await ghostCount(beyondSquare)).toBe(0);
+});
+
+// --- inverted solder-mask compositing (#179, epic #176) ----------------------
+//
+// Real-browser pixel probes of the NEGATIVE mask semantics: the panel is
+// fully mask-covered by default; shapes in the solder-mask container punch
+// openings revealing copper (or bare substrate) beneath. The fixture doc
+// (fixtures/mask-inversion.json) lays out deterministic mm geometry:
+//   copper pad    4..28 × 4..24
+//   mask punch    8..48 × 8..20  (spans copper AND bare substrate)
+//   copper image  40..52 × 100..112 (solid red SVG — a design-aid overlay)
+const MASK_INVERSION_FIXTURE = path.join(__dirname, 'fixtures', 'mask-inversion.json');
+
+// Renderer/palette constants (core palette.ts + PCB_SUBSTRATE).
+const GOLD_RGB: [number, number, number] = [212, 175, 55]; // PALETTE[1] '#d4af37'
+const SUBSTRATE_RGB: [number, number, number] = [168, 148, 106]; // PCB_SUBSTRATE '#a8946a'
+const MASK_RGB: [number, number, number] = [21, 21, 21]; // PALETTE[0] '#151515'
+const IMAGE_RGB: [number, number, number] = [255, 0, 0]; // fixture SVG fill
+
+// Polls until the device pixel at an mm point settles on `rgb` — repaints are
+// async (image decode, font settle), so a one-shot read would race them.
+async function expectPixelAtMm(
+  page: Page,
+  mm: { x: number; y: number },
+  rgb: readonly [number, number, number],
+) {
+  await expect
+    .poll(
+      async () => {
+        const rgba = await readCanvasPixel(page, await toScreenPoint(page, mm));
+        return rgb.every((c, i) => Math.abs(rgba[i] - c) <= COLOR_TOLERANCE);
+      },
+      { message: `pixel at mm (${mm.x}, ${mm.y}) should be rgb(${rgb.join(',')})` },
+    )
+    .toBe(true);
+}
+
+test('inverted mask compositing: openings reveal copper/substrate, coverage stays black, images overlay (#179)', async ({
+  page,
+}) => {
+  await openEditor(page);
+  await importPanelJson(page, MASK_INVERSION_FIXTURE);
+
+  // Opening over copper ⇒ exposed copper gold.
+  await expectPixelAtMm(page, { x: 14, y: 14 }, GOLD_RGB);
+  // Opening over nothing ⇒ bare FR4 substrate.
+  await expectPixelAtMm(page, { x: 38, y: 14 }, SUBSTRATE_RGB);
+  // Un-punched copper ⇒ mask black (the sheet covers in-z-order copper).
+  await expectPixelAtMm(page, { x: 14, y: 22 }, MASK_RGB);
+  // Un-punched empty area ⇒ mask black.
+  await expectPixelAtMm(page, { x: 38, y: 40 }, MASK_RGB);
+  // Image in the COPPER container still visible on top of the full sheet
+  // (images never punch and render as the final overlay).
+  await expectPixelAtMm(page, { x: 46, y: 106 }, IMAGE_RGB);
+
+  // Hidden mask container ⇒ NO sheet: bare copper on substrate everywhere.
+  await page.getByLabel('Hide Solder mask').click();
+  await expectPixelAtMm(page, { x: 14, y: 14 }, GOLD_RGB);
+  await expectPixelAtMm(page, { x: 14, y: 22 }, GOLD_RGB);
+  await expectPixelAtMm(page, { x: 38, y: 14 }, SUBSTRATE_RGB);
+  await expectPixelAtMm(page, { x: 38, y: 40 }, SUBSTRATE_RGB);
+  await expectPixelAtMm(page, { x: 46, y: 106 }, IMAGE_RGB);
 });

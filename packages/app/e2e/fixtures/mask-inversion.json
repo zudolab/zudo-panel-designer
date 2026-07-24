@@ -1,0 +1,56 @@
+{
+  "version": 5,
+  "app": "zpd",
+  "panel": { "hp": 12, "widthMm": 60.6, "heightMm": 128.5 },
+  "palette": ["black", "gold", "white"],
+  "guides": [],
+  "layers": [
+    {
+      "kind": "pcb-layer",
+      "id": "pcb-layer-copper",
+      "role": "copper",
+      "children": [
+        {
+          "id": "copper-pad",
+          "name": "Copper pad",
+          "type": "shape",
+          "shape": "rect",
+          "x": 4,
+          "y": 4,
+          "width": 24,
+          "height": 20,
+          "color": 1
+        },
+        {
+          "id": "copper-image",
+          "name": "Copper reference image",
+          "type": "image",
+          "src": "data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%3E%3Crect%20width%3D%2212%22%20height%3D%2212%22%20fill%3D%22%23ff0000%22%2F%3E%3C%2Fsvg%3E",
+          "x": 40,
+          "y": 100,
+          "width": 12,
+          "height": 12
+        }
+      ]
+    },
+    {
+      "kind": "pcb-layer",
+      "id": "pcb-layer-solder-mask",
+      "role": "solder-mask",
+      "children": [
+        {
+          "id": "mask-opening",
+          "name": "Mask opening",
+          "type": "shape",
+          "shape": "rect",
+          "x": 8,
+          "y": 8,
+          "width": 40,
+          "height": 12,
+          "color": 0
+        }
+      ]
+    },
+    { "kind": "pcb-layer", "id": "pcb-layer-silkscreen", "role": "silkscreen", "children": [] }
+  ]
+}
