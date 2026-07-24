@@ -535,6 +535,42 @@ describe('pen tool — gestures commit exactly one undo entry', () => {
     ]);
   });
 
+  it('lands a closed path directly above a selected silkscreen object, inside silkscreen (#191)', () => {
+    const { ctx, getHistory, getSelectedId, layerById } = makeHarness();
+    ctx.commit({
+      ...ctx.doc,
+      layers: createPcbLayerStack({
+        silkscreen: [
+          {
+            id: 'sk-anchor',
+            name: 'sk-anchor',
+            type: 'shape',
+            shape: 'rect',
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            color: 2,
+          },
+        ],
+      }),
+    });
+    ctx.select('sk-anchor');
+
+    pen.onPointerDown?.(ptr({ x: 0, y: 0 }), ctx);
+    pen.onPointerUp?.(ptr({ x: 0, y: 0 }), ctx);
+    pen.onPointerDown?.(ptr({ x: 10, y: 0 }), ctx);
+    pen.onPointerUp?.(ptr({ x: 10, y: 0 }), ctx);
+    pen.onPointerDown?.(ptr({ x: 10, y: 10 }), ctx);
+    pen.onPointerUp?.(ptr({ x: 10, y: 10 }), ctx);
+    pen.onPointerDown?.(ptr({ x: 2, y: 2 }), ctx); // closes near the first anchor
+
+    expect(getHistory().past).toHaveLength(2); // the setup commit + the pen's own
+    const silkscreen = getHistory().present.layers.find((c) => c.role === 'silkscreen')!;
+    expect(silkscreen.children.map((n) => n.id)).toEqual(['sk-anchor', getSelectedId()]);
+    expect(layerById(getSelectedId()!)).toMatchObject({ closed: true, fill: 2, stroke: null });
+  });
+
   it('onDeactivate clears an in-progress draft (tool-switch away discards it)', () => {
     const { ctx, getHistory } = makeHarness();
     pen.onPointerDown?.(ptr({ x: 0, y: 0 }), ctx);

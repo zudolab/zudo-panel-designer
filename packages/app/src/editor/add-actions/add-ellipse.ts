@@ -1,5 +1,8 @@
-import { insertPcbNode, mintId, snapToGrid, type ShapeLayer } from '@zpd/core';
+import { mintId, pcbLayerDefinition, snapToGrid, type ShapeLayer } from '@zpd/core';
 import { registerAddAction } from '../registry/add-actions';
+import { insertNewNodeRelativeToSelection } from '../insert-relative';
+
+const DEFAULT_ROLE = 'copper';
 
 registerAddAction({
   id: 'add-ellipse',
@@ -15,9 +18,19 @@ registerAddAction({
       y: snapToGrid(ctx.panel.heightMm / 3),
       width: Math.min(20, snapToGrid(ctx.panel.widthMm / 2)),
       height: 16,
-      color: 1,
+      // Placeholder only -- normalizeLayerNodeMaterial (@zpd/core) always
+      // overwrites this to match wherever the node actually lands (#191:
+      // that destination now follows the selection, not always DEFAULT_ROLE).
+      color: pcbLayerDefinition(DEFAULT_ROLE).color,
     };
-    ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'copper', layer) });
+    const nextLayers = insertNewNodeRelativeToSelection(
+      ctx.doc.layers,
+      ctx.selectedIds,
+      layer,
+      DEFAULT_ROLE,
+    );
+    if (nextLayers === ctx.doc.layers) return; // refused: commit/select nothing (#191)
+    ctx.commit({ ...ctx.doc, layers: nextLayers });
     ctx.select(layer.id);
   },
 });
