@@ -203,28 +203,34 @@ test('@smoke 3D preview is lazy, physically faithful, interactive, and leak-free
   expect(initial.camera.target).toEqual({ x: 0, y: 0, z: 0 });
   await expect(dialog.getByText(/40\.3 mm wide by 128\.5 mm high by 2\.5 mm thick/)).toBeVisible();
 
-  // Stable interior points prove the document-order material overrides.
-  await expectSurfacePixel(page, 'baseColor', 4, 4, [212, 175, 55, 255]);
-  await expectSurfacePixel(page, 'metalness', 4, 4, [255, 255, 255, 255]);
-  await expectSurfacePixel(page, 'roughness', 4, 4, [61, 61, 61, 255]);
-  await expectSurfacePixel(page, 'baseColor', 10, 10, [21, 21, 21, 255]);
-  await expectSurfacePixel(page, 'metalness', 10, 10, [0, 0, 0, 255]);
-  await expectSurfacePixel(page, 'roughness', 10, 10, [163, 163, 163, 255]);
-  await expectSurfacePixel(page, 'baseColor', 14, 14, [242, 240, 233, 255]);
+  // Stable interior points prove the negative solder-mask composite:
+  // un-punched mask covers copper, an opening resolves to the material
+  // beneath it, and silkscreen stays positive on top.
+  await expectSurfacePixel(page, 'baseColor', 4, 4, [21, 21, 21, 255]); // mask over copper
+  await expectSurfacePixel(page, 'metalness', 4, 4, [0, 0, 0, 255]);
+  await expectSurfacePixel(page, 'roughness', 4, 4, [163, 163, 163, 255]);
+  await expectSurfacePixel(page, 'baseColor', 10, 10, [212, 175, 55, 255]); // opening reveals copper
+  await expectSurfacePixel(page, 'metalness', 10, 10, [255, 255, 255, 255]);
+  await expectSurfacePixel(page, 'roughness', 10, 10, [61, 61, 61, 255]);
+  await expectSurfacePixel(page, 'baseColor', 14, 14, [242, 240, 233, 255]); // silk over mask
   await expectSurfacePixel(page, 'metalness', 14, 14, [0, 0, 0, 255]);
   await expectSurfacePixel(page, 'roughness', 14, 14, [214, 214, 214, 255]);
 
-  // The real bounded pattern generator paints only alternating interior cells
-  // and never spills past its own 12 mm square.
+  // The bounded pattern is sampled through the wide plain opening: painted
+  // checker cells read as copper, while unpainted cells and the strip past
+  // the pattern's own 12 mm square read as bare substrate.
   await expectSurfacePixel(page, 'baseColor', 27, 32, [212, 175, 55, 255]);
   await expectSurfacePixel(page, 'metalness', 27, 32, [255, 255, 255, 255]);
-  await expectSurfacePixel(page, 'baseColor', 33, 32, [21, 21, 21, 255]);
-  await expectSurfacePixel(page, 'baseColor', 38, 32, [21, 21, 21, 255]);
-  await expectSurfacePixel(page, 'baseColor', 4, 40, [21, 21, 21, 255]); // positive mask coverage
-  await expectSurfacePixel(page, 'baseColor', 12, 40, [212, 175, 55, 255]); // even-odd reveal
-  await expectSurfacePixel(page, 'baseColor', 30, 55, [212, 175, 55, 255]); // rotated ellipse
+  await expectSurfacePixel(page, 'baseColor', 33, 32, [168, 148, 106, 255]); // opening over nothing
+  await expectSurfacePixel(page, 'metalness', 33, 32, [0, 0, 0, 255]);
+  await expectSurfacePixel(page, 'roughness', 33, 32, [140, 140, 140, 255]);
+  await expectSurfacePixel(page, 'baseColor', 38, 32, [168, 148, 106, 255]); // pattern never spills
+  await expectSurfacePixel(page, 'baseColor', 4, 40, [212, 175, 55, 255]); // plain opening over copper
+  await expectSurfacePixel(page, 'baseColor', 12, 40, [212, 175, 55, 255]);
+  await expectSurfacePixel(page, 'baseColor', 30, 55, [21, 21, 21, 255]); // mask covers unopened copper
 
-  // Design-only/hidden/off-panel/editor furniture stays the black substrate.
+  // Design-only/hidden/off-panel/editor furniture never punches or paints:
+  // everything there stays under the covering mask sheet.
   await expectSurfacePixel(page, 'baseColor', 24, 94, [21, 21, 21, 255]); // image
   await expectSurfacePixel(page, 'baseColor', 11.5, 111.5, [21, 21, 21, 255]); // hidden
   await expectSurfacePixel(page, 'baseColor', 0.5, 110, [21, 21, 21, 255]); // off-panel
@@ -389,8 +395,9 @@ test('@smoke 3D preview reload recovery restores the panel and starts a fresh re
     heightMm: PANEL_HEIGHT_MM,
     thicknessMm: PANEL_THICKNESS_MM,
   });
-  await expectSurfacePixel(page, 'baseColor', 4, 4, [212, 175, 55, 255], 101.3);
-  await expectSurfacePixel(page, 'metalness', 4, 4, [255, 255, 255, 255], 101.3);
+  await expectSurfacePixel(page, 'baseColor', 4, 4, [21, 21, 21, 255], 101.3); // mask over copper
+  await expectSurfacePixel(page, 'baseColor', 10, 10, [212, 175, 55, 255], 101.3); // opening reveals copper
+  await expectSurfacePixel(page, 'metalness', 10, 10, [255, 255, 255, 255], 101.3);
 
   await page.getByRole('button', { name: 'Close 3D preview' }).click();
   await expectPreviewDisposed(page);
@@ -458,9 +465,10 @@ test('@smoke 3D preview refreshes font surfaces and reopens on current editor st
     heightMm: PANEL_HEIGHT_MM,
     thicknessMm: PANEL_THICKNESS_MM,
   });
-  await expectSurfacePixel(page, 'baseColor', 4, 4, [212, 175, 55, 255], 101.3);
-  await expectSurfacePixel(page, 'metalness', 4, 4, [255, 255, 255, 255], 101.3);
-  await expectSurfacePixel(page, 'roughness', 4, 4, [61, 61, 61, 255], 101.3);
+  await expectSurfacePixel(page, 'baseColor', 4, 4, [21, 21, 21, 255], 101.3); // mask over copper
+  await expectSurfacePixel(page, 'baseColor', 10, 10, [212, 175, 55, 255], 101.3); // opening reveals copper
+  await expectSurfacePixel(page, 'metalness', 10, 10, [255, 255, 255, 255], 101.3);
+  await expectSurfacePixel(page, 'roughness', 10, 10, [61, 61, 61, 255], 101.3);
 
   await page.getByRole('button', { name: 'Close 3D preview' }).click();
   await expectPreviewDisposed(page);

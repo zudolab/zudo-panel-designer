@@ -4,6 +4,7 @@ import {
   PALETTE,
   PANEL_HEIGHT_MM,
   PANEL_THICKNESS_MM,
+  PCB_SUBSTRATE,
   panelWidthMm,
   type DocState,
   type LayerNode,
@@ -26,9 +27,11 @@ import {
 import { representativeSurfaceMapDoc } from './surface-maps.fixtures';
 import { projectFlatLayers } from '../flat-projection';
 import {
+  PCB_SUBSTRATE_SURFACE_MATERIAL,
   PCB_SURFACE_MATERIALS,
   createPreviewSurfaceMapGenerator,
   surfaceMapColorForPalette,
+  surfaceMapSubstrateColor,
   type PreviewCanvasFactory,
 } from './surface-maps';
 
@@ -69,9 +72,16 @@ interface CanvasCall {
   readonly fillStyle: string;
   readonly strokeStyle: string;
   readonly globalAlpha: number;
+  readonly globalCompositeOperation: string;
+  // Global ordering across every recording canvas: sampling through a mask
+  // sheet drawImage must only replay sheet calls issued BEFORE that
+  // composite (the shared sheet is re-filled and re-punched per map).
+  readonly seq: number;
 }
 
 type CallObserver = (call: CanvasCall) => void;
+
+let nextCallSeq = 0;
 
 function recordingContext(calls: CanvasCall[], observer?: CallObserver): CanvasRenderingContext2D {
   let state: Record<string, unknown> = {
@@ -100,6 +110,8 @@ function recordingContext(calls: CanvasCall[], observer?: CallObserver): CanvasR
             fillStyle: String(state.fillStyle),
             strokeStyle: String(state.strokeStyle),
             globalAlpha: Number(state.globalAlpha),
+            globalCompositeOperation: String(state.globalCompositeOperation),
+            seq: nextCallSeq++,
           };
           calls.push(call);
           observer?.(call);
@@ -200,38 +212,25 @@ function ticket(
 }
 
 function normalizedCalls(canvas: RecordingCanvas): unknown[] {
+  // seq is deliberately omitted: it is a process-global counter, so it must
+  // not leak into determinism comparisons between two independent runs.
   return canvas.calls.map((call) => ({
-    ...call,
-    args: call.args.map((arg) =>
-      arg instanceof RecordingPath2D ? { pathCommands: arg.commands } : arg,
-    ),
+    method: call.method,
+    fillStyle: call.fillStyle,
+    strokeStyle: call.strokeStyle,
+    globalAlpha: call.globalAlpha,
+    globalCompositeOperation: call.globalCompositeOperation,
+    args: call.args.map((arg) => {
+      if (arg instanceof RecordingPath2D) return { pathCommands: arg.commands };
+      // A drawImage source canvas normalizes to its dimensions only: the
+      // sheet's own call log is compared separately, and its raw calls carry
+      // process-global seq values.
+      if (arg instanceof RecordingCanvas) {
+        return { canvasRef: { width: arg.width, height: arg.height } };
+      }
+      return arg;
+    }),
   }));
-}
-
-function topRectFillAt(calls: readonly CanvasCall[], x: number, y: number): string | null {
-  let pendingRect: readonly number[] | null = null;
-  let style: string | null = null;
-  const contains = (rect: readonly number[]) =>
-    x > rect[0] && x < rect[0] + rect[2] && y > rect[1] && y < rect[1] + rect[3];
-
-  for (const call of calls) {
-    if (call.method === 'beginPath') pendingRect = null;
-    if (call.method === 'rect' && call.args.every((arg) => typeof arg === 'number')) {
-      pendingRect = call.args as number[];
-    }
-    if (
-      call.method === 'fillRect' &&
-      call.args.every((arg) => typeof arg === 'number') &&
-      contains(call.args as number[])
-    ) {
-      style = call.fillStyle;
-    }
-    if (call.method === 'fill' && call.args.length === 0 && pendingRect) {
-      if (contains(pendingRect)) style = call.fillStyle;
-      pendingRect = null;
-    }
-  }
-  return style;
 }
 
 function pathContains(path: RecordingPath2D, x: number, y: number): boolean {
@@ -265,11 +264,23 @@ function pathContains(path: RecordingPath2D, x: number, y: number): boolean {
   return crossings % 2 === 1;
 }
 
-function topMaterialAt(calls: readonly CanvasCall[], x: number, y: number): string | null {
+// Replays a canvas call log at one sample point, modeling the negative-mask
+// composite: `apply` receives the style of every covering paint — or null for
+// a destination-out punch that erases the point. Mask-sheet drawImage calls
+// recurse into the sheet's own log, truncated to calls issued before the
+// composite (the shared sheet is re-filled and re-punched per map).
+function replayStyleAt(
+  calls: readonly CanvasCall[],
+  x: number,
+  y: number,
+  apply: (style: string | null) => void,
+): void {
   let pendingRect: readonly number[] | null = null;
-  let style: string | null = null;
   const contains = (rect: readonly number[]) =>
     x > rect[0] && x < rect[0] + rect[2] && y > rect[1] && y < rect[1] + rect[3];
+  const applyCall = (call: CanvasCall): void => {
+    apply(call.globalCompositeOperation === 'destination-out' ? null : call.fillStyle);
+  };
   for (const call of calls) {
     if (call.method === 'beginPath') pendingRect = null;
     if (call.method === 'rect' && call.args.every((arg) => typeof arg === 'number')) {
@@ -280,10 +291,10 @@ function topMaterialAt(calls: readonly CanvasCall[], x: number, y: number): stri
       call.args.every((arg) => typeof arg === 'number') &&
       contains(call.args as number[])
     ) {
-      style = call.fillStyle;
+      applyCall(call);
     }
     if (call.method === 'fill' && call.args.length === 0 && pendingRect) {
-      if (contains(pendingRect)) style = call.fillStyle;
+      if (contains(pendingRect)) applyCall(call);
       pendingRect = null;
     }
     if (
@@ -292,9 +303,37 @@ function topMaterialAt(calls: readonly CanvasCall[], x: number, y: number): stri
       call.args[1] === 'evenodd' &&
       pathContains(call.args[0], x, y)
     ) {
-      style = call.fillStyle;
+      applyCall(call);
+    }
+    if (call.method === 'drawImage' && call.args[0] instanceof RecordingCanvas) {
+      const sheetStyle = sheetStyleAt(
+        call.args[0].calls.filter((sheetCall) => sheetCall.seq < call.seq),
+        x,
+        y,
+      );
+      if (sheetStyle !== null) apply(sheetStyle);
     }
   }
+}
+
+// Resolves an offscreen mask sheet at one point: the last covering
+// source-over fill wins unless a later destination-out punch erased it —
+// null means the sheet is transparent there (the opening shows what's below).
+function sheetStyleAt(calls: readonly CanvasCall[], x: number, y: number): string | null {
+  let style: string | null = null;
+  replayStyleAt(calls, x, y, (coveringStyle) => {
+    style = coveringStyle;
+  });
+  return style;
+}
+
+function topMaterialAt(calls: readonly CanvasCall[], x: number, y: number): string | null {
+  let style: string | null = null;
+  replayStyleAt(calls, x, y, (coveringStyle) => {
+    // On an opaque map canvas a punch cannot erase to transparency; it simply
+    // leaves the previously painted material visible.
+    if (coveringStyle !== null) style = coveringStyle;
+  });
   return style;
 }
 
@@ -353,6 +392,18 @@ describe('PCB surface material classification', () => {
     expect(surfaceMapColorForPalette('roughness', 1)).toBe('#3d3d3d');
     expect(surfaceMapColorForPalette('roughness', 2)).toBe('#d6d6d6');
   });
+
+  it('pins the substrate coefficients to the shared core constant', () => {
+    expect(PCB_SUBSTRATE_SURFACE_MATERIAL).toMatchObject({
+      baseColor: PCB_SUBSTRATE.hex,
+      metalness: 0,
+      roughness: 0.55,
+    });
+    expect(Object.isFrozen(PCB_SUBSTRATE_SURFACE_MATERIAL)).toBe(true);
+    expect(surfaceMapSubstrateColor('baseColor')).toBe(PCB_SUBSTRATE.hex);
+    expect(surfaceMapSubstrateColor('metalness')).toBe('#000000');
+    expect(surfaceMapSubstrateColor('roughness')).toBe('#8c8c8c');
+  });
 });
 
 describe('createPreviewSurfaceMapGenerator', () => {
@@ -366,7 +417,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
           shape: 'rect' as const,
           x: 2,
           y: 2,
-          width: 30,
+          width: 20,
           height: 20,
           color: 0 as const, // stale on purpose
         },
@@ -384,7 +435,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
       mask: [
         {
           id: 'mask',
-          name: 'Mask with opening',
+          name: 'Opening with re-masked hole',
           type: 'path' as const,
           points: [
             { x: 8, y: 2 },
@@ -439,33 +490,51 @@ describe('createPreviewSurfaceMapGenerator', () => {
       generator.close();
       return snapshot;
     };
+    // Negative mask semantics: the sheet covers everything the punches do not
+    // open, an opening resolves to what lies beneath (copper, else substrate).
     const samples = [
-      { point: [4, 4] as const, material: 1 as const }, // copper only
-      { point: [10, 4] as const, material: 0 as const }, // mask over copper
-      { point: [14, 8] as const, material: 1 as const }, // even-odd opening
+      { point: [4, 4] as const, material: 0 as const }, // un-punched mask over copper
+      { point: [10, 4] as const, material: 1 as const }, // opening over copper
+      { point: [14, 8] as const, material: 0 as const }, // even-odd hole re-masks
+      { point: [28, 12] as const, material: 'substrate' } as const, // opening over nothing
       { point: [26, 4] as const, material: 2 as const }, // silk over mask
     ];
+    const expected = (
+      mapName: 'baseColor' | 'metalness' | 'roughness',
+      material: 0 | 1 | 2 | 'substrate',
+    ) =>
+      material === 'substrate'
+        ? surfaceMapSubstrateColor(mapName)
+        : surfaceMapColorForPalette(mapName, material);
 
     const visible = generate();
     for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
       const canvas = visible.maps[mapName].source as unknown as RecordingCanvas;
       for (const sample of samples) {
         expect(topMaterialAt(canvas.calls, sample.point[0], sample.point[1])).toBe(
-          surfaceMapColorForPalette(mapName, sample.material),
+          expected(mapName, sample.material),
         );
       }
-      expect(canvas.calls.some((call) => call.method === 'drawImage')).toBe(false);
+      // Exactly one drawImage: the punched mask sheet. Image layers stay
+      // excluded from the maps entirely.
+      const drawImageCalls = canvas.calls.filter((call) => call.method === 'drawImage');
+      expect(drawImageCalls).toHaveLength(1);
+      expect(drawImageCalls[0]!.args[0]).toBeInstanceOf(RecordingCanvas);
     }
 
     const maskHidden = generate({ mask: true });
     const silkHidden = generate({ silk: true });
     for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
-      expect(
-        topMaterialAt((maskHidden.maps[mapName].source as unknown as RecordingCanvas).calls, 10, 4),
-      ).toBe(surfaceMapColorForPalette(mapName, 1));
+      const maskHiddenCanvas = maskHidden.maps[mapName].source as unknown as RecordingCanvas;
+      // Hidden mask container: no sheet at all — bare copper on substrate.
+      expect(maskHiddenCanvas.calls.some((call) => call.method === 'drawImage')).toBe(false);
+      expect(topMaterialAt(maskHiddenCanvas.calls, 4, 4)).toBe(expected(mapName, 1));
+      expect(topMaterialAt(maskHiddenCanvas.calls, 10, 4)).toBe(expected(mapName, 1));
+      expect(topMaterialAt(maskHiddenCanvas.calls, 28, 12)).toBe(expected(mapName, 'substrate'));
+      // Hidden silkscreen: the opening at its footprint has no copper below.
       expect(
         topMaterialAt((silkHidden.maps[mapName].source as unknown as RecordingCanvas).calls, 26, 4),
-      ).toBe(surfaceMapColorForPalette(mapName, 0));
+      ).toBe(expected(mapName, 'substrate'));
     }
   });
 
@@ -494,7 +563,8 @@ describe('createPreviewSurfaceMapGenerator', () => {
       2,
     );
     expect(snapshot.orientation.documentTopLeftUv).toEqual({ u: 0, v: 1 });
-    expect(recording.canvases).toHaveLength(3);
+    // Three maps plus the one shared mask sheet, all at the chosen raster.
+    expect(recording.canvases).toHaveLength(4);
     expect(recording.canvases.every((canvas) => canvas.width === snapshot.rasterSize.widthPx)).toBe(
       true,
     );
@@ -518,15 +588,20 @@ describe('createPreviewSurfaceMapGenerator', () => {
     const baseColor = snapshot.maps.baseColor.source as unknown as RecordingCanvas;
     const metalness = snapshot.maps.metalness.source as unknown as RecordingCanvas;
     const roughness = snapshot.maps.roughness.source as unknown as RecordingCanvas;
+    const maskSheet = recording.canvases.find(
+      (canvas) => canvas !== baseColor && canvas !== metalness && canvas !== roughness,
+    )!;
 
     for (const [mapName, canvas] of [
       ['baseColor', baseColor],
       ['metalness', metalness],
       ['roughness', roughness],
     ] as const) {
-      expect(topRectFillAt(canvas.calls, 4, 4)).toBe(surfaceMapColorForPalette(mapName, 1));
-      expect(topRectFillAt(canvas.calls, 10, 10)).toBe(surfaceMapColorForPalette(mapName, 0));
-      expect(topRectFillAt(canvas.calls, 14, 14)).toBe(surfaceMapColorForPalette(mapName, 2));
+      // Negative mask: un-punched copper reads as soldermask, the opening
+      // reveals copper, silkscreen stays positive on top.
+      expect(topMaterialAt(canvas.calls, 4, 4)).toBe(surfaceMapColorForPalette(mapName, 0));
+      expect(topMaterialAt(canvas.calls, 10, 10)).toBe(surfaceMapColorForPalette(mapName, 1));
+      expect(topMaterialAt(canvas.calls, 14, 14)).toBe(surfaceMapColorForPalette(mapName, 2));
 
       const panelRectIndex = canvas.calls.findIndex(
         (call) =>
@@ -543,17 +618,6 @@ describe('createPreviewSurfaceMapGenerator', () => {
       expect(panelRectIndex).toBeGreaterThan(-1);
       expect(panelClipIndex).toBeGreaterThan(panelRectIndex);
       expect(firstLayerFillIndex).toBeGreaterThan(panelClipIndex);
-      expect(
-        canvas.calls.some(
-          (call) =>
-            call.method === 'fill' &&
-            call.args[0] instanceof RecordingPath2D &&
-            call.args[1] === 'evenodd',
-        ),
-      ).toBe(true);
-      expect(canvas.calls.find((call) => call.method === 'stroke')?.strokeStyle).toBe(
-        surfaceMapColorForPalette(mapName, 0),
-      );
       const patternTranslateIndex = canvas.calls.findIndex(
         (call) => call.method === 'translate' && call.args[0] === 25 && call.args[1] === 30,
       );
@@ -576,7 +640,11 @@ describe('createPreviewSurfaceMapGenerator', () => {
       expect(patternRectIndex).toBeGreaterThan(patternTranslateIndex);
       expect(patternClipIndex).toBeGreaterThan(patternRectIndex);
       expect(patternDrawIndex).toBeGreaterThan(patternClipIndex);
-      expect(canvas.calls.some((call) => call.method === 'drawImage')).toBe(false);
+      // Exactly one drawImage per map — the punched mask sheet — while image
+      // layers stay excluded from the maps.
+      const drawImageCalls = canvas.calls.filter((call) => call.method === 'drawImage');
+      expect(drawImageCalls).toHaveLength(1);
+      expect(drawImageCalls[0]!.args[0]).toBe(maskSheet);
       expect(canvas.calls.some((call) => call.method === 'strokeRect')).toBe(false);
       expect(
         canvas.calls.some(
@@ -603,6 +671,35 @@ describe('createPreviewSurfaceMapGenerator', () => {
       ).toBe(true);
       expect(canvas.calls.some((call) => call.method === 'fillText')).toBe(true);
     }
+
+    // The shared sheet is re-filled with each map's soldermask value and
+    // punched under destination-out: the fixture's path opening keeps its
+    // even-odd holes and its stroke erases alpha too.
+    const mapNames = ['baseColor', 'metalness', 'roughness'] as const;
+    expect(
+      maskSheet.calls.some(
+        (call) =>
+          call.method === 'fill' &&
+          call.args[0] instanceof RecordingPath2D &&
+          call.args[1] === 'evenodd' &&
+          call.globalCompositeOperation === 'destination-out',
+      ),
+    ).toBe(true);
+    const sheetBackgroundFills = maskSheet.calls.filter((call) => call.method === 'fillRect');
+    expect(sheetBackgroundFills.map((call) => call.fillStyle)).toEqual(
+      mapNames.map((mapName) => surfaceMapColorForPalette(mapName, 0)),
+    );
+    expect(
+      sheetBackgroundFills.every((call) => call.globalCompositeOperation === 'source-over'),
+    ).toBe(true);
+    const sheetStrokes = maskSheet.calls.filter((call) => call.method === 'stroke');
+    expect(sheetStrokes.map((call) => call.strokeStyle)).toEqual(
+      mapNames.map((mapName) => surfaceMapColorForPalette(mapName, 0)),
+    );
+    expect(sheetStrokes.every((call) => call.globalCompositeOperation === 'destination-out')).toBe(
+      true,
+    );
+    expect(maskSheet.calls.some((call) => call.method === 'drawImage')).toBe(false);
 
     expect(patternByName).toHaveBeenCalledTimes(3);
     generator.close();
@@ -824,7 +921,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
 describe('fixture sanity', () => {
   it('keeps the simple overlap samples away from antialiased boundaries', () => {
     const projected = projectFlatLayers(representativeSurfaceMapDoc().layers);
-    const layers = ['gold-base', 'black-over-gold', 'white-over-black'].map((id) =>
+    const layers = ['gold-base', 'opening-over-gold', 'white-over-black'].map((id) =>
       projected.find((layer) => layer.id === id)!,
     ) as ShapeLayer[];
     expect(layers.map((layer) => layer.color)).toEqual([1, 0, 2]);
