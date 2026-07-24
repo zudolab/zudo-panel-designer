@@ -153,3 +153,37 @@ describe('importImageFile', () => {
     expect(ctx.select).not.toHaveBeenCalled();
   });
 });
+
+describe('importImageFile — selection-relative placement (#191)', () => {
+  it('lands the imported image directly above a selected solder-mask object, inside solder-mask', async () => {
+    stubImageProbe(100, 100);
+    const anchor = {
+      id: 'sm-anchor',
+      name: 'sm-anchor',
+      type: 'shape' as const,
+      shape: 'rect' as const,
+      x: 0,
+      y: 0,
+      width: 5,
+      height: 5,
+      color: 0 as const,
+    };
+    const ctx = stubCtx({
+      doc: {
+        panelHp: 12,
+        guides: [],
+        layers: createPcbLayerStack({ 'solder-mask': [anchor] }),
+      },
+      selectedIds: ['sm-anchor'],
+    });
+    const file = new File(['bytes'], 'a.png', { type: 'image/png' });
+
+    await importImageFile(file, ctx);
+
+    const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(committed.layers[1].children.map((n: { id: string }) => n.id)).toEqual([
+      'sm-anchor',
+      expect.stringMatching(/^image-/),
+    ]);
+  });
+});

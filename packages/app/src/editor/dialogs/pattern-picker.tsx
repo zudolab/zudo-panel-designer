@@ -15,13 +15,14 @@
 // and the paged/sentinel approach is simpler to test.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  insertPcbNode,
   isGroupNode,
   mintId,
   patternCoverGeometry,
+  pcbLayerDefinition,
   updatePcbNodeById,
   type PatternLayer,
 } from '@zpd/core';
+import { insertNewNodeRelativeToSelection } from '../insert-relative';
 import {
   defaultParams,
   PATTERN_GENERATORS,
@@ -34,6 +35,10 @@ import type { DialogProps } from '../types';
 export interface PatternPickerProps {
   layerId?: string;
 }
+
+// Default routing for a brand-new pattern (handlePick's "add" branch —
+// #191); the "swap an existing layer" branch never touches this.
+const DEFAULT_ROLE = 'copper';
 
 // CSS px per thumbnail; renderPatternThumb scales the backing store for the
 // device's devicePixelRatio internally.
@@ -171,13 +176,26 @@ function PatternPickerDialog({ props, close, ctx }: DialogProps<PatternPickerPro
         name: gen.displayName,
         type: 'pattern',
         patternType: gen.name,
-        color: 1,
+        // Placeholder only -- normalizeLayerNodeMaterial (@zpd/core) always
+        // overwrites this to match wherever the node actually lands (#191:
+        // that destination now follows the selection, not always DEFAULT_ROLE).
+        color: pcbLayerDefinition(DEFAULT_ROLE).color,
         params: defaultParams(gen.name),
         // New layers start at the cover default (#96) — the square fully
         // covers the panel, matching the pre-square whole-panel fill.
         ...patternCoverGeometry(ctx.panel),
       };
-      ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'copper', layer) });
+      const nextLayers = insertNewNodeRelativeToSelection(
+        ctx.doc.layers,
+        ctx.selectedIds,
+        layer,
+        DEFAULT_ROLE,
+      );
+      if (nextLayers === ctx.doc.layers) {
+        close(); // refused: commit/select nothing (#191), still close the dialog
+        return;
+      }
+      ctx.commit({ ...ctx.doc, layers: nextLayers });
       ctx.select(layer.id);
     }
     close();
