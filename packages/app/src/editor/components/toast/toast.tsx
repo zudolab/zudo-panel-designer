@@ -8,6 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import type { ToastVariant } from '../../registry/toasts';
+import { Close } from '../icons';
 
 export interface ToastProps {
   id: string;
@@ -149,11 +150,11 @@ export function Toast({ id, variant, message, description, duration, onDismiss }
       </div>
       <button
         type="button"
-        className="flex h-6 w-6 flex-none items-center justify-center rounded text-base leading-none opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
+        className="flex h-6 w-6 flex-none items-center justify-center rounded opacity-70 transition-opacity hover:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
         aria-label="Dismiss notification"
         onClick={handleCloseClick}
       >
-        <span aria-hidden="true">×</span>
+        <Close className="h-3.5 w-3.5" />
       </button>
     </div>
   );

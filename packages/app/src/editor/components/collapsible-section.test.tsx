@@ -22,7 +22,7 @@ describe('CollapsibleSection', () => {
     expect(screen.getByText('Body content')).toBeTruthy();
     const button = screen.getByRole('button', { name: /Panel/ });
     expect(button.getAttribute('aria-expanded')).toBe('true');
-    expect(button.textContent).toContain('▾');
+    expect(button.querySelectorAll('svg')).toHaveLength(1);
   });
 
   it('respects defaultOpen={false}: content hidden, chevron right, aria-expanded false', () => {
@@ -35,7 +35,7 @@ describe('CollapsibleSection', () => {
     expect(screen.queryByText('Body content')).toBeNull();
     const button = screen.getByRole('button', { name: /Palette/ });
     expect(button.getAttribute('aria-expanded')).toBe('false');
-    expect(button.textContent).toContain('▸');
+    expect(button.querySelectorAll('svg')).toHaveLength(1);
   });
 
   it('clicking the header toggles content visibility and aria-expanded', () => {
