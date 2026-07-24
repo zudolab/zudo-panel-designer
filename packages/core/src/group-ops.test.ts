@@ -17,6 +17,8 @@ import {
   maximalSelectedRoots,
   moveNodeToParent,
   movePcbNode,
+  pcbBoundaryCrossContainerSlot,
+  pcbInsertionSlotAbove,
   renameById,
   replaceNodeWithNodes,
   toggleHiddenById,
@@ -592,5 +594,117 @@ describe('fixed PCB-stack operations', () => {
     });
     // The fixed material wrapper itself consumed no depth level.
     expect(findPcbNodeById(inserted, 'leaf')?.pathIds).toHaveLength(9);
+  });
+});
+
+describe('pcbInsertionSlotAbove', () => {
+  it('resolves a root-level anchor to its own container root + index+1', () => {
+    const stack = createPcbLayerStack({ copper: [shape('a'), shape('b')] });
+    expect(pcbInsertionSlotAbove(stack, 'a')).toEqual({
+      role: 'copper',
+      parentId: null,
+      index: 1,
+    });
+    expect(pcbInsertionSlotAbove(stack, 'b')).toEqual({
+      role: 'copper',
+      parentId: null,
+      index: 2,
+    });
+  });
+
+  it('resolves an anchor nested inside a group to a slot inside that group', () => {
+    const stack = createPcbLayerStack({
+      silkscreen: [group('g1', [shape('a'), shape('b')])],
+    });
+    expect(pcbInsertionSlotAbove(stack, 'a')).toEqual({
+      role: 'silkscreen',
+      parentId: 'g1',
+      index: 1,
+    });
+  });
+
+  it('resolves an anchor that is itself a group to the sibling slot above the group', () => {
+    const stack = createPcbLayerStack({
+      copper: [shape('a'), group('g1', [shape('b')]), shape('c')],
+    });
+    expect(pcbInsertionSlotAbove(stack, 'g1')).toEqual({
+      role: 'copper',
+      parentId: null,
+      index: 2,
+    });
+  });
+
+  it('returns null when the anchor does not exist', () => {
+    const stack = createPcbLayerStack({ copper: [shape('a')] });
+    expect(pcbInsertionSlotAbove(stack, 'missing')).toBeNull();
+  });
+});
+
+describe('pcbBoundaryCrossContainerSlot', () => {
+  it('▼ from the bottom of solder-mask lands at the end of copper', () => {
+    const stack = createPcbLayerStack({
+      copper: [shape('cu-a'), shape('cu-b')],
+      'solder-mask': [shape('sm-a'), shape('sm-b')],
+    });
+    expect(pcbBoundaryCrossContainerSlot(stack, 'sm-a', -1)).toEqual({
+      role: 'copper',
+      parentId: null,
+      index: 2,
+    });
+  });
+
+  it('▲ from the top of copper lands at index 0 of solder-mask', () => {
+    const stack = createPcbLayerStack({
+      copper: [shape('cu-a'), shape('cu-b')],
+      'solder-mask': [shape('sm-a')],
+    });
+    expect(pcbBoundaryCrossContainerSlot(stack, 'cu-b', 1)).toEqual({
+      role: 'solder-mask',
+      parentId: null,
+      index: 0,
+    });
+  });
+
+  it('▲ at the top of silkscreen (no container above) returns null', () => {
+    const stack = createPcbLayerStack({ silkscreen: [shape('sk-a')] });
+    expect(pcbBoundaryCrossContainerSlot(stack, 'sk-a', 1)).toBeNull();
+  });
+
+  it('▼ at the bottom of copper (no container below) returns null', () => {
+    const stack = createPcbLayerStack({ copper: [shape('cu-a')] });
+    expect(pcbBoundaryCrossContainerSlot(stack, 'cu-a', -1)).toBeNull();
+  });
+
+  it('a grouped (non-root) node returns null, keeping the existing clamp behavior', () => {
+    const stack = createPcbLayerStack({
+      'solder-mask': [group('g1', [shape('sm-a')])],
+      copper: [shape('cu-a')],
+    });
+    expect(pcbBoundaryCrossContainerSlot(stack, 'sm-a', -1)).toBeNull();
+  });
+
+  it('a non-boundary node (not first/last in its container) returns null for both directions', () => {
+    const stack = createPcbLayerStack({
+      copper: [shape('cu-a')],
+      'solder-mask': [shape('sm-a'), shape('sm-mid'), shape('sm-b')],
+    });
+    expect(pcbBoundaryCrossContainerSlot(stack, 'sm-mid', -1)).toBeNull();
+    expect(pcbBoundaryCrossContainerSlot(stack, 'sm-mid', 1)).toBeNull();
+  });
+
+  it('returns null when the id does not exist', () => {
+    const stack = createPcbLayerStack();
+    expect(pcbBoundaryCrossContainerSlot(stack, 'missing', 1)).toBeNull();
+  });
+
+  it('is pure: the input stack and its containers are not mutated', () => {
+    const stack = createPcbLayerStack({
+      copper: [shape('cu-a'), shape('cu-b')],
+      'solder-mask': [shape('sm-a')],
+    });
+    const snapshot = JSON.stringify(stack);
+    pcbInsertionSlotAbove(stack, 'cu-a');
+    pcbBoundaryCrossContainerSlot(stack, 'cu-b', 1);
+    expect(JSON.stringify(stack)).toBe(snapshot);
   });
 });
