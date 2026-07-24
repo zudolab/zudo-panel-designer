@@ -1,19 +1,20 @@
 import { mintId, pcbLayerDefinition, snapToGrid, type ShapeLayer } from '@zpd/core';
+import { Ellipse } from '../components/icons';
 import { registerAddAction } from '../registry/add-actions';
 import { insertNewNodeRelativeToSelection } from '../insert-relative';
 
 const DEFAULT_ROLE = 'copper';
 
 registerAddAction({
-  id: 'add-rect',
-  label: 'Add rectangle',
-  icon: '▭',
+  id: 'add-ellipse',
+  label: 'Add ellipse',
+  icon: <Ellipse className="h-4 w-4" />,
   run(ctx) {
     const layer: ShapeLayer = {
       id: mintId('shape'),
-      name: 'Rect',
+      name: 'Ellipse',
       type: 'shape',
-      shape: 'rect',
+      shape: 'ellipse',
       x: snapToGrid(ctx.panel.widthMm / 4),
       y: snapToGrid(ctx.panel.heightMm / 3),
       width: Math.min(20, snapToGrid(ctx.panel.widthMm / 2)),

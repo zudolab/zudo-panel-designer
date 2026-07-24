@@ -20,6 +20,7 @@ import {
 } from '@zpd/core';
 import { registerTool } from '../registry/tools';
 import { ChromeButton } from '../components/chrome';
+import { ClosePath, Pen } from '../components/icons';
 import { insertNewNodeRelativeToSelection } from '../insert-relative';
 import type { DraftRenderContext, ToolContext, ToolKeyEvent, ToolPointerEvent } from '../types';
 
@@ -208,8 +209,13 @@ export function PenHintBar({ bucket, onClosePath, onFinishOpen, onCancel }: PenH
         cancel
       </span>
       <span className="pointer-events-auto flex gap-1.5">
-        <ChromeButton disabled={bucket !== 'three-plus'} onClick={onClosePath}>
-          ⬠ Close path
+        <ChromeButton
+          disabled={bucket !== 'three-plus'}
+          onClick={onClosePath}
+          className="flex items-center gap-1"
+        >
+          <ClosePath className="h-3.5 w-3.5" />
+          Close path
         </ChromeButton>
         <ChromeButton disabled={bucket === 'zero' || bucket === 'one'} onClick={onFinishOpen}>
           Finish open
@@ -270,7 +276,7 @@ registerTool({
   id: 'pen',
   label: 'Pen',
   shortcut: 'p',
-  icon: '✒',
+  icon: <Pen className="h-4 w-4" />,
   cursor: 'crosshair',
   description:
     'Click to drop a corner anchor; click-drag pulls out bezier handles for a curved anchor. Click ' +
