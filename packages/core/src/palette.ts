@@ -53,6 +53,14 @@ export function pcbLayerRoleForColor(color: ColorIndex): PcbLayerRole {
   return color === 1 ? 'copper' : color === 2 ? 'silkscreen' : 'solder-mask';
 }
 
+// Bare FR4 laminate visible through a solder-mask opening with no copper
+// beneath it. Not a PaletteEntry: it has no ColorIndex/palette slot — it
+// never appears as a drawable layer color, only as a renderer fill value.
+export const PCB_SUBSTRATE: { hex: string; note: string } = {
+  hex: '#a8946a',
+  note: 'bare FR4 laminate under mask openings',
+};
+
 export function createPcbLayerContainer<R extends PcbLayerRole>(
   role: R,
   children: PcbLayerContainer<R>['children'] = [],

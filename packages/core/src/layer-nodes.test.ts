@@ -3,6 +3,7 @@ import {
   flattenLayerNodes,
   isGroupNode,
   MAX_GROUP_DEPTH,
+  projectPcbLayerSlices,
   projectPcbLayerStack,
   walkLayerNodes,
   walkPcbLayerNodes,
@@ -185,5 +186,48 @@ describe('fixed PCB stack projection', () => {
     expect(first[0]).toMatchObject({ id: 'c', color: 1 });
     expect(first[1]).toMatchObject({ id: 'p', fill: null, stroke: 0, hidden: true });
     expect(first[2]).toMatchObject({ id: 's', color: 2 });
+  });
+});
+
+describe('projectPcbLayerSlices', () => {
+  it('splits the flat projection by role using the same references, and memoizes by stack identity', () => {
+    const stack = createPcbLayerStack({
+      copper: [shape('c1'), shape('c2')],
+      'solder-mask': [shape('m')],
+      silkscreen: [shape('s')],
+    });
+
+    const flat = projectPcbLayerStack(stack);
+    const first = projectPcbLayerSlices(stack);
+    expect(projectPcbLayerSlices(stack)).toBe(first);
+
+    expect(first.flat).toBe(flat);
+    expect(first.copper).toEqual([flat[0], flat[1]]);
+    expect(first.copper[0]).toBe(flat[0]);
+    expect(first.copper[1]).toBe(flat[1]);
+    expect(first.solderMask[0]).toBe(flat[2]);
+    expect(first.silkscreen[0]).toBe(flat[3]);
+    expect([...first.copper, ...first.solderMask, ...first.silkscreen]).toEqual(flat);
+  });
+
+  it('folds container hidden into slice members and surfaces solderMaskHidden explicitly', () => {
+    const stack = createPcbLayerStack({
+      copper: [shape('c')],
+      'solder-mask': [shape('m')],
+      silkscreen: [shape('s')],
+    });
+    stack[1] = { ...stack[1], hidden: true };
+
+    const slices = projectPcbLayerSlices(stack);
+    expect(slices.solderMaskHidden).toBe(true);
+    expect(slices.solderMask[0].hidden).toBe(true);
+    expect(slices.copper[0].hidden).toBeUndefined();
+    expect(slices.silkscreen[0].hidden).toBeUndefined();
+  });
+
+  it('reports solderMaskHidden false when the mask container is visible, even if empty', () => {
+    const stack = createPcbLayerStack({ copper: [shape('c')] });
+    expect(projectPcbLayerSlices(stack).solderMaskHidden).toBe(false);
+    expect(projectPcbLayerSlices(stack).solderMask).toEqual([]);
   });
 });
