@@ -3,8 +3,16 @@
 // panel), ONE commit, select the new layer. Extracted from add-actions/
 // add-image.ts (behavior-identical) so the clipboard-paste and drop-import
 // subs can share it instead of re-deriving the scale-to-fit math.
-import { insertPcbNode, mintId, snapToGrid, type ImageLayer } from '@zpd/core';
+import { mintId, snapToGrid, type ImageLayer } from '@zpd/core';
+import { insertNewNodeRelativeToSelection } from './insert-relative';
 import type { ToolContext } from './types';
+
+// Shared by every raster-image entry point (#191): toolbar Add Image,
+// clipboard raster paste, file drag/drop, the oversized-SVG fallback, and
+// "import as image instead" from the SVG import dialog — all funnel through
+// routeImportFile() (and svg-import.tsx's fallback) to this one function, so
+// every one of them lands the new layer relative to the live selection.
+const DEFAULT_ROLE = 'copper';
 
 export function importImageFile(file: File, ctx: ToolContext): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -26,7 +34,17 @@ export function importImageFile(file: File, ctx: ToolContext): Promise<void> {
           width: snapToGrid(probe.naturalWidth * scale),
           height: snapToGrid(probe.naturalHeight * scale),
         };
-        ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'copper', layer) });
+        const nextLayers = insertNewNodeRelativeToSelection(
+          ctx.doc.layers,
+          ctx.selectedIds,
+          layer,
+          DEFAULT_ROLE,
+        );
+        if (nextLayers === ctx.doc.layers) {
+          resolve(); // refused: commit/select nothing (#191)
+          return;
+        }
+        ctx.commit({ ...ctx.doc, layers: nextLayers });
         ctx.select(layer.id);
         resolve();
       };

@@ -60,6 +60,7 @@ import {
   resizeHandleRects,
   rotateHandleScreenPos,
 } from '../renderer';
+import { Select } from '../components/icons';
 import { registerTool } from '../registry/tools';
 import { getTextGeometry, reconcileTextGeometry } from '../text-geometry';
 import type {
@@ -602,7 +603,7 @@ registerTool({
   id: 'select',
   label: 'Select',
   shortcut: 'v',
-  icon: '⬚',
+  icon: <Select className="h-4 w-4" />,
   cursor: 'default',
   description:
     'Click a layer to select it and drag to move it; drag on empty canvas to marquee-select every ' +

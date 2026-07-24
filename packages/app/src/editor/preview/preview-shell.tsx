@@ -7,6 +7,7 @@ import {
   type PreviewPhysicalDimensions,
 } from './contracts';
 import { loadPreviewViewer } from './load-viewer';
+import { Close } from '../components/icons';
 export { PreviewRendererUnavailable } from './preview-status';
 import type { PreviewViewerLoader, PreviewViewerModule } from './viewer-types';
 
@@ -233,10 +234,10 @@ export function PreviewShell({
           type="button"
           aria-label="Close 3D preview"
           title="Close 3D preview"
-          className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md border border-neutral-600 bg-neutral-800 text-xl leading-none text-neutral-100 motion-safe:transition-colors [@media(hover:hover)]:hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
+          className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md border border-neutral-600 bg-neutral-800 text-neutral-100 motion-safe:transition-colors [@media(hover:hover)]:hover:bg-neutral-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
           onClick={close}
         >
-          <span aria-hidden="true">×</span>
+          <Close className="h-4 w-4" />
         </button>
       </div>
 

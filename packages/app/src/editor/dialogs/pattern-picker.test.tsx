@@ -217,6 +217,43 @@ describe('pattern-picker dialog — add (opened without layerId)', () => {
   });
 });
 
+describe('pattern-picker dialog — add, selection-relative placement (#191)', () => {
+  it('lands the new pattern directly above a selected solder-mask object, inside solder-mask', () => {
+    const anchor = {
+      id: 'sm-anchor',
+      name: 'sm-anchor',
+      type: 'shape' as const,
+      shape: 'rect' as const,
+      x: 0,
+      y: 0,
+      width: 5,
+      height: 5,
+      color: 0 as const,
+    };
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ 'solder-mask': [anchor] }),
+    };
+    const ctx = stubCtx({ doc, selectedIds: ['sm-anchor'] });
+    const close = vi.fn();
+    const PatternPickerDialog = getPatternPickerDialog();
+
+    render(<PatternPickerDialog props={{}} close={close} ctx={ctx} />);
+    const target = PATTERN_GENERATORS[0];
+    fireEvent.click(screen.getByTitle(target.displayName));
+
+    const nextDoc = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0] as DocState;
+    expect(nextDoc.layers[1].children.map((n) => n.id)).toEqual([
+      'sm-anchor',
+      expect.stringMatching(/^pattern-/),
+    ]);
+    const added = projectFlatLayers(nextDoc.layers).find((l) => l.id !== 'sm-anchor')!;
+    expect(added).toMatchObject({ color: 0 });
+    expect(ctx.select).toHaveBeenCalledWith(added.id);
+  });
+});
+
 describe('pattern-picker dialog — thumbnails', () => {
   it('renders one canvas per registered pattern up to the first page, sized for the device pixel ratio', () => {
     const original = (globalThis as { devicePixelRatio?: number }).devicePixelRatio;

@@ -5,6 +5,7 @@ import { newPanelAction } from '../replace-doc';
 import type { ToolContext } from '../types';
 import type { SaveStatus } from '../use-autosave';
 import { ChromeButton } from './chrome';
+import { Download, Redo, Undo, Upload } from './icons';
 import { SaveStatusChip } from './save-status';
 
 export interface HeaderProps {
@@ -73,10 +74,10 @@ export function Header({
         <span className="order-first mx-1 h-5 w-px shrink-0 bg-neutral-700 lg:order-none" />
 
         <ChromeButton title="Undo (⌘/Ctrl+Z)" disabled={!canUndo} onClick={ctx.undo}>
-          ↩
+          <Undo className="h-4 w-4" />
         </ChromeButton>
         <ChromeButton title="Redo (⌘/Ctrl+Shift+Z)" disabled={!canRedo} onClick={ctx.redo}>
-          ↪
+          <Redo className="h-4 w-4" />
         </ChromeButton>
 
         <span className="mx-1 h-5 w-px bg-neutral-700" />
@@ -85,11 +86,13 @@ export function Header({
           ?
         </ChromeButton>
         <ChromeButton
-          className="border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
+          className="flex items-center gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
           title="Import panel config JSON"
+          aria-label="Import panel config JSON"
           onClick={() => importInputRef.current?.click()}
         >
-          ⬆ JSON
+          <Upload className="h-4 w-4" />
+          JSON
         </ChromeButton>
         <input
           ref={importInputRef}
@@ -99,11 +102,13 @@ export function Header({
           onChange={handleImportFileChange}
         />
         <ChromeButton
-          className="border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
+          className="flex items-center gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
           title="Download panel config JSON"
+          aria-label="Download panel config JSON"
           onClick={() => downloadPanelConfig(ctx.doc)}
         >
-          ⬇ JSON
+          <Download className="h-4 w-4" />
+          JSON
         </ChromeButton>
 
         <span className="mx-1 h-5 w-px bg-neutral-700" />

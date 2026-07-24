@@ -85,8 +85,10 @@ The inspector gets `{ layer, onChange, ctx }`; call
 
 ## Adding an add-action
 
-Create `add-actions/add-thing.ts` and `registerAddAction({ id, label, icon,
-run(ctx) })`. It shows up on the left toolbar's add section automatically.
+Create `add-actions/add-thing.tsx` and `registerAddAction({ id, label, icon,
+run(ctx) })`. `icon` is a `ReactNode` (e.g. an SVG component from
+`components/icons.tsx`), so the file needs a `.tsx` extension. It shows up on
+the left toolbar's add section automatically.
 
 ## Adding a dialog
 

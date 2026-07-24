@@ -19,6 +19,7 @@ import {
   isGroupNode,
   movePcbNode,
   PALETTE,
+  pcbBoundaryCrossContainerSlot,
   PCB_LAYER_DEFINITIONS,
   projectPcbLayerStack,
   togglePcbLayerHidden,
@@ -35,6 +36,22 @@ import {
 import { nextListSelection } from '../selection';
 import { maximalPcbSelectedRoots, toggleLeafSelection } from '../selection-resolve';
 import {
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Eye,
+  EyeOff,
+  Folder,
+  Image,
+  Path,
+  Pattern,
+  Rect,
+  Text,
+  Trash,
+  Ungroup as UngroupIcon,
+  type IconProps,
+} from './icons';
+import {
   executeDrop,
   invalidDropReason,
   resolveDropSlot,
@@ -45,12 +62,12 @@ import {
 } from './layer-list-dnd';
 import type { ToolContext } from '../types';
 
-const TYPE_ICON: Record<Layer['type'], string> = {
-  shape: '▭',
-  pattern: '▦',
-  path: '✒',
-  text: 'T',
-  image: '🖼',
+const TYPE_ICON: Record<Layer['type'], (props: IconProps) => ReactNode> = {
+  shape: Rect,
+  pattern: Pattern,
+  path: Path,
+  text: Text,
+  image: Image,
 };
 
 function layerColorIndex(layer: Layer): ColorIndex {
@@ -430,15 +447,32 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
   // group) is #154's DnD job; this button stays independent of that and
   // needs no change when DnD lands. Per the issue spec, group ROWS don't get
   // this affordance (no move buttons in the group header) — only leaves.
+  //
+  // #192: when the same-parent move clamps back to the node's own slot (a
+  // boundary hit), a ROOT-LEVEL leaf still has one more place to go — the
+  // physically adjacent material container. pcbBoundaryCrossContainerSlot
+  // (#189) already encodes that adjacency (and returns null for a grouped
+  // leaf, so group-boundary items keep the plain clamp/no-op below) — this
+  // button's `dir` (1 = bring forward, -1 = send backward) lines up 1:1 with
+  // its own dir parameter, no inversion needed.
   const move = (id: string, dir: 1 | -1) => {
     const slot = locateLocalSlot(stack, id);
     if (!slot) return;
     const next = movePcbNode(stack, id, slot.role, slot.parentId, slot.index + dir);
-    // moveNodeToParent returns the SAME reference when the move clamps back
-    // to the node's own slot (already at the top/bottom of its local stack)
-    // — don't write a phantom undo entry for that.
-    if (next === stack) return;
-    ctx.commit({ ...ctx.doc, layers: next });
+    if (next !== stack) {
+      ctx.commit({ ...ctx.doc, layers: next });
+      return;
+    }
+    // moveNodeToParent returned the SAME reference: the node is already at
+    // the top/bottom of its local stack. Try crossing into the adjacent
+    // container; if that also comes up empty (grouped item, or already at
+    // the absolute top/bottom of the whole panel), stay a silent no-op — no
+    // phantom undo entry.
+    const crossSlot = pcbBoundaryCrossContainerSlot(stack, id, dir);
+    if (!crossSlot) return;
+    const crossed = movePcbNode(stack, id, crossSlot.role, crossSlot.parentId, crossSlot.index);
+    if (crossed === stack) return;
+    ctx.commit({ ...ctx.doc, layers: crossed });
   };
 
   const remove = (id: string) => {
@@ -619,8 +653,11 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
           onClick={(event) => handleRowClick(layer.id, event)}
           className="flex min-h-6 min-w-6 shrink-0 items-center gap-1.5 rounded-sm p-0.5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
         >
-          <span className="w-4 text-center" aria-hidden="true">
-            {TYPE_ICON[layer.type]}
+          <span className="flex w-4 items-center justify-center" aria-hidden="true">
+            {(() => {
+              const TypeIcon = TYPE_ICON[layer.type];
+              return <TypeIcon className="h-3.5 w-3.5" />;
+            })()}
           </span>
           <span
             aria-hidden="true"
@@ -661,48 +698,48 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
           <button
             title="Bring forward"
             aria-label={`Bring ${layer.name || layer.type} forward`}
-            className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+            className="flex min-h-6 min-w-6 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
             onClick={(e) => {
               e.stopPropagation();
               move(layer.id, 1);
             }}
           >
-            ▲
+            <ChevronUp className="h-3.5 w-3.5" />
           </button>
           <button
             title="Send backward"
             aria-label={`Send ${layer.name || layer.type} backward`}
-            className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+            className="flex min-h-6 min-w-6 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
             onClick={(e) => {
               e.stopPropagation();
               move(layer.id, -1);
             }}
           >
-            ▼
+            <ChevronDown className="h-3.5 w-3.5" />
           </button>
           <button
             title="Show / hide"
             aria-label={
               layer.hidden ? `Show ${layer.name || layer.type}` : `Hide ${layer.name || layer.type}`
             }
-            className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+            className="flex min-h-6 min-w-6 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
             onClick={(e) => {
               e.stopPropagation();
               toggle(layer.id);
             }}
           >
-            {layer.hidden ? '🚫' : '👁'}
+            {layer.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
           </button>
           <button
             title="Delete"
             aria-label={`Delete ${layer.name || layer.type}`}
-            className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+            className="flex min-h-6 min-w-6 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
             onClick={(e) => {
               e.stopPropagation();
               remove(layer.id);
             }}
           >
-            ✕
+            <Trash className="h-3.5 w-3.5" />
           </button>
         </span>
       </li>
@@ -760,7 +797,11 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
             }}
             className="flex min-h-6 min-w-6 shrink-0 items-center justify-center rounded-sm p-0.5 text-neutral-400 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
           >
-            <span aria-hidden="true">{collapsed ? '▶' : '▼'}</span>
+            {collapsed ? (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
           </button>
           <button
             ref={(node) => {
@@ -776,8 +817,8 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
             onClick={(event) => handleRowClick(group.id, event)}
             className="flex min-h-6 min-w-6 shrink-0 items-center gap-1.5 rounded-sm p-0.5 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
           >
-            <span className="w-4 text-center" aria-hidden="true">
-              📁
+            <span className="flex w-4 items-center justify-center" aria-hidden="true">
+              <Folder className="h-3.5 w-3.5" />
             </span>
           </button>
           {isRenaming ? (
@@ -816,35 +857,39 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
             <button
               title="Show / hide"
               aria-label={group.hidden ? `Show ${name}` : `Hide ${name}`}
-              className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+              className="flex min-h-6 min-w-6 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
               onClick={(e) => {
                 e.stopPropagation();
                 toggle(group.id);
               }}
             >
-              {group.hidden ? '🚫' : '👁'}
+              {group.hidden ? (
+                <EyeOff className="h-3.5 w-3.5" />
+              ) : (
+                <Eye className="h-3.5 w-3.5" />
+              )}
             </button>
             <button
               title="Ungroup"
               aria-label={`Ungroup ${name}`}
-              className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+              className="flex min-h-6 min-w-6 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
               onClick={(e) => {
                 e.stopPropagation();
                 ungroup(group.id);
               }}
             >
-              ⇲
+              <UngroupIcon className="h-3.5 w-3.5" />
             </button>
             <button
               title="Delete group and children"
               aria-label={`Delete ${name} (and all children)`}
-              className="min-h-6 min-w-6 rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
+              className="flex min-h-6 min-w-6 items-center justify-center rounded-sm focus-visible:outline-2 focus-visible:outline-sky-400"
               onClick={(e) => {
                 e.stopPropagation();
                 remove(group.id);
               }}
             >
-              ✕
+              <Trash className="h-3.5 w-3.5" />
             </button>
           </span>
         </div>
@@ -930,7 +975,11 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
                 onKeyDown={keepButtonActivationLocal}
                 className="flex min-h-6 min-w-6 items-center justify-center rounded-sm text-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
               >
-                <span aria-hidden="true">{collapsed ? '▶' : '▼'}</span>
+                {collapsed ? (
+                  <ChevronRight className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
               </button>
               <span
                 aria-hidden="true"
@@ -952,9 +1001,13 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
                 }
                 onClick={() => toggleMaterialVisibility(container.role)}
                 onKeyDown={keepButtonActivationLocal}
-                className="min-h-6 min-w-6 rounded-sm text-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
+                className="flex min-h-6 min-w-6 items-center justify-center rounded-sm text-neutral-300 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-sky-400"
               >
-                {container.hidden ? '🚫' : '👁'}
+                {container.hidden ? (
+                  <EyeOff className="h-3.5 w-3.5" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
               </button>
             </div>
             {!collapsed && (

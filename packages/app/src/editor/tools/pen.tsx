@@ -11,8 +11,8 @@
 import { createRoot, type Root } from 'react-dom/client';
 import {
   buildPath2D,
-  insertPcbNode,
   mintId,
+  pcbLayerDefinition,
   snapToGrid,
   type PathLayer,
   type PathPoint,
@@ -20,12 +20,15 @@ import {
 } from '@zpd/core';
 import { registerTool } from '../registry/tools';
 import { ChromeButton } from '../components/chrome';
+import { ClosePath, Pen } from '../components/icons';
+import { insertNewNodeRelativeToSelection } from '../insert-relative';
 import type { DraftRenderContext, ToolContext, ToolKeyEvent, ToolPointerEvent } from '../types';
 
 const SNAP_MM = 0.1;
 const CLOSE_THRESHOLD_PX = 9;
 const DRAFT_COLOR = '#4da3ff';
 const FIRST_ANCHOR_COLOR = '#ffd75e';
+const DEFAULT_ROLE = 'copper';
 
 const snap = (v: number) => snapToGrid(v, SNAP_MM);
 
@@ -93,7 +96,11 @@ export function derivePenHintBucket(draft: PenDraft | null): PenHintBucket {
   return 'three-plus';
 }
 
-// closed path = filled gold shape, no stroke.
+// closed path = filled gold shape, no stroke. `fill`/`stroke` are
+// placeholders only -- normalizeLayerNodeMaterial (@zpd/core) always
+// overwrites whichever of them is non-null to match wherever the node
+// actually lands (#191: that destination now follows the selection, not
+// always DEFAULT_ROLE).
 export function buildClosedPathLayer(draft: PenDraft): PathLayer {
   return {
     id: mintId('path'),
@@ -101,13 +108,14 @@ export function buildClosedPathLayer(draft: PenDraft): PathLayer {
     type: 'path',
     points: draft.points,
     closed: true,
-    fill: 1,
+    fill: pcbLayerDefinition(DEFAULT_ROLE).color,
     stroke: null,
     strokeWidth: 0,
   };
 }
 
-// open path = gold stroke, no fill.
+// open path = gold stroke, no fill. See buildClosedPathLayer's note on
+// `fill`/`stroke` being re-normalized placeholders.
 export function buildOpenPathLayer(draft: PenDraft): PathLayer {
   return {
     id: mintId('path'),
@@ -116,7 +124,7 @@ export function buildOpenPathLayer(draft: PenDraft): PathLayer {
     points: draft.points,
     closed: false,
     fill: null,
-    stroke: 1,
+    stroke: pcbLayerDefinition(DEFAULT_ROLE).color,
     strokeWidth: 0.6,
   };
 }
@@ -139,7 +147,14 @@ function finishClosed(ctx: ToolContext): void {
   const current = draft;
   if (!canClosePath(current)) return;
   const layer = buildClosedPathLayer(current);
-  ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'copper', layer) });
+  const nextLayers = insertNewNodeRelativeToSelection(
+    ctx.doc.layers,
+    ctx.selectedIds,
+    layer,
+    DEFAULT_ROLE,
+  );
+  if (nextLayers === ctx.doc.layers) return; // refused: commit/select nothing (#191)
+  ctx.commit({ ...ctx.doc, layers: nextLayers });
   ctx.select(layer.id);
   ctx.setActiveTool('select');
   resetDraft(ctx);
@@ -149,7 +164,14 @@ function finishOpen(ctx: ToolContext): void {
   const current = draft;
   if (!canFinishOpen(current)) return;
   const layer = buildOpenPathLayer(current);
-  ctx.commit({ ...ctx.doc, layers: insertPcbNode(ctx.doc.layers, 'copper', layer) });
+  const nextLayers = insertNewNodeRelativeToSelection(
+    ctx.doc.layers,
+    ctx.selectedIds,
+    layer,
+    DEFAULT_ROLE,
+  );
+  if (nextLayers === ctx.doc.layers) return; // refused: commit/select nothing (#191)
+  ctx.commit({ ...ctx.doc, layers: nextLayers });
   ctx.select(layer.id);
   ctx.setActiveTool('select');
   resetDraft(ctx);
@@ -187,8 +209,13 @@ export function PenHintBar({ bucket, onClosePath, onFinishOpen, onCancel }: PenH
         cancel
       </span>
       <span className="pointer-events-auto flex gap-1.5">
-        <ChromeButton disabled={bucket !== 'three-plus'} onClick={onClosePath}>
-          ⬠ Close path
+        <ChromeButton
+          disabled={bucket !== 'three-plus'}
+          onClick={onClosePath}
+          className="flex items-center gap-1"
+        >
+          <ClosePath className="h-3.5 w-3.5" />
+          Close path
         </ChromeButton>
         <ChromeButton disabled={bucket === 'zero' || bucket === 'one'} onClick={onFinishOpen}>
           Finish open
@@ -249,7 +276,7 @@ registerTool({
   id: 'pen',
   label: 'Pen',
   shortcut: 'p',
-  icon: '✒',
+  icon: <Pen className="h-4 w-4" />,
   cursor: 'crosshair',
   description:
     'Click to drop a corner anchor; click-drag pulls out bezier handles for a curved anchor. Click ' +

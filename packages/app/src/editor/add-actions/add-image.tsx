@@ -3,13 +3,14 @@
 // route-import-file.ts) — same classify-then-dispatch path as the
 // clipboard-paste and drop-import subs: a raster image appends a layer
 // directly (via ../import-image.ts), a real SVG opens the import dialog.
+import { Image } from '../components/icons';
 import { registerAddAction } from '../registry/add-actions';
 import { routeImportFile } from '../svg-import/route-import-file';
 
 registerAddAction({
   id: 'add-image',
   label: 'Add image…',
-  icon: '🖼',
+  icon: <Image className="h-4 w-4" />,
   run(ctx) {
     const input = document.createElement('input');
     input.type = 'file';

@@ -3,6 +3,7 @@
 // — one gesture at a time — which is the same pattern a Wave-5 tool uses for
 // its own draft state.
 import { panBy, type Camera } from '../camera';
+import { Pan } from '../components/icons';
 import { registerTool } from '../registry/tools';
 import type { ToolContext, ToolPointerEvent } from '../types';
 
@@ -12,7 +13,7 @@ registerTool({
   id: 'pan',
   label: 'Pan',
   shortcut: 'h',
-  icon: '✋',
+  icon: <Pan className="h-4 w-4" />,
   cursor: 'grab',
   description:
     'Drag to pan the canvas view. Also available from any other tool by holding Space — release it ' +

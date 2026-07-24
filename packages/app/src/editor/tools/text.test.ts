@@ -8,18 +8,25 @@ import { describe, expect, it, vi } from 'vitest';
 import './text'; // registers 'text' as a side effect
 import { getTool } from '../registry/tools';
 import { DEFAULT_FONT_FAMILY } from '../fonts';
-import { createDefaultDoc, createPcbLayerStack, type DocState, Pt, TextLayer } from '@zpd/core';
+import {
+  createDefaultDoc,
+  createPcbLayerStack,
+  type DocState,
+  Pt,
+  type ShapeLayer,
+  TextLayer,
+} from '@zpd/core';
 import { projectFlatLayers } from '../flat-projection';
 import type { PanelDims, ToolContext, ToolPointerEvent } from '../types';
 
 const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
-function stubCtx(doc: DocState): ToolContext {
+function stubCtx(doc: DocState, selectedIds: readonly string[] = []): ToolContext {
   return {
     doc,
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: PANEL,
-    selectedIds: [],
+    selectedIds,
     selectedId: null,
     selectedLayer: null,
     toMm: (p: Pt) => p,
@@ -116,5 +123,37 @@ describe('text tool — material destination (#167)', () => {
     expect(committed.layers[2].children).toEqual([
       expect.objectContaining({ type: 'text', color: 2 }),
     ]);
+  });
+});
+
+describe('text tool — selection-relative placement (#191)', () => {
+  it('lands the new text directly above a selected copper object, inside copper', () => {
+    const anchor: ShapeLayer = {
+      id: 'cu-anchor',
+      name: 'cu-anchor',
+      type: 'shape',
+      shape: 'rect',
+      x: 0,
+      y: 0,
+      width: 5,
+      height: 5,
+      color: 1,
+    };
+    const doc: DocState = {
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack({ copper: [anchor] }),
+    };
+    const ctx = stubCtx(doc, ['cu-anchor']);
+
+    text.onPointerDown?.(ptr({ x: 12, y: 24 }), ctx);
+
+    const committed = vi.mocked(ctx.commit).mock.calls[0]![0];
+    expect(committed.layers[0].children.map((n) => n.id)).toEqual([
+      'cu-anchor',
+      expect.stringMatching(/^text-/),
+    ]);
+    const added = projectFlatLayers(committed.layers).find((l) => l.id !== 'cu-anchor')!;
+    expect(added).toMatchObject({ type: 'text', color: 1 });
   });
 });

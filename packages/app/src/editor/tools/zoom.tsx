@@ -1,6 +1,7 @@
 // Built-in zoom tool (Z). Click = zoom in anchored at the click point,
 // Alt-click = zoom out. Anchoring is entirely camera.zoomAt's job.
 import { zoomAt } from '../camera';
+import { Zoom } from '../components/icons';
 import { registerTool } from '../registry/tools';
 import type { ToolContext, ToolPointerEvent } from '../types';
 
@@ -11,7 +12,7 @@ registerTool({
   id: 'zoom',
   label: 'Zoom',
   shortcut: 'z',
-  icon: '🔍',
+  icon: <Zoom className="h-4 w-4" />,
   cursor: 'zoom-in',
   description:
     'Click to zoom in, anchored at the click point; Alt-click to zoom out. The mouse wheel also ' +

@@ -2,7 +2,7 @@
 // tool / inspector / add-action / dialog is a NEW file under tools|inspectors|
 // add-actions|dialogs that calls the matching register*() at module load. No
 // existing file is edited to add one (see editor/README.md).
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import type { Camera } from './camera';
 import type { DocState, Layer, PcbLayerRole, Pt, Rect } from '@zpd/core';
 
@@ -138,7 +138,7 @@ export interface ToolModule {
   id: string;
   label: string;
   shortcut?: string; // single key, matched case-insensitively
-  icon?: string;
+  icon?: ReactNode;
   cursor?: string; // CSS cursor while this tool is active
   // 2-4 sentences for the sidebar Help panel (#36): what the tool does, key
   // pointer interactions, the shortcut. Optional — keeps the extension
@@ -190,7 +190,7 @@ export type InspectorComponent<L extends Layer = Layer> = ComponentType<Inspecto
 export interface AddAction {
   id: string;
   label: string;
-  icon?: string;
+  icon?: ReactNode;
   run(ctx: ToolContext): void;
 }
 

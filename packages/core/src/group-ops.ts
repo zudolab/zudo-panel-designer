@@ -696,6 +696,80 @@ export function movePcbNode(
   return insertPcbNode(afterRemoval, targetRole, found.node, parentId, index);
 }
 
+// A destination for insertPcbNode/movePcbNode: which container, which parent
+// group (null = root level of that container), and which sibling index.
+export interface PcbInsertionSlot {
+  role: PcbLayerRole;
+  parentId: string | null;
+  index: number;
+}
+
+// The slot that places a new node directly ABOVE `anchorId`: the anchor's
+// own container role, the anchor's own parent (its innermost enclosing
+// group id, or null when the anchor is already root-level), and the
+// anchor's sibling index + 1. Works uniformly whether the anchor is a leaf
+// or a group — FoundNode.pathIds never includes the target's own id even
+// when the target is itself a group, so a group anchor naturally resolves
+// to the sibling slot above it rather than a slot inside it. Returns null
+// when `anchorId` does not exist in the stack.
+export function pcbInsertionSlotAbove(
+  stack: PcbLayerStack,
+  anchorId: string,
+): PcbInsertionSlot | null {
+  const found = findPcbNodeById(stack, anchorId);
+  if (!found) return null;
+  const parentId = found.pathIds.length > 0 ? found.pathIds[found.pathIds.length - 1] : null;
+  let siblings = found.container.children;
+  for (const groupId of found.pathIds) {
+    const groupNode = siblings.find((node) => node.id === groupId);
+    if (!groupNode || !isGroupNode(groupNode)) return null; // unreachable: pathIds are always groups
+    siblings = groupNode.children;
+  }
+  const anchorIndex = siblings.findIndex((node) => node.id === anchorId);
+  if (anchorIndex < 0) return null; // unreachable: findPcbNodeById already located it
+  return { role: found.role, parentId, index: anchorIndex + 1 };
+}
+
+// For a ROOT-LEVEL child of a PCB container sitting at that container's
+// boundary, the slot in the physically adjacent container. Stack order is
+// bottom-to-top [copper, solder-mask, silkscreen] (PcbLayerStack); the panel
+// renders it reversed (silkscreen section on top), so "moving up" (dir=+1)
+// crosses toward the next stack index and "moving down" (dir=-1) crosses
+// toward the previous one:
+//   dir=-1 on container[k].children[0]      -> end of container[k-1].children
+//   dir=+1 on the LAST child of container[k] -> index 0 of container[k+1].children
+// Returns null when: `id` is not found, `id` is not a root-level child of
+// its container (grouped items keep today's clamp-to-container behavior),
+// the node is not at the boundary for the requested direction, or there is
+// no adjacent container in that direction (dir=+1 at silkscreen, dir=-1 at
+// copper).
+export function pcbBoundaryCrossContainerSlot(
+  stack: PcbLayerStack,
+  id: string,
+  dir: -1 | 1,
+): PcbInsertionSlot | null {
+  const found = findPcbNodeById(stack, id);
+  if (!found) return null;
+  if (found.pathIds.length > 0) return null; // grouped node: not root-level
+
+  const children = found.container.children;
+  const nodeIndex = children.findIndex((node) => node.id === id);
+  if (nodeIndex < 0) return null; // unreachable: findPcbNodeById already located it
+  const containerIndex = stack.findIndex((container) => container.role === found.role);
+
+  if (dir === -1) {
+    if (nodeIndex !== 0) return null; // not at the bottom boundary
+    const adjacent = stack[containerIndex - 1];
+    if (!adjacent) return null; // copper has no container below it
+    return { role: adjacent.role, parentId: null, index: adjacent.children.length };
+  }
+
+  if (nodeIndex !== children.length - 1) return null; // not at the top boundary
+  const adjacent = stack[containerIndex + 1];
+  if (!adjacent) return null; // silkscreen has no container above it
+  return { role: adjacent.role, parentId: null, index: 0 };
+}
+
 export interface ClonePcbNodeResult {
   stack: PcbLayerStack;
   node: LayerNode | null;
