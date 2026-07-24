@@ -145,6 +145,7 @@ describe('surface snapshot', () => {
         baseColor: fakeCanvas(240, 514),
         metalness: fakeCanvas(240, 514),
         roughness: fakeCanvas(240, 514),
+        height: fakeCanvas(240, 514),
       },
     });
 
@@ -152,10 +153,12 @@ describe('surface snapshot', () => {
     expect(snapshot.maps.baseColor.colorSpace).toBe('srgb');
     expect(snapshot.maps.metalness.colorSpace).toBe('linear-scalar');
     expect(snapshot.maps.roughness.colorSpace).toBe('linear-scalar');
+    expect(snapshot.maps.height.colorSpace).toBe('linear-scalar');
     expect(PREVIEW_MAP_COLOR_SPACES).toEqual({
       baseColor: 'srgb',
       metalness: 'linear-scalar',
       roughness: 'linear-scalar',
+      height: 'linear-scalar',
     });
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.physicalDimensions)).toBe(true);
@@ -174,6 +177,7 @@ describe('surface snapshot', () => {
           baseColor: fakeCanvas(239, 514),
           metalness: fakeCanvas(240, 514),
           roughness: fakeCanvas(240, 514),
+          height: fakeCanvas(240, 514),
         },
       }),
     ).toThrow('every preview canvas must match');
@@ -191,6 +195,7 @@ describe('surface snapshot', () => {
           baseColor: fakeCanvas(240, 514),
           metalness: fakeCanvas(240, 514),
           roughness: fakeCanvas(240, 514),
+          height: fakeCanvas(240, 514),
         },
       }),
     ).toThrow('thicknessMm must be a positive finite number');
@@ -260,6 +265,7 @@ describe('preview texture ownership', () => {
       baseColor: texture(`${prefix}:base`, events),
       metalness: texture(`${prefix}:metalness`, events),
       roughness: texture(`${prefix}:roughness`, events),
+      height: texture(`${prefix}:height`, events),
     };
   }
 
@@ -278,6 +284,7 @@ describe('preview texture ownership', () => {
       'dispose:old:base',
       'dispose:old:metalness',
       'dispose:old:roughness',
+      'dispose:old:height',
     ]);
   });
 
@@ -297,13 +304,19 @@ describe('preview texture ownership', () => {
       'dispose:new:base',
       'dispose:new:metalness',
       'dispose:new:roughness',
+      'dispose:new:height',
     ]);
   });
 
   it('disposes a shared texture only once during final scene teardown', () => {
     const dispose = vi.fn();
     const shared = { dispose };
-    disposePreviewTextureSet({ baseColor: shared, metalness: shared, roughness: shared });
+    disposePreviewTextureSet({
+      baseColor: shared,
+      metalness: shared,
+      roughness: shared,
+      height: shared,
+    });
     expect(dispose).toHaveBeenCalledOnce();
   });
 
@@ -315,11 +328,15 @@ describe('preview texture ownership', () => {
     };
     const metalness = { dispose: vi.fn() };
     const roughness = { dispose: vi.fn() };
+    const height = { dispose: vi.fn() };
 
-    expect(() => disposePreviewTextureSet({ baseColor, metalness, roughness })).not.toThrow();
+    expect(() =>
+      disposePreviewTextureSet({ baseColor, metalness, roughness, height }),
+    ).not.toThrow();
     expect(baseColor.dispose).toHaveBeenCalledOnce();
     expect(metalness.dispose).toHaveBeenCalledOnce();
     expect(roughness.dispose).toHaveBeenCalledOnce();
+    expect(height.dispose).toHaveBeenCalledOnce();
   });
 
   it('rejects overlapping ownership without installing or disposing either set', () => {
@@ -349,7 +366,7 @@ describe('debug and accessibility contracts', () => {
         distance: 3.75,
         panModeEnabled: true,
       },
-      materialParameters: { metalness: 1, roughness: 1, environmentIntensity: 1.2 },
+      materialParameters: { metalness: 1, roughness: 1, environmentIntensity: 1.2, bumpScale: 0.3 },
     };
 
     expect(JSON.parse(JSON.stringify(summary))).toEqual(summary);
@@ -362,6 +379,10 @@ describe('debug and accessibility contracts', () => {
     expect(copy.stageInstructions).toContain('Reset');
     expect(copy.panelSummary).toContain('100 mm wide by 50 mm high by 2.5 mm thick');
     expect(copy.panelSummary).toContain('exposed copper with the gold/HASL finish is metallic');
+    // Inverted mask + emboss semantics (epic #176): the mask covers by
+    // default, drawn openings expose, and copper reads embossed.
+    expect(copy.panelSummary).toContain('covers the board except where drawn openings expose it');
+    expect(copy.panelSummary).toContain('emboss');
   });
 });
 

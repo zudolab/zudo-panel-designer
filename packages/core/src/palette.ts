@@ -1,6 +1,7 @@
 // Fixed 3-color palette — the physical PCB panel finish decides these:
-// black = soldermask, gold = exposed copper with the product's HASL finish,
-// white = silkscreen.
+// black routes to the solder-mask container, where it OPENS the mask
+// (reveals copper, or bare substrate, beneath) rather than painting mask on;
+// gold = exposed copper with the product's HASL finish; white = silkscreen.
 // The hex values are display approximations for the editor UI; the color
 // names are the contract other packages (patterns, serialize, app) rely on.
 import type { ColorIndex, PcbLayerContainer, PcbLayerRole, PcbLayerStack } from './types';
@@ -13,7 +14,7 @@ export interface PaletteEntry {
 }
 
 export const PALETTE: readonly PaletteEntry[] = [
-  { index: 0, name: 'black', hex: '#151515', note: 'soldermask' },
+  { index: 0, name: 'black', hex: '#151515', note: 'solder-mask opening (reveals copper beneath)' },
   { index: 1, name: 'gold', hex: '#d4af37', note: 'exposed copper (gold/HASL)' },
   { index: 2, name: 'white', hex: '#f2f0e9', note: 'silkscreen' },
 ] as const;
@@ -52,6 +53,14 @@ export function pcbLayerDefinition<R extends PcbLayerRole>(role: R): PcbLayerDef
 export function pcbLayerRoleForColor(color: ColorIndex): PcbLayerRole {
   return color === 1 ? 'copper' : color === 2 ? 'silkscreen' : 'solder-mask';
 }
+
+// Bare FR4 laminate visible through a solder-mask opening with no copper
+// beneath it. Not a PaletteEntry: it has no ColorIndex/palette slot — it
+// never appears as a drawable layer color, only as a renderer fill value.
+export const PCB_SUBSTRATE: { hex: string; note: string } = {
+  hex: '#a8946a',
+  note: 'bare FR4 laminate under mask openings',
+};
 
 export function createPcbLayerContainer<R extends PcbLayerRole>(
   role: R,

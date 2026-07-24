@@ -430,6 +430,22 @@ describe('LayerList tree rendering (#153)', () => {
     expect(within(header).queryByTitle('Bring forward')).toBeNull();
   });
 
+  it('flags the solder-mask section as opening the mask (negative semantics), not just copper', () => {
+    const { ctx } = nodeTreeCtx(fixtureTree());
+    const { container } = render(<LayerList ctx={ctx} selectedIds={[]} />);
+
+    const solderMask = container.querySelector(
+      '[data-material-role="solder-mask"]',
+    ) as HTMLElement;
+    const header = solderMask.querySelector(':scope > div') as HTMLElement;
+    expect(header.getAttribute('title')).toMatch(/open the mask/i);
+    expect(within(solderMask).getByText(/open the mask/i)).toBeTruthy();
+
+    const copper = container.querySelector('[data-material-role="copper"]') as HTMLElement;
+    const copperHeader = copper.querySelector(':scope > div') as HTMLElement;
+    expect(copperHeader.hasAttribute('title')).toBe(false);
+  });
+
   it('keeps fixed-control Space activation local and un-cancelled', () => {
     const { ctx, commit } = nodeTreeCtx(fixtureTree());
     render(<LayerList ctx={ctx} selectedIds={[]} />);

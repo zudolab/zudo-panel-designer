@@ -301,6 +301,7 @@ const fakes = vi.hoisted(() => {
       baseColor: { anisotropy: 0 },
       metalness: { anisotropy: 0 },
       roughness: { anisotropy: 0 },
+      height: { anisotropy: 0 },
     };
     dimensions: { widthMm: number; heightMm: number; thicknessMm: number };
     surfaceRevision: number;
@@ -416,6 +417,7 @@ vi.mock('./board-model', () => ({
     metalness: 1,
     roughness: 0.24,
     environmentIntensity: 1.35,
+    bumpScale: 0.3,
   },
   createPreviewBoardModel: (snapshot: ConstructorParameters<typeof fakes.FakeBoard>[0]) =>
     new fakes.FakeBoard(snapshot),
@@ -439,7 +441,7 @@ function snapshot(
       heightPx: 257,
       effectivePixelsPerMm: Math.min(121 / dimensions.widthMm, 257 / dimensions.heightMm),
     },
-    canvases: { baseColor: source, metalness: source, roughness: source },
+    canvases: { baseColor: source, metalness: source, roughness: source, height: source },
   });
 }
 
@@ -503,7 +505,13 @@ describe('preview scene runtime lifecycle', () => {
       activeCanvasCount: 1,
       surfaceRevision: 1,
       physicalDimensions: { widthMm: 60.6, heightMm: 128.5, thicknessMm: 2.5 },
+      materialParameters: { bumpScale: 0.3 },
     });
+    // Every owned texture — including the height/bump map — picks up the
+    // renderer-capped anisotropy on snapshot application.
+    const boardTextures = Object.values(fakes.state.boards[0].textures);
+    expect(boardTextures).toHaveLength(4);
+    expect(boardTextures.every((texture) => texture.anisotropy === 8)).toBe(true);
 
     fakes.state.throwOnGeometryDispose = true;
     expect(() => runtime.dispose()).not.toThrow();

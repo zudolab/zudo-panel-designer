@@ -2,7 +2,7 @@ import { createPcbLayerStack, type DocState } from '@zpd/core';
 
 // Compact manufacturing corpus: every entry exercises a surface-map rule,
 // while the first three rectangles form stable interior sampling points away
-// from antialiased edges (gold-only, black-over-gold, white-over-black).
+// from antialiased edges (masked gold, opening-over-gold, white-over-mask).
 export function representativeSurfaceMapDoc(): DocState {
   return {
     panelHp: 8,
@@ -90,8 +90,10 @@ export function representativeSurfaceMapDoc(): DocState {
       ],
       'solder-mask': [
         {
-          id: 'black-over-gold',
-          name: 'Black over gold',
+          // Negative semantics: a visible mask leaf is an OPENING that
+          // reveals the copper beneath it.
+          id: 'opening-over-gold',
+          name: 'Opening over gold',
           type: 'shape',
           shape: 'rect',
           x: 8,
@@ -102,7 +104,7 @@ export function representativeSurfaceMapDoc(): DocState {
         },
         {
           id: 'mask-opening',
-          name: 'Positive mask with copper reveal',
+          name: 'Opening with re-masked hole',
           type: 'path',
           points: [
             { x: 2, y: 30 },

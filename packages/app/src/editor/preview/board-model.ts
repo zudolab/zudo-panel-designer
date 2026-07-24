@@ -22,10 +22,18 @@ export const PREVIEW_SIDE_MATERIAL_INDEX = 1;
 export const PREVIEW_BACK_MATERIAL_INDEX = 2;
 export const PREVIEW_ENVIRONMENT_INTENSITY = 1.35;
 
+// Bump strength for the combined height map (epic #176). Board world units
+// are millimeters, and the height field spans 0..~1 (substrate..mask over
+// copper), so 0.3 reads as an exaggerated ~0.2-0.4 mm copper emboss under
+// the draping mask. Tune this single constant to calibrate visually — bump
+// perturbs shading normals only, never silhouette geometry.
+export const PREVIEW_BUMP_SCALE = 0.3;
+
 export const PREVIEW_GOLD_MATERIAL_PARAMETERS = Object.freeze({
   metalness: PCB_SURFACE_MATERIALS[1].metalness,
   roughness: PCB_SURFACE_MATERIALS[1].roughness,
   environmentIntensity: PREVIEW_ENVIRONMENT_INTENSITY,
+  bumpScale: PREVIEW_BUMP_SCALE,
 });
 
 export type PreviewCanvasTexture = CanvasTexture<PreviewCanvasSource>;
@@ -79,17 +87,20 @@ export function createPreviewTextureSet(
     owned.push(metalness);
     const roughness = new CanvasTexture<PreviewCanvasSource>(snapshot.maps.roughness.source);
     owned.push(roughness);
+    const height = new CanvasTexture<PreviewCanvasSource>(snapshot.maps.height.source);
+    owned.push(height);
 
     baseColor.colorSpace = SRGBColorSpace;
     metalness.colorSpace = NoColorSpace;
     roughness.colorSpace = NoColorSpace;
+    height.colorSpace = NoColorSpace;
     for (const texture of owned) {
       texture.flipY = true;
       texture.generateMipmaps = true;
       texture.needsUpdate = true;
     }
 
-    return Object.freeze({ baseColor, metalness, roughness });
+    return Object.freeze({ baseColor, metalness, roughness, height });
   } catch (error) {
     disposeAllSafely(owned.map((texture) => () => texture.dispose()));
     throw error;
@@ -108,6 +119,8 @@ export function createPreviewBoardMaterials(
       metalnessMap: textures.metalness,
       roughness: 1,
       roughnessMap: textures.roughness,
+      bumpMap: textures.height,
+      bumpScale: PREVIEW_BUMP_SCALE,
       envMapIntensity: PREVIEW_ENVIRONMENT_INTENSITY,
       transparent: false,
       opacity: 1,
@@ -138,6 +151,7 @@ function installTextures(front: MeshStandardMaterial, textures: PreviewTextureSe
   front.map = textures.baseColor;
   front.metalnessMap = textures.metalness;
   front.roughnessMap = textures.roughness;
+  front.bumpMap = textures.height;
   front.needsUpdate = true;
 }
 

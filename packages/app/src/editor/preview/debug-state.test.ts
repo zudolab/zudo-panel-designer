@@ -24,7 +24,12 @@ function summary(revision: number): PreviewDebugSummary {
       distance: 4,
       panModeEnabled: false,
     },
-    materialParameters: { metalness: 1, roughness: 0.24, environmentIntensity: 1.35 },
+    materialParameters: {
+      metalness: 1,
+      roughness: 0.24,
+      environmentIntensity: 1.35,
+      bumpScale: 0.3,
+    },
   };
 }
 
@@ -80,7 +85,7 @@ describe('preview debug state', () => {
       heightMm: 2,
       thicknessMm: 2.5,
       rasterSize: { widthPx: 4, heightPx: 2, effectivePixelsPerMm: 1 },
-      canvases: { baseColor: source, metalness: source, roughness: source },
+      canvases: { baseColor: source, metalness: source, roughness: source, height: source },
     });
     const publisher = createPreviewDebugPublisher();
     publisher.publish(summary(9), snapshot);
@@ -110,7 +115,7 @@ describe('preview debug state', () => {
       heightMm: 1,
       thicknessMm: 2.5,
       rasterSize: { widthPx: 2, heightPx: 1, effectivePixelsPerMm: 1 },
-      canvases: { baseColor: source, metalness: source, roughness: source },
+      canvases: { baseColor: source, metalness: source, roughness: source, height: source },
     });
     const publisher = createPreviewDebugPublisher();
     publisher.publish(summary(12), snapshot);

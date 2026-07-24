@@ -902,6 +902,15 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
         const definition = PCB_LAYER_DEFINITIONS.find(({ role }) => role === container.role)!;
         const collapsed = collapsedMaterialRoles.has(container.role);
         const headingId = `pcb-material-${container.role}`;
+        // Solder mask is negative: a shape placed here doesn't paint mask —
+        // it OPENS one, revealing copper (or bare substrate) beneath. Nothing
+        // else in this row's visuals hints at that, so spell it out via a
+        // hover tooltip plus screen-reader-only text folded into the
+        // section's accessible name (aria-labelledby={headingId}).
+        const openingsHint =
+          container.role === 'solder-mask'
+            ? "Objects on this layer open the mask, revealing copper — or bare substrate where there's no copper — beneath"
+            : null;
         return (
           <section
             key={container.role}
@@ -909,7 +918,10 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
             data-material-role={container.role}
             className="overflow-hidden rounded-md border border-neutral-700 bg-neutral-950/40"
           >
-            <div className="flex min-h-8 items-center gap-1 border-b border-neutral-700 bg-neutral-800/80 px-1.5 text-xs font-medium text-neutral-100">
+            <div
+              title={openingsHint ?? undefined}
+              className="flex min-h-8 items-center gap-1 border-b border-neutral-700 bg-neutral-800/80 px-1.5 text-xs font-medium text-neutral-100"
+            >
               <button
                 type="button"
                 aria-label={collapsed ? `Expand ${definition.name}` : `Collapse ${definition.name}`}
@@ -927,6 +939,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
               />
               <span id={headingId} className="min-w-0 flex-1 truncate">
                 {definition.name}
+                {openingsHint && <span className="sr-only"> — {openingsHint}</span>}
               </span>
               <span className="text-[10px] font-normal text-neutral-400">
                 {PALETTE[definition.color].name}

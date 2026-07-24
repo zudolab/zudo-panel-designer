@@ -75,7 +75,7 @@ test('@smoke fixed PCB containers preserve material, persistence, and physical o
     material: 'copper',
     color: 1,
   });
-  expect(await bridge(page).getMaterialLayer('black-over-gold')).toMatchObject({
+  expect(await bridge(page).getMaterialLayer('opening-over-gold')).toMatchObject({
     material: 'solder-mask',
     color: 0,
   });
