@@ -316,11 +316,12 @@ function SvgImportDialog({ props, close, ctx }: DialogProps<SvgImportDialogProps
       {vectorAvailable && (
         <>
           {/* Solder mask is negative: a shape routed there doesn't paint
-              mask, it opens one, revealing copper beneath. Routing itself is
-              unchanged (black still -> solder-mask container) — this is copy
-              only. */}
+              mask, it opens one, revealing copper (or bare substrate where
+              there's no copper) beneath. Routing itself is unchanged (black
+              still -> solder-mask container) — this is copy only. */}
           <p className="mb-2 text-[11px] text-neutral-500">
-            Shapes mapped to Solder mask open the mask there, revealing copper beneath.
+            Shapes mapped to Solder mask open the mask there, revealing copper — or bare substrate
+            — beneath.
           </p>
           <div className="flex gap-4">
             {/* Capped + scrollable: the extractor allows up to MAX_COLORS-1

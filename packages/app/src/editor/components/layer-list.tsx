@@ -909,7 +909,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
         // section's accessible name (aria-labelledby={headingId}).
         const openingsHint =
           container.role === 'solder-mask'
-            ? 'Objects on this layer open the mask, revealing copper beneath'
+            ? "Objects on this layer open the mask, revealing copper — or bare substrate where there's no copper — beneath"
             : null;
         return (
           <section

@@ -53,7 +53,8 @@ export function MaterialField({ role }: { role: PcbLayerRole | null }) {
           one, revealing copper (or bare substrate) beneath. */}
       {role === 'solder-mask' && (
         <p className="text-[10px] leading-snug text-neutral-500">
-          Objects on this layer open the mask, revealing copper beneath.
+          Objects on this layer open the mask, revealing copper — or bare substrate where there's
+          no copper — beneath.
         </p>
       )}
     </>
