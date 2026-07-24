@@ -29,6 +29,8 @@ import { projectFlatLayers } from '../flat-projection';
 import {
   PCB_SUBSTRATE_SURFACE_MATERIAL,
   PCB_SURFACE_MATERIALS,
+  PREVIEW_HEIGHT_COPPER_COLOR,
+  PREVIEW_HEIGHT_MASK_COLOR,
   createPreviewSurfaceMapGenerator,
   surfaceMapColorForPalette,
   surfaceMapSubstrateColor,
@@ -266,20 +268,25 @@ function pathContains(path: RecordingPath2D, x: number, y: number): boolean {
 
 // Replays a canvas call log at one sample point, modeling the negative-mask
 // composite: `apply` receives the style of every covering paint — or null for
-// a destination-out punch that erases the point. Mask-sheet drawImage calls
-// recurse into the sheet's own log, truncated to calls issued before the
-// composite (the shared sheet is re-filled and re-punched per map).
+// a destination-out punch that erases the point — plus the composite
+// operation the paint landed under (the height map adds its mask sheet via
+// 'lighter'). Mask-sheet drawImage calls recurse into the sheet's own log,
+// truncated to calls issued before the composite (the shared sheet is
+// re-filled and re-punched per map).
 function replayStyleAt(
   calls: readonly CanvasCall[],
   x: number,
   y: number,
-  apply: (style: string | null) => void,
+  apply: (style: string | null, compositeOperation: string) => void,
 ): void {
   let pendingRect: readonly number[] | null = null;
   const contains = (rect: readonly number[]) =>
     x > rect[0] && x < rect[0] + rect[2] && y > rect[1] && y < rect[1] + rect[3];
   const applyCall = (call: CanvasCall): void => {
-    apply(call.globalCompositeOperation === 'destination-out' ? null : call.fillStyle);
+    apply(
+      call.globalCompositeOperation === 'destination-out' ? null : call.fillStyle,
+      call.globalCompositeOperation,
+    );
   };
   for (const call of calls) {
     if (call.method === 'beginPath') pendingRect = null;
@@ -311,7 +318,7 @@ function replayStyleAt(
         x,
         y,
       );
-      if (sheetStyle !== null) apply(sheetStyle);
+      if (sheetStyle !== null) apply(sheetStyle, call.globalCompositeOperation);
     }
   }
 }
@@ -335,6 +342,22 @@ function topMaterialAt(calls: readonly CanvasCall[], x: number, y: number): stri
     if (coveringStyle !== null) style = coveringStyle;
   });
   return style;
+}
+
+function grayLevel(style: string): number {
+  return Number.parseInt(style.slice(1, 3), 16) / 255;
+}
+
+// Models the height map's additive composite at one point: a source-over
+// paint replaces the accumulated level, a 'lighter' composite adds to it.
+function heightLevelAt(calls: readonly CanvasCall[], x: number, y: number): number {
+  let level = 0;
+  replayStyleAt(calls, x, y, (style, compositeOperation) => {
+    if (style === null) return;
+    level =
+      compositeOperation === 'lighter' ? Math.min(1, level + grayLevel(style)) : grayLevel(style);
+  });
+  return level;
 }
 
 const originalPath2D = globalThis.Path2D;
@@ -407,89 +430,90 @@ describe('PCB surface material classification', () => {
 });
 
 describe('createPreviewSurfaceMapGenerator', () => {
+  const artwork = {
+    copper: [
+      {
+        id: 'copper',
+        name: 'Copper',
+        type: 'shape' as const,
+        shape: 'rect' as const,
+        x: 2,
+        y: 2,
+        width: 20,
+        height: 20,
+        color: 0 as const, // stale on purpose
+      },
+      {
+        id: 'image',
+        name: 'Reference image',
+        type: 'image' as const,
+        src: 'data:image/png;base64,fixture',
+        x: 2,
+        y: 2,
+        width: 30,
+        height: 20,
+      },
+    ],
+    mask: [
+      {
+        id: 'mask',
+        name: 'Opening with re-masked hole',
+        type: 'path' as const,
+        points: [
+          { x: 8, y: 2 },
+          { x: 32, y: 2 },
+          { x: 32, y: 22 },
+          { x: 8, y: 22 },
+        ],
+        extraSubpaths: [
+          [
+            { x: 12, y: 6 },
+            { x: 16, y: 6 },
+            { x: 16, y: 12 },
+            { x: 12, y: 12 },
+          ],
+        ],
+        closed: true,
+        fill: 2 as const, // stale on purpose
+        stroke: null,
+        strokeWidth: 0,
+      },
+    ],
+    silk: [
+      {
+        id: 'silk',
+        name: 'Silk',
+        type: 'shape' as const,
+        shape: 'rect' as const,
+        x: 24,
+        y: 2,
+        width: 6,
+        height: 6,
+        color: 1 as const, // stale on purpose
+      },
+    ],
+  };
+  const generate = (hidden: { mask?: boolean; silk?: boolean } = {}) => {
+    const stack = createPcbLayerStack({
+      copper: artwork.copper,
+      'solder-mask': artwork.mask,
+      silkscreen: artwork.silk,
+    });
+    if (hidden.mask) stack[1] = { ...stack[1], hidden: true };
+    if (hidden.silk) stack[2] = { ...stack[2], hidden: true };
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: { panelHp: 8, layers: stack },
+      ticket: ticket(21),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+    generator.close();
+    return snapshot;
+  };
+
   it('composes fixed materials identically across base color and scalar maps', () => {
-    const artwork = {
-      copper: [
-        {
-          id: 'copper',
-          name: 'Copper',
-          type: 'shape' as const,
-          shape: 'rect' as const,
-          x: 2,
-          y: 2,
-          width: 20,
-          height: 20,
-          color: 0 as const, // stale on purpose
-        },
-        {
-          id: 'image',
-          name: 'Reference image',
-          type: 'image' as const,
-          src: 'data:image/png;base64,fixture',
-          x: 2,
-          y: 2,
-          width: 30,
-          height: 20,
-        },
-      ],
-      mask: [
-        {
-          id: 'mask',
-          name: 'Opening with re-masked hole',
-          type: 'path' as const,
-          points: [
-            { x: 8, y: 2 },
-            { x: 32, y: 2 },
-            { x: 32, y: 22 },
-            { x: 8, y: 22 },
-          ],
-          extraSubpaths: [
-            [
-              { x: 12, y: 6 },
-              { x: 16, y: 6 },
-              { x: 16, y: 12 },
-              { x: 12, y: 12 },
-            ],
-          ],
-          closed: true,
-          fill: 2 as const, // stale on purpose
-          stroke: null,
-          strokeWidth: 0,
-        },
-      ],
-      silk: [
-        {
-          id: 'silk',
-          name: 'Silk',
-          type: 'shape' as const,
-          shape: 'rect' as const,
-          x: 24,
-          y: 2,
-          width: 6,
-          height: 6,
-          color: 1 as const, // stale on purpose
-        },
-      ],
-    };
-    const generate = (hidden: { mask?: boolean; silk?: boolean } = {}) => {
-      const stack = createPcbLayerStack({
-        copper: artwork.copper,
-        'solder-mask': artwork.mask,
-        silkscreen: artwork.silk,
-      });
-      if (hidden.mask) stack[1] = { ...stack[1], hidden: true };
-      if (hidden.silk) stack[2] = { ...stack[2], hidden: true };
-      const recording = recordingCanvasFactory();
-      const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
-      const snapshot = generator.generate({
-        doc: { panelHp: 8, layers: stack },
-        ticket: ticket(21),
-        preferredPixelsPerMm: 1,
-        maximumTextureSizePx: 512,
-      });
-      generator.close();
-      return snapshot;
-    };
     // Negative mask semantics: the sheet covers everything the punches do not
     // open, an opening resolves to what lies beneath (copper, else substrate).
     const samples = [
@@ -538,6 +562,43 @@ describe('createPreviewSurfaceMapGenerator', () => {
     }
   });
 
+  it('encodes the combined top surface additively in the height map', () => {
+    const copperLevel = grayLevel(PREVIEW_HEIGHT_COPPER_COLOR);
+    const maskLevel = grayLevel(PREVIEW_HEIGHT_MASK_COLOR);
+    const visible = generate();
+    const heightCanvas = visible.maps.height.source as unknown as RecordingCanvas;
+
+    // The four physical levels order strictly: substrate < mask-only <
+    // open copper < mask-over-copper (epic #176 pinned semantics).
+    const substrate = heightLevelAt(heightCanvas.calls, 28, 12); // opening over nothing
+    const maskOnly = heightLevelAt(heightCanvas.calls, 36, 40); // covered, no copper
+    const openCopper = heightLevelAt(heightCanvas.calls, 10, 4); // opening over copper
+    const maskOverCopper = heightLevelAt(heightCanvas.calls, 4, 4); // un-punched mask over copper
+    expect(substrate).toBe(0);
+    expect(maskOnly).toBeCloseTo(maskLevel, 10);
+    expect(openCopper).toBeCloseTo(copperLevel, 10);
+    expect(maskOverCopper).toBeCloseTo(copperLevel + maskLevel, 10);
+    expect(substrate).toBeLessThan(maskOnly);
+    expect(maskOnly).toBeLessThan(openCopper);
+    expect(openCopper).toBeLessThan(maskOverCopper);
+    // The even-odd hole re-masks: mask thickness returns on top of copper.
+    expect(heightLevelAt(heightCanvas.calls, 14, 8)).toBeCloseTo(copperLevel + maskLevel, 10);
+    // Silkscreen ink never adds height, even where it paints in other maps.
+    expect(heightLevelAt(heightCanvas.calls, 26, 4)).toBe(0);
+
+    // Exactly one sheet composite, and it is additive.
+    const drawImageCalls = heightCanvas.calls.filter((call) => call.method === 'drawImage');
+    expect(drawImageCalls).toHaveLength(1);
+    expect(drawImageCalls[0]!.globalCompositeOperation).toBe('lighter');
+
+    // Hidden mask container: no sheet, so no mask thickness anywhere.
+    const maskHidden = generate({ mask: true });
+    const maskHiddenCanvas = maskHidden.maps.height.source as unknown as RecordingCanvas;
+    expect(maskHiddenCanvas.calls.some((call) => call.method === 'drawImage')).toBe(false);
+    expect(heightLevelAt(maskHiddenCanvas.calls, 4, 4)).toBeCloseTo(copperLevel, 10);
+    expect(heightLevelAt(maskHiddenCanvas.calls, 36, 40)).toBe(0);
+  });
+
   it('sizes every map within the runtime cap and returns exact physical/orientation metadata', () => {
     const doc = representativeSurfaceMapDoc();
     const before = JSON.stringify(doc);
@@ -563,8 +624,8 @@ describe('createPreviewSurfaceMapGenerator', () => {
       2,
     );
     expect(snapshot.orientation.documentTopLeftUv).toEqual({ u: 0, v: 1 });
-    // Three maps plus the one shared mask sheet, all at the chosen raster.
-    expect(recording.canvases).toHaveLength(4);
+    // Four maps plus the one shared mask sheet, all at the chosen raster.
+    expect(recording.canvases).toHaveLength(5);
     expect(recording.canvases.every((canvas) => canvas.width === snapshot.rasterSize.widthPx)).toBe(
       true,
     );
@@ -588,8 +649,10 @@ describe('createPreviewSurfaceMapGenerator', () => {
     const baseColor = snapshot.maps.baseColor.source as unknown as RecordingCanvas;
     const metalness = snapshot.maps.metalness.source as unknown as RecordingCanvas;
     const roughness = snapshot.maps.roughness.source as unknown as RecordingCanvas;
+    const height = snapshot.maps.height.source as unknown as RecordingCanvas;
     const maskSheet = recording.canvases.find(
-      (canvas) => canvas !== baseColor && canvas !== metalness && canvas !== roughness,
+      (canvas) =>
+        canvas !== baseColor && canvas !== metalness && canvas !== roughness && canvas !== height,
     )!;
 
     for (const [mapName, canvas] of [
@@ -672,10 +735,15 @@ describe('createPreviewSurfaceMapGenerator', () => {
       expect(canvas.calls.some((call) => call.method === 'fillText')).toBe(true);
     }
 
-    // The shared sheet is re-filled with each map's soldermask value and
-    // punched under destination-out: the fixture's path opening keeps its
-    // even-odd holes and its stroke erases alpha too.
-    const mapNames = ['baseColor', 'metalness', 'roughness'] as const;
+    // The shared sheet is re-filled with each map's soldermask value (the
+    // height map fills in its mask thickness value) and punched under
+    // destination-out: the fixture's path opening keeps its even-odd holes
+    // and its stroke erases alpha too.
+    const materialMapNames = ['baseColor', 'metalness', 'roughness'] as const;
+    const sheetFillStyles = [
+      ...materialMapNames.map((mapName) => surfaceMapColorForPalette(mapName, 0)),
+      PREVIEW_HEIGHT_MASK_COLOR,
+    ];
     expect(
       maskSheet.calls.some(
         (call) =>
@@ -686,22 +754,19 @@ describe('createPreviewSurfaceMapGenerator', () => {
       ),
     ).toBe(true);
     const sheetBackgroundFills = maskSheet.calls.filter((call) => call.method === 'fillRect');
-    expect(sheetBackgroundFills.map((call) => call.fillStyle)).toEqual(
-      mapNames.map((mapName) => surfaceMapColorForPalette(mapName, 0)),
-    );
+    expect(sheetBackgroundFills.map((call) => call.fillStyle)).toEqual(sheetFillStyles);
     expect(
       sheetBackgroundFills.every((call) => call.globalCompositeOperation === 'source-over'),
     ).toBe(true);
     const sheetStrokes = maskSheet.calls.filter((call) => call.method === 'stroke');
-    expect(sheetStrokes.map((call) => call.strokeStyle)).toEqual(
-      mapNames.map((mapName) => surfaceMapColorForPalette(mapName, 0)),
-    );
+    expect(sheetStrokes.map((call) => call.strokeStyle)).toEqual(sheetFillStyles);
     expect(sheetStrokes.every((call) => call.globalCompositeOperation === 'destination-out')).toBe(
       true,
     );
     expect(maskSheet.calls.some((call) => call.method === 'drawImage')).toBe(false);
 
-    expect(patternByName).toHaveBeenCalledTimes(3);
+    // One copper-pattern resolution per generated map, height included.
+    expect(patternByName).toHaveBeenCalledTimes(4);
     generator.close();
   });
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NoColorSpace, SRGBColorSpace } from 'three';
 import {
   PREVIEW_BACK_MATERIAL_INDEX,
+  PREVIEW_BUMP_SCALE,
   PREVIEW_ENVIRONMENT_INTENSITY,
   PREVIEW_FRONT_MATERIAL_INDEX,
   PREVIEW_GOLD_MATERIAL_PARAMETERS,
@@ -32,7 +33,7 @@ function snapshot(
       heightPx: 257,
       effectivePixelsPerMm: Math.min(120 / dimensions.widthMm, 257 / dimensions.heightMm),
     },
-    canvases: { baseColor: canvas(), metalness: canvas(), roughness: canvas() },
+    canvases: { baseColor: canvas(), metalness: canvas(), roughness: canvas(), height: canvas() },
   });
 }
 
@@ -84,6 +85,7 @@ describe('preview PCB board model', () => {
     expect(textures.baseColor.colorSpace).toBe(SRGBColorSpace);
     expect(textures.metalness.colorSpace).toBe(NoColorSpace);
     expect(textures.roughness.colorSpace).toBe(NoColorSpace);
+    expect(textures.height.colorSpace).toBe(NoColorSpace);
     expect(Object.values(textures).every((texture) => texture.flipY)).toBe(true);
     for (const texture of Object.values(textures)) texture.dispose();
   });
@@ -99,6 +101,9 @@ describe('preview PCB board model', () => {
     expect(front.metalness).toBe(1);
     expect(front.roughness).toBe(1);
     expect(front.envMapIntensity).toBe(PREVIEW_ENVIRONMENT_INTENSITY);
+    expect(front.bumpMap).toBe(model.textures.height);
+    expect(front.bumpScale).toBe(PREVIEW_BUMP_SCALE);
+    expect(PREVIEW_GOLD_MATERIAL_PARAMETERS.bumpScale).toBe(PREVIEW_BUMP_SCALE);
     expect(PREVIEW_GOLD_MATERIAL_PARAMETERS.metalness).toBeGreaterThanOrEqual(0.9);
     expect(PREVIEW_GOLD_MATERIAL_PARAMETERS.roughness).toBeGreaterThanOrEqual(0.15);
     expect(PREVIEW_GOLD_MATERIAL_PARAMETERS.roughness).toBeLessThanOrEqual(0.4);
@@ -119,6 +124,7 @@ describe('preview PCB board model', () => {
     expect(model.mesh.geometry).toBe(geometry);
     expect(model.surfaceRevision).toBe(2);
     expect(model.mesh.material[0].map).toBe(model.textures.baseColor);
+    expect(model.mesh.material[0].bumpMap).toBe(model.textures.height);
     for (const dispose of disposals) expect(dispose).toHaveBeenCalledOnce();
     model.dispose();
   });

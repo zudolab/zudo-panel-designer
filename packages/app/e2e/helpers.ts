@@ -108,10 +108,10 @@ export function bridge(page: Page) {
     getSelectedIds: () => page.evaluate(() => window.__zpdTest!.getSelectedIds()),
     getCamera: () => page.evaluate(() => window.__zpdTest!.getCamera()),
     getPreview: () => page.evaluate(() => window.__zpdTest!.getPreview()),
-    fingerprintPreviewSurface: (map: 'baseColor' | 'metalness' | 'roughness') =>
+    fingerprintPreviewSurface: (map: 'baseColor' | 'metalness' | 'roughness' | 'height') =>
       page.evaluate((mapName) => window.__zpdTest!.fingerprintPreviewSurface(mapName), map),
     samplePreviewSurface: (
-      map: 'baseColor' | 'metalness' | 'roughness',
+      map: 'baseColor' | 'metalness' | 'roughness' | 'height',
       normalizedX: number,
       normalizedY: number,
     ) =>

@@ -25,7 +25,12 @@ describe('preview test bridge', () => {
         distance: 4,
         panModeEnabled: true,
       },
-      materialParameters: { metalness: 1, roughness: 0.24, environmentIntensity: 1.35 },
+      materialParameters: {
+        metalness: 1,
+        roughness: 0.24,
+        environmentIntensity: 1.35,
+        bumpScale: 0.3,
+      },
     };
     publisher.publish(summary);
 
