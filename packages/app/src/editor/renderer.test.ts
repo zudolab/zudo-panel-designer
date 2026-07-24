@@ -10,6 +10,7 @@ import {
   createPcbLayerStack,
   mergeBboxes,
   PALETTE,
+  PCB_SUBSTRATE,
   rotatedRectAABB,
   type ImageLayer,
   type Layer,
@@ -85,7 +86,7 @@ function shape(id: string, x: number, y: number, extra: Partial<ShapeLayer> = {}
   };
 }
 
-describe('renderScene fixed-material composition (#166)', () => {
+describe('renderScene inverted solder-mask composition (#179, supersedes the #166 positive block)', () => {
   class SamplePath2D {
     readonly subpaths: Array<Array<readonly [number, number]>> = [];
     private current: Array<readonly [number, number]> = [];
@@ -128,38 +129,126 @@ describe('renderScene fixed-material composition (#166)', () => {
     return crossings % 2 === 1;
   };
 
+  // Fixture geometry (mm; identity camera, dpr 1, so sheet px == mm):
+  //   copper rect      2..32 × 2..22
+  //   mask punch outer 8..40 × 2..22, even-odd hole 12..16 × 6..12
+  //   silk rect        24..30 × 2..8
+  //   images           50..56 × 2..8 / 12..18 / 22..28 (one per container)
   const samples = {
-    copper: [4, 4] as const,
-    mask: [10, 4] as const,
-    opening: [14, 8] as const,
-    silk: [26, 4] as const,
-    image: [42, 4] as const,
+    copperUnderMask: [4, 4] as const, // copper yes, punch no
+    openingOverCopper: [20, 16] as const, // punched, copper beneath
+    openingOverNothing: [36, 16] as const, // punched, nothing beneath
+    holeReMasked: [14, 8] as const, // even-odd hole inside the opening
+    silk: [26, 4] as const, // silk over a punched area
+    bare: [60, 60] as const, // no content at all
+    imageCopper: [52, 4] as const,
+    imageMask: [52, 14] as const,
+    imageSilk: [52, 24] as const,
   };
 
-  function renderSampled(hidden: { mask?: boolean; silk?: boolean } = {}) {
-    const stack = createPcbLayerStack({
-      copper: [
-        shape('copper', 2, 2, { width: 30, height: 20, color: 0 }),
-        {
-          id: 'image',
-          name: 'Reference image',
-          type: 'image',
-          src: 'data:image/png;base64,fixture',
-          x: 40,
-          y: 2,
-          width: 6,
-          height: 6,
+  const pointsInRect = (rect: readonly number[]): string[] =>
+    Object.entries(samples)
+      .filter(
+        ([, p]) =>
+          p[0] > rect[0] && p[0] < rect[0] + rect[2] && p[1] > rect[1] && p[1] < rect[1] + rect[3],
+      )
+      .map(([name]) => name);
+
+  const pointsInPath = (path: SamplePath2D): string[] =>
+    Object.entries(samples)
+      .filter(([, p]) => containsPath(path, p[0], p[1]))
+      .map(([name]) => name);
+
+  // One recording-ctx builder for BOTH surfaces. `paint` receives the sample
+  // points a fill covered plus the ctx state at that moment — the sheet model
+  // turns a destination-out fill into an erase ('punched'), the main model
+  // into a positive color write.
+  function recordingContext(handlers: {
+    paint(names: string[], state: Record<string, unknown>): void;
+    drawImage?(args: unknown[]): void;
+  }): CanvasRenderingContext2D {
+    const stateStack: Array<Record<string, unknown>> = [];
+    let state: Record<string, unknown> = {
+      fillStyle: '#000000',
+      strokeStyle: '#000000',
+      globalAlpha: 1,
+      globalCompositeOperation: 'source-over',
+    };
+    let pendingRect: readonly number[] | null = null;
+    return new Proxy(
+      {},
+      {
+        get(_target, property: string) {
+          if (property in state) return state[property];
+          if (property === 'measureText') return () => ({ width: 0 });
+          return (...args: unknown[]) => {
+            if (property === 'save') stateStack.push({ ...state });
+            else if (property === 'restore') state = stateStack.pop() ?? state;
+            else if (property === 'beginPath') pendingRect = null;
+            else if (property === 'rect') pendingRect = args as number[];
+            else if (property === 'fillRect') {
+              handlers.paint(pointsInRect(args as number[]), state);
+            } else if (property === 'fill') {
+              if (args[0] instanceof SamplePath2D) {
+                handlers.paint(pointsInPath(args[0]), state);
+              } else if (pendingRect) {
+                handlers.paint(pointsInRect(pendingRect), state);
+              }
+            } else if (property === 'drawImage') {
+              handlers.drawImage?.(args);
+            }
+          };
         },
-      ],
+        set(_target, property: string, value: unknown) {
+          state[property] = value;
+          return true;
+        },
+      },
+    ) as unknown as CanvasRenderingContext2D;
+  }
+
+  // Sheet pixel model: color string while the black fill covers the point,
+  // 'punched' once a destination-out fill erased it. acquireMaskSheet caches
+  // the ALLOCATION (canvas + ctx) by factory identity, so the SAME proxy ctx
+  // serves every render in this block — its handlers read the current
+  // render's state through this indirection, reset by renderSampled.
+  const sheetModel = { state: new Map<string, string>() };
+  const sheetCtx = recordingContext({
+    paint: (names, state) => {
+      const punched = state.globalCompositeOperation === 'destination-out';
+      for (const name of names) {
+        sheetModel.state.set(name, punched ? 'punched' : String(state.fillStyle));
+      }
+    },
+  });
+
+  function imageLeaf(id: string, y: number): Layer {
+    return {
+      id,
+      name: id,
+      type: 'image',
+      src: `data:image/png;base64,${id}`,
+      x: 50,
+      y,
+      width: 6,
+      height: 6,
+    };
+  }
+
+  function renderSampled(
+    variant: { hiddenMask?: boolean; hiddenSilk?: boolean; emptyMask?: boolean } = {},
+  ) {
+    const stack = createPcbLayerStack({
+      copper: [shape('copper', 2, 2, { width: 30, height: 20, color: 0 }), imageLeaf('img-cu', 2)],
       'solder-mask': [
         {
           id: 'mask',
-          name: 'Mask with opening',
+          name: 'Mask opening with hole',
           type: 'path',
           points: [
             { x: 8, y: 2 },
-            { x: 32, y: 2 },
-            { x: 32, y: 22 },
+            { x: 40, y: 2 },
+            { x: 40, y: 22 },
             { x: 8, y: 22 },
           ],
           extraSubpaths: [
@@ -175,77 +264,52 @@ describe('renderScene fixed-material composition (#166)', () => {
           stroke: null,
           strokeWidth: 0,
         },
+        imageLeaf('img-mask', 12),
       ],
-      silkscreen: [shape('silk', 24, 2, { width: 6, height: 6, color: 1 })],
+      silkscreen: [
+        shape('silk', 24, 2, { width: 6, height: 6, color: 1 }),
+        imageLeaf('img-silk', 22),
+      ],
     });
-    if (hidden.mask) stack[1] = { ...stack[1], hidden: true };
-    if (hidden.silk) stack[2] = { ...stack[2], hidden: true };
+    if (variant.emptyMask) stack[1] = { ...stack[1], children: [] };
+    if (variant.hiddenMask) stack[1] = { ...stack[1], hidden: true };
+    if (variant.hiddenSilk) stack[2] = { ...stack[2], hidden: true };
 
     const values = new Map(Object.keys(samples).map((name) => [name, 'transparent']));
-    const stateStack: Array<Record<string, unknown>> = [];
-    let state: Record<string, unknown> = {
-      fillStyle: '#000000',
-      strokeStyle: '#000000',
-      globalAlpha: 1,
-    };
-    let pendingRect: readonly number[] | null = null;
-    const paintRect = (rect: readonly number[], value: string) => {
-      for (const [name, point] of Object.entries(samples)) {
-        if (
-          point[0] > rect[0] &&
-          point[0] < rect[0] + rect[2] &&
-          point[1] > rect[1] &&
-          point[1] < rect[1] + rect[3]
-        ) {
-          values.set(name, value);
-        }
-      }
-    };
-    const context = new Proxy(
-      {},
-      {
-        get(_target, property: string) {
-          if (property in state) return state[property];
-          if (property === 'measureText') return () => ({ width: 0 });
-          return (...args: unknown[]) => {
-            if (property === 'save') stateStack.push({ ...state });
-            else if (property === 'restore') state = stateStack.pop() ?? state;
-            else if (property === 'beginPath') pendingRect = null;
-            else if (property === 'rect') pendingRect = args as number[];
-            else if (property === 'fillRect') {
-              paintRect(args as number[], String(state.fillStyle));
-            } else if (property === 'fill') {
-              if (args[0] instanceof SamplePath2D) {
-                for (const [name, point] of Object.entries(samples)) {
-                  if (containsPath(args[0], point[0], point[1])) {
-                    values.set(name, String(state.fillStyle));
-                  }
-                }
-              } else if (pendingRect) {
-                paintRect(pendingRect, String(state.fillStyle));
-              }
-            } else if (property === 'drawImage') {
-              paintRect(args.slice(1) as number[], 'bitmap');
-            }
-          };
-        },
-        set(_target, property: string, value: unknown) {
-          state[property] = value;
-          return true;
-        },
+    sheetModel.state = new Map();
+    const context = recordingContext({
+      paint: (names, state) => {
+        for (const name of names) values.set(name, String(state.fillStyle));
       },
-    ) as unknown as CanvasRenderingContext2D;
+      drawImage: (args) => {
+        if (args[0] instanceof HTMLCanvasElement) {
+          // mask-sheet composite: covered sheet pixels paint their color;
+          // punched (erased) pixels are transparent — the main value shows
+          // through untouched.
+          for (const name of pointsInRect(args.slice(1) as number[])) {
+            const sheetValue = sheetModel.state.get(name);
+            if (sheetValue && sheetValue !== 'punched') values.set(name, sheetValue);
+          }
+        } else {
+          for (const name of pointsInRect(args.slice(1) as number[])) values.set(name, 'bitmap');
+        }
+      },
+    });
     const canvas = document.createElement('canvas');
     canvas.width = 100;
     canvas.height = 129;
     canvas.getContext = vi.fn(() => context) as unknown as typeof canvas.getContext;
-    const image = {
-      complete: true,
-      naturalWidth: 1,
-    } as HTMLImageElement;
+    const image = { complete: true, naturalWidth: 1 } as HTMLImageElement;
 
     const originalPath2D = globalThis.Path2D;
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
     (globalThis as { Path2D: typeof Path2D }).Path2D = SamplePath2D as unknown as typeof Path2D;
+    // The offscreen sheet canvas (created by renderer.ts's factory) resolves
+    // its ctx via the prototype — the main canvas's own-property stub above
+    // shadows this for the main surface.
+    HTMLCanvasElement.prototype.getContext = vi.fn(
+      () => sheetCtx,
+    ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
     try {
       renderScene(
         canvas,
@@ -254,7 +318,11 @@ describe('renderScene fixed-material composition (#166)', () => {
         { pxPerMm: 1, offsetX: 0, offsetY: 0 },
         {
           selectedIds: [],
-          images: new Map([['image', image]]),
+          images: new Map([
+            ['img-cu', image],
+            ['img-mask', image],
+            ['img-silk', image],
+          ]),
           showNodes: false,
           showOutsidePanel: false,
           requestRepaint: vi.fn(),
@@ -262,23 +330,57 @@ describe('renderScene fixed-material composition (#166)', () => {
       );
     } finally {
       (globalThis as { Path2D: typeof Path2D }).Path2D = originalPath2D;
+      HTMLCanvasElement.prototype.getContext = originalGetContext;
     }
-    return values;
+    return Object.fromEntries(values);
   }
 
-  it('samples copper, positive mask, even-odd reveal, silk, hidden containers, and images', () => {
-    expect(Object.fromEntries(renderSampled())).toMatchObject({
-      copper: PALETTE[1].hex,
-      mask: PALETTE[0].hex,
-      opening: PALETTE[1].hex,
+  it('punches openings: copper gold under an opening, substrate under an opening over nothing, black elsewhere', () => {
+    expect(renderSampled()).toMatchObject({
+      copperUnderMask: PALETTE[0].hex,
+      openingOverCopper: PALETTE[1].hex,
+      openingOverNothing: PCB_SUBSTRATE.hex,
+      holeReMasked: PALETTE[0].hex,
       silk: PALETTE[2].hex,
-      image: 'bitmap',
+      bare: PALETTE[0].hex,
+      imageCopper: 'bitmap',
+      imageMask: 'bitmap',
+      imageSilk: 'bitmap',
     });
-    expect(Object.fromEntries(renderSampled({ mask: true }))).toMatchObject({
-      mask: PALETTE[1].hex,
+  });
+
+  it('hidden mask container composites NO sheet: bare copper on substrate everywhere', () => {
+    expect(renderSampled({ hiddenMask: true })).toMatchObject({
+      copperUnderMask: PALETTE[1].hex,
+      openingOverCopper: PALETTE[1].hex,
+      holeReMasked: PALETTE[1].hex,
+      openingOverNothing: PCB_SUBSTRATE.hex,
+      bare: PCB_SUBSTRATE.hex,
+      silk: PALETTE[2].hex,
+      // hidden-container leaves fold hidden — its image vanishes with it
+      // (substrate, not black: no sheet exists in this state)
+      imageMask: PCB_SUBSTRATE.hex,
+      imageCopper: 'bitmap',
     });
-    expect(Object.fromEntries(renderSampled({ silk: true }))).toMatchObject({
-      silk: PALETTE[0].hex,
+  });
+
+  it('empty visible mask container ⇒ full black sheet (board looks fully masked)', () => {
+    expect(renderSampled({ emptyMask: true })).toMatchObject({
+      copperUnderMask: PALETTE[0].hex,
+      openingOverCopper: PALETTE[0].hex,
+      openingOverNothing: PALETTE[0].hex,
+      holeReMasked: PALETTE[0].hex,
+      bare: PALETTE[0].hex,
+      silk: PALETTE[2].hex,
+      imageCopper: 'bitmap',
+      imageSilk: 'bitmap',
+    });
+  });
+
+  it('hidden silkscreen container: the punched area under it shows copper, its image vanishes', () => {
+    expect(renderSampled({ hiddenSilk: true })).toMatchObject({
+      silk: PALETTE[1].hex,
+      imageSilk: PALETTE[0].hex,
     });
   });
 });
