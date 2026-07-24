@@ -4,6 +4,7 @@
 // add-rect.ts's toolbar action, just driven by a canvas click instead.
 import { mintId, pcbLayerDefinition, type TextLayer } from '@zpd/core';
 import { registerTool } from '../registry/tools';
+import { Text } from '../components/icons';
 import { DEFAULT_FONT_FAMILY, ensureFont } from '../fonts';
 import { insertNewNodeRelativeToSelection } from '../insert-relative';
 import type { ToolContext, ToolPointerEvent } from '../types';
@@ -16,7 +17,7 @@ registerTool({
   id: 'text',
   label: 'Text',
   shortcut: 't',
-  icon: 'T',
+  icon: <Text className="h-4 w-4" />,
   cursor: 'text',
   description:
     'Click anywhere on the canvas to place a new text layer at that point, then hand off to the ' +

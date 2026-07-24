@@ -21,7 +21,7 @@ test('@smoke pen tool draws a closed path', async ({ page }) => {
     const screen = await toScreenPoint(page, mm);
     await page.mouse.click(screen.x, screen.y);
   }
-  await page.getByRole('button', { name: '⬠ Close path' }).click();
+  await page.getByRole('button', { name: 'Close path' }).click();
 
   await expect.poll(() => bridge(page).getLayerCount()).toBe(before + 1);
   const selectedId = await bridge(page).getSelectedId();
