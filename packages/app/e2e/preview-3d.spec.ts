@@ -152,9 +152,15 @@ test('@smoke 3D preview is lazy, physically faithful, interactive, and leak-free
   page,
 }) => {
   // This production-build flow imports the full manufacturing corpus, samples
-  // all three generated maps, drives every camera mode, and verifies three
-  // complete scene mount/dispose cycles. Keep its budget local to this test.
-  test.slow();
+  // all four generated maps (baseColor/metalness/roughness/height — the height
+  // bump map added for the #176 emboss), drives every camera mode, and verifies
+  // three complete scene mount/dispose cycles. The fourth map raised the
+  // per-mount texture-upload + shader-compile cost, and on CI's oversubscribed
+  // runners under software WebGL the 3× mount budget outgrew test.slow()'s 90s
+  // (it completes in ~20s single-worker, ~37s under local parallel software
+  // WebGL — no hang, just more wall-clock). Give this one heavyweight test an
+  // explicit budget local to it.
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 1280, height: 900 });
   await openEditor(page);
   await importManufacturingFixture(page);
