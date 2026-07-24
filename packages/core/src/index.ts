@@ -23,12 +23,14 @@ export type {
 } from './types';
 export { mintId } from './types';
 
+export type { PcbLayerSlices } from './layer-nodes';
 export {
   flattenLayerNodes,
   isGroupNode,
   MAX_GROUP_DEPTH,
   normalizeLayerMaterial,
   normalizeLayerNodeMaterial,
+  projectPcbLayerSlices,
   projectPcbLayerStack,
   walkLayerNodes,
   walkPcbLayerNodes,
@@ -42,6 +44,7 @@ export {
   paletteEntry,
   PCB_LAYER_DEFINITIONS,
   PCB_LAYER_ROLES,
+  PCB_SUBSTRATE,
   pcbLayerDefinition,
   pcbLayerRoleForColor,
 } from './palette';

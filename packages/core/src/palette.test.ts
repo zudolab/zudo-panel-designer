@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createPcbLayerStack, PALETTE, paletteEntry, PCB_LAYER_DEFINITIONS } from './palette';
+import {
+  createPcbLayerStack,
+  PALETTE,
+  paletteEntry,
+  PCB_LAYER_DEFINITIONS,
+  PCB_SUBSTRATE,
+} from './palette';
 
 describe('PALETTE', () => {
   it('has exactly 3 entries indexed 0/1/2 with the contract names', () => {
@@ -44,5 +50,14 @@ describe('PCB_LAYER_DEFINITIONS', () => {
       'solder-mask',
       'silkscreen',
     ]);
+  });
+});
+
+describe('PCB_SUBSTRATE', () => {
+  it('is a non-drawable constant, not a PaletteEntry', () => {
+    expect(PCB_SUBSTRATE.hex).toMatch(/^#[0-9a-f]{6}$/);
+    expect(PCB_SUBSTRATE).not.toHaveProperty('index');
+    expect(PCB_SUBSTRATE).not.toHaveProperty('name');
+    expect(PALETTE).not.toContainEqual(expect.objectContaining({ hex: PCB_SUBSTRATE.hex }));
   });
 });

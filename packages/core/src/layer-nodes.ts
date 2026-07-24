@@ -125,3 +125,49 @@ export function projectPcbLayerStack(stack: PcbLayerStack): Layer[] {
   projectionCache.set(stack, projected);
   return projected;
 }
+
+export interface PcbLayerSlices {
+  flat: Layer[];
+  copper: Layer[];
+  solderMask: Layer[];
+  silkscreen: Layer[];
+  solderMaskHidden: boolean;
+}
+
+// Role-aware view over projectPcbLayerStack's flat array for renderers that
+// need to composite per-role (inverted solder-mask punching, surface maps).
+// Slices are derived by re-walking each container's own child count against
+// the SAME flat array `projectPcbLayerStack` returns — never by re-deriving
+// role from color, which is unreliable (image layers skip material
+// normalization; hidden-folding overwrites nothing about color).
+const slicesCache = new WeakMap<PcbLayerStack, PcbLayerSlices>();
+
+export function projectPcbLayerSlices(stack: PcbLayerStack): PcbLayerSlices {
+  const cached = slicesCache.get(stack);
+  if (cached) return cached;
+
+  const flat = projectPcbLayerStack(stack);
+  const slicesByRole: Record<PcbLayerRole, Layer[]> = {
+    copper: [],
+    'solder-mask': [],
+    silkscreen: [],
+  };
+  let offset = 0;
+  let solderMaskHidden = false;
+  for (const container of stack) {
+    const count = flattenLayerNodes(container.children).length;
+    slicesByRole[container.role] = flat.slice(offset, offset + count);
+    if (container.role === 'solder-mask') solderMaskHidden = container.hidden === true;
+    offset += count;
+  }
+
+  const slices: PcbLayerSlices = {
+    flat,
+    copper: slicesByRole.copper,
+    solderMask: slicesByRole['solder-mask'],
+    silkscreen: slicesByRole.silkscreen,
+    solderMaskHidden,
+  };
+  slicesCache.set(stack, slices);
+  return slices;
+}
