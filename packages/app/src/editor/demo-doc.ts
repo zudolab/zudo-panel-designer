@@ -61,7 +61,25 @@ export function createDemoDoc(hp = 12): DocState {
           },
         ],
       },
-      solderMask,
+      {
+        ...solderMask,
+        children: [
+          // Solder mask is negative (#176): this rect doesn't paint mask, it
+          // OPENS one, sized to sit over demo-ellipse's copper so a fresh
+          // demo document visibly shows copper through a mask opening.
+          {
+            id: 'demo-mask-opening',
+            name: 'Mask opening',
+            type: 'shape',
+            shape: 'rect',
+            x: 36,
+            y: 46,
+            width: 10,
+            height: 10,
+            color: 0,
+          },
+        ],
+      },
       {
         ...silkscreen,
         children: [

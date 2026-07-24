@@ -6,8 +6,8 @@
 // discretely; and an external value change (undo/redo, a canvas drag) syncs the
 // draft while the field isn't being edited.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render } from '@testing-library/react';
-import { NumberField } from './inspector-ui';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { MaterialField, NumberField } from './inspector-ui';
 
 afterEach(cleanup);
 
@@ -95,5 +95,23 @@ describe('NumberField', () => {
 
     rerender(<NumberField value={8} onCommit={onCommit} />);
     expect(input.value).toBe('8'); // e.g. undo/redo or a canvas drag moved it
+  });
+});
+
+describe('MaterialField', () => {
+  it('adds an opening-semantics hint only for the solder-mask role', () => {
+    render(<MaterialField role="solder-mask" />);
+    expect(screen.getByText(/open the mask/i)).toBeTruthy();
+  });
+
+  it('does not show the opening hint for other roles', () => {
+    render(<MaterialField role="copper" />);
+    expect(screen.queryByText(/open the mask/i)).toBeNull();
+  });
+
+  it('does not show the opening hint when unassigned', () => {
+    render(<MaterialField role={null} />);
+    expect(screen.queryByText(/open the mask/i)).toBeNull();
+    expect(screen.getByText('Unassigned')).toBeTruthy();
   });
 });

@@ -38,16 +38,25 @@ export function MaterialField({ role }: { role: PcbLayerRole | null }) {
   const definition = pcbLayerDefinition(role);
   const palette = PALETTE[definition.color];
   return (
-    <Row label="Material">
-      <span className="flex items-center gap-1.5 text-neutral-300">
-        <span
-          aria-hidden="true"
-          className="h-3 w-3 shrink-0 rounded-full border border-neutral-600"
-          style={{ background: palette.hex }}
-        />
-        {definition.name}
-      </span>
-    </Row>
+    <>
+      <Row label="Material">
+        <span className="flex items-center gap-1.5 text-neutral-300">
+          <span
+            aria-hidden="true"
+            className="h-3 w-3 shrink-0 rounded-full border border-neutral-600"
+            style={{ background: palette.hex }}
+          />
+          {definition.name}
+        </span>
+      </Row>
+      {/* Solder mask is negative: this object doesn't paint mask, it OPENS
+          one, revealing copper (or bare substrate) beneath. */}
+      {role === 'solder-mask' && (
+        <p className="text-[10px] leading-snug text-neutral-500">
+          Objects on this layer open the mask, revealing copper beneath.
+        </p>
+      )}
+    </>
   );
 }
 
