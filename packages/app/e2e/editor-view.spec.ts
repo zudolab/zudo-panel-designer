@@ -7,6 +7,7 @@
 // (read-only, doc/camera/selection only) can't observe it — only the pixel
 // data can.
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PANEL_HEIGHT_MM, panelWidthMm } from '@zpd/core';
 import { expect, type Page, test } from '@playwright/test';
 import {
@@ -173,6 +174,9 @@ test('@smoke show-outside-panel toggle ghosts off-panel shapes and the pattern s
 //   copper pad    4..28 × 4..24
 //   mask punch    8..48 × 8..20  (spans copper AND bare substrate)
 //   copper image  40..52 × 100..112 (solid red SVG — a design-aid overlay)
+// ESM package ("type": "module") — no CJS __dirname during Playwright's
+// module evaluation; derive it like the neighboring fixture-based specs.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MASK_INVERSION_FIXTURE = path.join(__dirname, 'fixtures', 'mask-inversion.json');
 
 // Renderer/palette constants (core palette.ts + PCB_SUBSTRATE).

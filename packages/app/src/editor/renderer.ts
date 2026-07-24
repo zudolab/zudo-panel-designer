@@ -598,7 +598,7 @@ export function renderScene(
   ctx.rect(cam.offsetX, cam.offsetY, panelPxW, panelPxH);
   ctx.clip();
   if (slices) {
-    paintInvertedPanelStack(ctx, slices, cam, panelPxW, panelPxH, dpr, layerPaintOptions);
+    paintInvertedPanelStack(ctx, slices, cam, canvas.width, canvas.height, dpr, layerPaintOptions);
   } else {
     // legacy flat input: positive z-order paint (pre-#179 behavior)
     ctx.translate(cam.offsetX, cam.offsetY);
@@ -646,8 +646,8 @@ function paintInvertedPanelStack(
   ctx: CanvasRenderingContext2D,
   slices: PcbLayerSlices,
   cam: Camera,
-  panelPxW: number,
-  panelPxH: number,
+  canvasPxW: number,
+  canvasPxH: number,
   dpr: number,
   options: LayerPaintOptions,
 ): void {
@@ -669,21 +669,25 @@ function paintInvertedPanelStack(
   // Hidden mask container ⇒ NO sheet: bare copper on substrate (epic pin 4).
   // An empty visible container still composites the full black sheet.
   if (!slices.solderMaskHidden) {
-    // The sheet lives in the DEVICE-PIXEL space of the panel rect — same
-    // dpr*zoom scale as the main pass, so punched opening edges land 1:1 on
-    // device pixels instead of blurring when zoomed.
-    const sheetW = Math.max(1, Math.round(panelPxW * dpr));
-    const sheetH = Math.max(1, Math.round(panelPxH * dpr));
+    // The sheet mirrors the CANVAS's device-pixel backing store — the exact
+    // dpr*zoom transform of the main pass, so punched opening edges land 1:1
+    // on device pixels instead of blurring when zoomed. Deliberately NOT the
+    // panel rect's device size: at MAX_PX_PER_MM a whole panel would be a
+    // gigapixel-scale surface (and reallocate per zoom tick), while the
+    // viewport-sized sheet is bounded and its allocation stays stable across
+    // zoom/pan. The caller's panel clip bounds the composite to the panel.
+    const sheetW = Math.max(1, canvasPxW);
+    const sheetH = Math.max(1, canvasPxH);
     const sheet = acquireMaskSheet(editorMaskSheetFactory, sheetW, sheetH);
     sheet.ctx.setTransform(1, 0, 0, 1, 0, 0);
     sheet.ctx.fillStyle = PALETTE[0].hex;
     sheet.ctx.fillRect(0, 0, sheetW, sheetH);
     const punchScale = dpr * cam.pxPerMm;
-    sheet.ctx.setTransform(punchScale, 0, 0, punchScale, 0, 0);
+    sheet.ctx.setTransform(punchScale, 0, 0, punchScale, dpr * cam.offsetX, dpr * cam.offsetY);
     paintMaskPunches(sheet.ctx, slices.solderMask, { colorFor: editorPaletteColor });
-    // Drawn in CSS-px space (the ambient dpr transform maps it back onto the
-    // sheet's own device pixels), inside the caller's panel clip.
-    ctx.drawImage(sheet.canvas, cam.offsetX, cam.offsetY, panelPxW, panelPxH);
+    // Drawn viewport-aligned in CSS-px space (the ambient dpr transform maps
+    // it back onto the sheet's own device pixels), inside the panel clip.
+    ctx.drawImage(sheet.canvas, 0, 0, canvasPxW / dpr, canvasPxH / dpr);
   }
 
   inMmSpace(() => {
