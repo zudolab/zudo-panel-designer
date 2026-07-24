@@ -314,52 +314,62 @@ function SvgImportDialog({ props, close, ctx }: DialogProps<SvgImportDialogProps
       )}
 
       {vectorAvailable && (
-        <div className="flex gap-4">
-          {/* Capped + scrollable: the extractor allows up to MAX_COLORS-1
-              source colors (extract-shapes.ts), and DialogHost's dialog
-              wrapper has no viewport-relative max-height/scroll of its own
-              (see pattern-picker.tsx for the same "cap the list, not the
-              modal" convention) -- without this, a many-color SVG grows the
-              modal past shorter viewports and clips the Import button. */}
-          <div
-            data-testid="color-mapping-list"
-            className="flex max-h-56 flex-1 flex-col gap-1.5 overflow-y-auto pr-1"
-          >
-            {analysis.sourceColors.map((hex) => (
-              <div key={hex} className="flex items-center gap-2 text-xs">
-                <span
-                  className="h-4 w-4 shrink-0 rounded border border-neutral-600"
-                  style={{ background: hex }}
-                />
-                <span className="flex-1 text-neutral-300">{hex}</span>
-                <select
-                  aria-label={`color for ${hex}`}
-                  value={mappings[hex]}
-                  onChange={(e) =>
-                    setMappings({
-                      ...mappings,
-                      [hex]: Number(e.target.value) as ColorIndex,
-                    })
-                  }
-                  className="rounded border border-neutral-600 bg-neutral-800 px-1 py-0.5 text-xs text-neutral-100"
-                >
-                  {PALETTE.map((entry) => (
-                    <option key={entry.index} value={entry.index}>
-                      {entry.name === 'black'
-                        ? 'Solder mask'
-                        : entry.name === 'gold'
-                          ? 'Copper'
-                          : 'Silkscreen'}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
+        <>
+          {/* Solder mask is negative: a shape routed there doesn't paint
+              mask, it opens one, revealing copper (or bare substrate where
+              there's no copper) beneath. Routing itself is unchanged (black
+              still -> solder-mask container) — this is copy only. */}
+          <p className="mb-2 text-[11px] text-neutral-500">
+            Shapes mapped to Solder mask open the mask there, revealing copper — or bare substrate
+            — beneath.
+          </p>
+          <div className="flex gap-4">
+            {/* Capped + scrollable: the extractor allows up to MAX_COLORS-1
+                source colors (extract-shapes.ts), and DialogHost's dialog
+                wrapper has no viewport-relative max-height/scroll of its own
+                (see pattern-picker.tsx for the same "cap the list, not the
+                modal" convention) -- without this, a many-color SVG grows the
+                modal past shorter viewports and clips the Import button. */}
+            <div
+              data-testid="color-mapping-list"
+              className="flex max-h-56 flex-1 flex-col gap-1.5 overflow-y-auto pr-1"
+            >
+              {analysis.sourceColors.map((hex) => (
+                <div key={hex} className="flex items-center gap-2 text-xs">
+                  <span
+                    className="h-4 w-4 shrink-0 rounded border border-neutral-600"
+                    style={{ background: hex }}
+                  />
+                  <span className="flex-1 text-neutral-300">{hex}</span>
+                  <select
+                    aria-label={`color for ${hex}`}
+                    value={mappings[hex]}
+                    onChange={(e) =>
+                      setMappings({
+                        ...mappings,
+                        [hex]: Number(e.target.value) as ColorIndex,
+                      })
+                    }
+                    className="rounded border border-neutral-600 bg-neutral-800 px-1 py-0.5 text-xs text-neutral-100"
+                  >
+                    {PALETTE.map((entry) => (
+                      <option key={entry.index} value={entry.index}>
+                        {entry.name === 'black'
+                          ? 'Solder mask (opening)'
+                          : entry.name === 'gold'
+                            ? 'Copper'
+                            : 'Silkscreen'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <div className="flex h-56 w-56 shrink-0 items-center justify-center overflow-hidden rounded border border-neutral-700 bg-neutral-950">
+              <canvas ref={previewCanvasRef} width={PREVIEW_SIZE} height={PREVIEW_SIZE} />
+            </div>
           </div>
-          <div className="flex h-56 w-56 shrink-0 items-center justify-center overflow-hidden rounded border border-neutral-700 bg-neutral-950">
-            <canvas ref={previewCanvasRef} width={PREVIEW_SIZE} height={PREVIEW_SIZE} />
-          </div>
-        </div>
+        </>
       )}
 
       <div className="mt-4 flex justify-end gap-2">

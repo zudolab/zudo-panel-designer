@@ -61,7 +61,31 @@ export function createDemoDoc(hp = 12): DocState {
           },
         ],
       },
-      solderMask,
+      {
+        ...solderMask,
+        children: [
+          // Solder mask is negative (#176): this rect doesn't paint mask, it
+          // OPENS one, revealing the copper dot-grid pattern (+ substrate in
+          // its gaps) beneath, so a fresh demo document visibly shows the
+          // effect. Deliberately NOT over demo-ellipse/demo-rect: many e2e
+          // specs click/marquee this exact demo doc's fixed geometry (e.g.
+          // editor-select.spec.ts's (4,10)->(56,50) marquee expects exactly
+          // demo-ellipse + demo-rect, and its (5,2)->(50,11) sweep asserts a
+          // layer-free zone) — this sits in the untested y 74..90 gap between
+          // demo-path's bbox (ends ~74) and demo-text (starts 90) instead.
+          {
+            id: 'demo-mask-opening',
+            name: 'Mask opening',
+            type: 'shape',
+            shape: 'rect',
+            x: 6,
+            y: 78,
+            width: 10,
+            height: 8,
+            color: 0,
+          },
+        ],
+      },
       {
         ...silkscreen,
         children: [
