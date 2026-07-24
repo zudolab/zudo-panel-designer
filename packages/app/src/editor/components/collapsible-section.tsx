@@ -2,6 +2,7 @@
 // section stack. Deliberately simple: no reordering, no persisted open state,
 // no animation — just a toggle button and conditional rendering.
 import { useId, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight } from './icons';
 
 export interface CollapsibleSectionProps {
   title: string | ReactNode;
@@ -35,7 +36,11 @@ export function CollapsibleSection({
           }`}
         >
           <span>{title}</span>
-          <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+          {open ? (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" />
+          )}
         </button>
       </h2>
       {(open || keepMounted) && (

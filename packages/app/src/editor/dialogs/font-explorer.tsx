@@ -17,6 +17,7 @@ import { ensureFont, isFontLoaded } from '../fonts';
 import { loadGoogleFont } from '../google-font-loader';
 import { useFontFavorites } from '../use-font-favorites';
 import { Tooltip } from '../components/tooltip';
+import { Star, StarOutline } from '../components/icons';
 import catalogData from '../data/google-fonts-catalog.json';
 import type { GoogleFontEntry, FontCategory } from '../data/google-fonts-types';
 import { FONT_CATEGORIES, CATEGORY_LABELS } from '../data/google-fonts-types';
@@ -403,11 +404,15 @@ function FontCard({
           aria-label={`${isFavorite ? 'Remove' : 'Add'} ${font.family} ${
             isFavorite ? 'from' : 'to'
           } favorites`}
-          className={`absolute right-1 top-1 rounded px-1 text-sm leading-none ${
+          className={`absolute right-1 top-1 flex items-center justify-center rounded px-1 leading-none ${
             isFavorite ? 'text-amber-300' : 'text-neutral-500 hover:text-neutral-300'
           }`}
         >
-          {isFavorite ? '★' : '☆'}
+          {isFavorite ? (
+            <Star className="h-3.5 w-3.5" />
+          ) : (
+            <StarOutline className="h-3.5 w-3.5" />
+          )}
         </button>
       </Tooltip>
     </div>
