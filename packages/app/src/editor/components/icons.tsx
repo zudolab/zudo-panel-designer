@@ -27,7 +27,13 @@ interface SvgProps extends IconProps {
   strokeWidth?: number;
 }
 
-function Svg({ className, children, fill = 'none', stroke = 'currentColor', strokeWidth = 2 }: SvgProps) {
+function Svg({
+  className,
+  children,
+  fill = 'none',
+  stroke = 'currentColor',
+  strokeWidth = 2,
+}: SvgProps) {
   return (
     <svg
       viewBox="0 0 24 24"
