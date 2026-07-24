@@ -2,13 +2,16 @@ import {
   PALETTE,
   PANEL_HEIGHT_MM,
   PANEL_THICKNESS_MM,
+  PCB_SUBSTRATE,
   panelWidthMm,
+  projectPcbLayerSlices,
   type ColorIndex,
   type DocState,
   type Layer,
+  type PcbLayerSlices,
 } from '@zpd/core';
-import { projectFlatLayers } from '../flat-projection';
 import { ensureFontAttempt, type FontInitialResult, type FontLoadAttempt } from '../fonts';
+import { acquireMaskSheet, paintMaskPunches, type MaskSheetFactory } from '../mask-sheet';
 import { paintLayer, type LayerPaintOptions } from '../renderer';
 import { reconcileTextGeometry } from '../text-geometry';
 import {
@@ -38,6 +41,15 @@ export const PCB_SURFACE_MATERIALS: Readonly<Record<ColorIndex, PcbSurfaceMateri
     2: Object.freeze({ baseColor: PALETTE[2].hex, metalness: 0, roughness: 0.84 }),
   });
 
+// Bare FR4 laminate visible through a solder-mask opening with no copper
+// beneath it. Coefficients pinned by epic #176; the hex references
+// PCB_SUBSTRATE so 2D and 3D substrate can never drift apart.
+export const PCB_SUBSTRATE_SURFACE_MATERIAL: PcbSurfaceMaterial = Object.freeze({
+  baseColor: PCB_SUBSTRATE.hex,
+  metalness: 0,
+  roughness: 0.55,
+});
+
 type PreviewSurfaceMapName = keyof PreviewSurfaceMaps;
 
 const PREVIEW_SURFACE_MAP_NAMES = [
@@ -52,11 +64,10 @@ function scalarCanvasColor(value: number): string {
   return `#${channel}${channel}${channel}`;
 }
 
-export function surfaceMapColorForPalette(
+function surfaceMapMaterialValue(
   mapName: PreviewSurfaceMapName,
-  color: ColorIndex,
+  material: PcbSurfaceMaterial,
 ): string {
-  const material = PCB_SURFACE_MATERIALS[color];
   switch (mapName) {
     case 'baseColor':
       return material.baseColor;
@@ -65,6 +76,17 @@ export function surfaceMapColorForPalette(
     case 'roughness':
       return scalarCanvasColor(material.roughness);
   }
+}
+
+export function surfaceMapColorForPalette(
+  mapName: PreviewSurfaceMapName,
+  color: ColorIndex,
+): string {
+  return surfaceMapMaterialValue(mapName, PCB_SURFACE_MATERIALS[color]);
+}
+
+export function surfaceMapSubstrateColor(mapName: PreviewSurfaceMapName): string {
+  return surfaceMapMaterialValue(mapName, PCB_SUBSTRATE_SURFACE_MATERIAL);
 }
 
 export type PreviewCanvasFactory = (widthPx: number, heightPx: number) => PreviewCanvasSource;
@@ -113,42 +135,113 @@ function throwIfAborted(signal: AbortSignal): void {
   throw error;
 }
 
+function paintSliceLayers(
+  ctx: CanvasRenderingContext2D,
+  layers: readonly Layer[],
+  paintOptions: LayerPaintOptions,
+  signal?: AbortSignal,
+): void {
+  for (const layer of layers) {
+    if (signal) throwIfAborted(signal);
+    if (layer.hidden || layer.type === 'image') continue;
+    paintLayer(ctx, layer, paintOptions);
+    if (signal) throwIfAborted(signal);
+  }
+}
+
+// The copper occupancy pass, exported on its own rather than inlined in
+// paintSurfaceMap: the height/emboss map (#181) reuses this exact pass as its
+// height source (copper raises the top surface) with its own flat value and
+// composite mode. The caller owns the mm-space transform and panel clip.
+export function paintCopperCoverage(
+  ctx: CanvasRenderingContext2D,
+  copperLayers: readonly Layer[],
+  options: { readonly color: string; readonly signal?: AbortSignal },
+): void {
+  paintSliceLayers(
+    ctx,
+    copperLayers,
+    {
+      colorFor: () => options.color,
+      // Font fallback and loaded glyphs both represent fully opaque material.
+      // Readiness schedules a fresh snapshot instead of dimming manufacture
+      // data.
+      loadingTextAlpha: 1,
+    },
+    options.signal,
+  );
+}
+
+// Negative solder-mask composite (epic #176): every pixel starts as bare
+// substrate, copper is painted positively, then a punched, map-valued mask
+// sheet is composited ABOVE copper — a mask leaf is an opening, and the map
+// stays fully opaque so WebGL always reads a real material coefficient.
 function paintSurfaceMap(options: {
   readonly canvas: PreviewCanvasSource;
   readonly mapName: PreviewSurfaceMapName;
   readonly widthMm: number;
   readonly heightMm: number;
-  readonly layers: readonly Layer[];
+  readonly slices: PcbLayerSlices;
+  readonly maskSheetFactory: MaskSheetFactory;
   readonly signal: AbortSignal;
 }): void {
-  const { canvas, mapName, widthMm, heightMm, layers, signal } = options;
+  const { canvas, mapName, widthMm, heightMm, slices, maskSheetFactory, signal } = options;
   const ctx = canvas2dContext(canvas);
   throwIfAborted(signal);
+
+  const enterPanelSpace = (target: CanvasRenderingContext2D): void => {
+    target.save();
+    target.setTransform(canvas.width / widthMm, 0, 0, canvas.height / heightMm, 0, 0);
+    target.beginPath();
+    target.rect(0, 0, widthMm, heightMm);
+    target.clip();
+  };
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = surfaceMapColorForPalette(mapName, 0);
+  ctx.fillStyle = surfaceMapSubstrateColor(mapName);
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.save();
-  ctx.setTransform(canvas.width / widthMm, 0, 0, canvas.height / heightMm, 0, 0);
-  ctx.beginPath();
-  ctx.rect(0, 0, widthMm, heightMm);
-  ctx.clip();
+  enterPanelSpace(ctx);
+  paintCopperCoverage(ctx, slices.copper, {
+    color: surfaceMapColorForPalette(mapName, 1),
+    signal,
+  });
+  ctx.restore();
 
-  const layerPaintOptions: LayerPaintOptions = {
-    colorFor: (color) => surfaceMapColorForPalette(mapName, color),
-    // Font fallback and loaded glyphs both represent fully opaque material.
-    // Readiness schedules a fresh snapshot instead of dimming manufacture data.
-    loadingTextAlpha: 1,
-  };
-  for (const layer of layers) {
+  // Hidden mask container means NO sheet at all — bare copper on substrate —
+  // while an empty visible container still composites a full covering sheet.
+  if (!slices.solderMaskHidden) {
+    const sheet = acquireMaskSheet(maskSheetFactory, canvas.width, canvas.height);
+    const sheetCtx = sheet.ctx;
+    sheetCtx.setTransform(1, 0, 0, 1, 0, 0);
+    sheetCtx.globalAlpha = 1;
+    sheetCtx.globalCompositeOperation = 'source-over';
+    // The sheet is filled in THIS map's soldermask value before punching —
+    // never recolored via bare drawImage, which would preserve source RGB.
+    sheetCtx.fillStyle = surfaceMapColorForPalette(mapName, 0);
+    sheetCtx.fillRect(0, 0, canvas.width, canvas.height);
+    sheetCtx.save();
+    sheetCtx.setTransform(canvas.width / widthMm, 0, 0, canvas.height / heightMm, 0, 0);
+    paintMaskPunches(sheetCtx, slices.solderMask, {
+      colorFor: (color) => surfaceMapColorForPalette(mapName, color),
+    });
+    sheetCtx.restore();
     throwIfAborted(signal);
-    if (layer.hidden || layer.type === 'image') continue;
-    paintLayer(ctx, layer, layerPaintOptions);
-    throwIfAborted(signal);
+    ctx.drawImage(sheet.canvas, 0, 0);
   }
+
+  enterPanelSpace(ctx);
+  paintSliceLayers(
+    ctx,
+    slices.silkscreen,
+    {
+      colorFor: (color) => surfaceMapColorForPalette(mapName, color),
+      loadingTextAlpha: 1,
+    },
+    signal,
+  );
   ctx.restore();
 }
 
@@ -160,6 +253,10 @@ export function createPreviewSurfaceMapGenerator(
   options: PreviewSurfaceMapGeneratorOptions = {},
 ): PreviewSurfaceMapGenerator {
   const canvasFactory = options.canvasFactory ?? defaultCanvasFactory;
+  // Mask-sheet allocation is cached per factory identity (mask-sheet.ts), so
+  // one stable closure per generator gives it its own reusable scratch sheet.
+  const maskSheetFactory: MaskSheetFactory = (widthPx, heightPx) =>
+    canvasFactory(widthPx, heightPx);
   const watchedAttempts = new WeakSet<FontLoadAttempt>();
   const latestRevisionByAttempt = new WeakMap<FontLoadAttempt, number>();
   const lateReadyUnsubscribers = new Set<() => void>();
@@ -218,11 +315,12 @@ export function createPreviewSurfaceMapGenerator(
 
       // Reconcile the canonical text geometry without replacing the editor's
       // repaint callback. Preview readiness is observed independently below.
-      // The shared flat projection (#150), not an ad-hoc flatten: for the
-      // editor's live doc this is the SAME array the canvas paints, so the
-      // reconcile here never bumps text geometry's array-identity-keyed
-      // document incarnation.
-      const layers = projectFlatLayers(input.doc.layers);
+      // The role-aware slices share `flat` with the shared projection (#150),
+      // not an ad-hoc flatten: for the editor's live doc this is the SAME
+      // array the canvas paints, so the reconcile here never bumps text
+      // geometry's array-identity-keyed document incarnation.
+      const slices = projectPcbLayerSlices(input.doc.layers);
+      const layers = slices.flat;
       reconcileTextGeometry(layers);
       const generationFontAttempts = new Set<FontLoadAttempt>();
       for (const layer of layers) {
@@ -251,7 +349,8 @@ export function createPreviewSurfaceMapGenerator(
           mapName,
           widthMm,
           heightMm,
-          layers,
+          slices,
+          maskSheetFactory,
           signal: input.ticket.signal,
         });
         canvases[mapName] = canvas;
