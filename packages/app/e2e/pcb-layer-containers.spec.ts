@@ -4,7 +4,14 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
-import { bridge, dragLayerRowAfter, importPanelJson, MOD, openEditor } from './helpers';
+import {
+  bridge,
+  dragLayerRowAfter,
+  importPanelJson,
+  MOD,
+  openEditor,
+  toScreenPoint,
+} from './helpers';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MANUFACTURING_FIXTURE = path.join(__dirname, 'fixtures', 'preview-manufacturing.json');
@@ -12,6 +19,16 @@ const MANUFACTURING_FIXTURE = path.join(__dirname, 'fixtures', 'preview-manufact
 async function importFixture(page: Parameters<typeof openEditor>[0]): Promise<void> {
   await importPanelJson(page, MANUFACTURING_FIXTURE);
   await expect.poll(() => bridge(page).getLayerCount()).toBe(11);
+}
+
+// Off-panel (the fixture's 40.3x128.5mm panel) and clear of every fixture
+// shape, including 'fully-off-panel' (x:-8..-1) -- a plain click here always
+// lands on empty canvas space, which select.tsx's pointerDown clears the
+// selection for (see editor/tools/select.tsx's "Empty space" branch).
+async function deselectAll(page: Parameters<typeof openEditor>[0]): Promise<void> {
+  const pt = await toScreenPoint(page, { x: -20, y: 60 });
+  await page.mouse.click(pt.x, pt.y);
+  await expect.poll(() => bridge(page).getSelectedIds()).toEqual([]);
 }
 
 test('@smoke fixed PCB containers preserve material, persistence, and physical order', async ({
@@ -57,6 +74,11 @@ test('@smoke fixed PCB containers preserve material, persistence, and physical o
 
   // Default creations route by tool kind, regardless of their legacy palette
   // value. The fixture itself supplies a deterministic stale-color proof.
+  // Explicit deselect precondition (#191): with a selection-relative
+  // insertion policy now live, this default-routing assertion only holds
+  // with nothing selected -- nothing here has selected a layer yet, but the
+  // precondition is made explicit rather than relying on that incidentally.
+  await deselectAll(page);
   await page.getByLabel('Add rectangle').click();
   const rectId = await bridge(page).getSelectedId();
   expect(rectId).not.toBeNull();
@@ -111,4 +133,61 @@ test('@smoke fixed PCB containers preserve material, persistence, and physical o
     'silkscreen',
   ]);
   expect((await bridge(page).getMaterialLayer('gold-base'))?.material).toBe('silkscreen');
+});
+
+test('@smoke selection-relative insertion places new objects directly above the selection (#191)', async ({
+  page,
+}) => {
+  await openEditor(page);
+  await importFixture(page);
+
+  // A Solder-mask object selected -> Add rectangle lands directly above it,
+  // INSIDE Solder mask -- not always Copper (the tool's own default role).
+  await page.getByRole('button', { name: 'Select layer Opening over gold' }).click();
+  await page.getByLabel('Add rectangle').click();
+  const rectId = await bridge(page).getSelectedId();
+  expect(rectId).not.toBeNull();
+  let solderMask = (await bridge(page).getPcbLayerStack()).find((c) => c.role === 'solder-mask')!;
+  expect(solderMask.children.map((n) => n.id)).toEqual(['opening-over-gold', rectId, 'mask-opening']);
+  expect(await bridge(page).getMaterialLayer(rectId!)).toMatchObject({
+    material: 'solder-mask',
+    color: 0,
+  });
+
+  // A multi-selection spanning Copper + Silkscreen anchors to the visually
+  // topmost maximal root: Silkscreen sits above Copper in stack/paint order,
+  // so the new ellipse lands in Silkscreen, not Copper, and Copper is
+  // untouched by this insertion.
+  await page.getByRole('button', { name: 'Select layer Gold base' }).click();
+  await page
+    .getByRole('button', { name: 'Select layer White over black' })
+    .click({ modifiers: ['Shift'] });
+  expect(await bridge(page).getSelectedIds()).toEqual(
+    expect.arrayContaining(['gold-base', 'white-over-black']),
+  );
+  const copperBefore = (await bridge(page).getPcbLayerStack()).find((c) => c.role === 'copper')!;
+
+  await page.getByLabel('Add ellipse').click();
+  const ellipseId = await bridge(page).getSelectedId();
+  expect(ellipseId).not.toBeNull();
+  const stackAfterEllipse = await bridge(page).getPcbLayerStack();
+  const silkscreen = stackAfterEllipse.find((c) => c.role === 'silkscreen')!;
+  expect(silkscreen.children.map((n) => n.id)).toEqual([
+    'white-over-black',
+    ellipseId,
+    'font-ready-text',
+  ]);
+  const copperAfter = stackAfterEllipse.find((c) => c.role === 'copper')!;
+  expect(copperAfter.children.map((n) => n.id)).toEqual(copperBefore.children.map((n) => n.id));
+
+  // Selection cleared -> back to exact pre-#191 default routing (Copper).
+  await deselectAll(page);
+  await page.getByLabel('Add rectangle').click();
+  const defaultRectId = await bridge(page).getSelectedId();
+  expect(await bridge(page).getMaterialLayer(defaultRectId!)).toMatchObject({
+    material: 'copper',
+    color: 1,
+  });
+  solderMask = (await bridge(page).getPcbLayerStack()).find((c) => c.role === 'solder-mask')!;
+  expect(solderMask.children.some((n) => n.id === defaultRectId)).toBe(false);
 });
