@@ -30,7 +30,7 @@ interface CommandDef {
 
 以下の 2 つのフラグは、あるコマンドが下記の 2 つの UI サーフェスにどう参加するかを、それぞれ独立に変えます。
 
-- **`chord` が無い**（"chordless"） — そのコマンドにはキーボードショートカットが一切なく、コマンドパレットからしか到達できません。Align、Distribute、New Panel、Import/Download JSON、3 つのズームアクション、Browse Google Fonts はすべて、設計上 chordless です。
+- **`chord` が無い**（"chordless"） — そのコマンドにはキーボードショートカットが一切なく、コマンドパレットからしか到達できません。Align、Distribute、New Panel、Import/Download JSON、Download Gerber (.zip)、3 つのズームアクション、Browse Google Fonts はすべて、設計上 chordless です。
 - **`displayOnly: true`** — そのコマンドは chord（あるいは明示的な `shortcutDisplay`）を持ち、表示する価値はありますが、実際のジェスチャーは別のコードが所有していて、レジストリ経由で `run()` が呼ばれることは決してありません。Paste（実際のジェスチャーはネイティブの `paste` イベント——[クリップボード → ペースト](./clipboard.mdx#ペースト)を参照）と Nudge（`Arrows`、Shift で ×10——`Editor.tsx` 自身の矢印キーのスイッチ）の 2 つだけです。
 
 ### チョードのマッチング
@@ -64,7 +64,7 @@ interface Chord {
 - **グルーピング** — 一致した項目は、レジストリの順序のまま、大文字のカテゴリ見出しの下にグループ化されます。
 - **フォーカス** — 検索入力は開いたときに自動でフォーカスされます（レイアウトエフェクトによる工夫で、ダイアログホストの汎用的な「最初のフォーカス可能な要素にフォーカスする」フォールバックとの競争に意図的に勝ちます。DOM 順で Close ボタンの方が先にあるためです——これがなければ、フィルタ用のキー入力のつもりが、モーダルの裏でエディタのショートカットを再び発火させてしまいかねません）。
 
-Chordless なコマンド（Align、New Panel、Import/Download JSON、zoom、Browse Google Fonts）は、ここには **現れません** ——表示するものが何もないためです。それらを実行したいときはコマンドパレットを使ってください。
+Chordless なコマンド（Align、New Panel、Import/Download JSON、Download Gerber (.zip)、zoom、Browse Google Fonts）は、ここには **現れません** ——表示するものが何もないためです。それらを実行したいときはコマンドパレットを使ってください。
 
 ## コマンドパレット
 
