@@ -49,4 +49,30 @@ describe('ChromeButton', () => {
     expect(button.getAttribute('title')).toBe('Zoom in');
     expect(screen.queryByRole('tooltip', { hidden: true })).toBeNull();
   });
+
+  // Issue #205: an icon child (an inline SVG) is a block box under Tailwind
+  // v4 preflight (`svg { display: block }`, `* { margin: 0 }`), so neither
+  // the button's UA text-align nor auto-margins can centre it — the button
+  // itself must establish a flex centering context on both axes.
+  it('centres its content on both axes via inline-flex + items-center + justify-center (#205)', () => {
+    render(<ChromeButton title="Undo">U</ChromeButton>);
+    const button = screen.getByRole('button', { name: 'U' });
+    expect(button.className).toContain('inline-flex');
+    expect(button.className).toContain('items-center');
+    expect(button.className).toContain('justify-center');
+  });
+
+  it('keeps centering classes even when a caller passes its own className', () => {
+    render(
+      <ChromeButton title="Zoom out" className="h-8 w-8 !px-0">
+        −
+      </ChromeButton>,
+    );
+    const button = screen.getByRole('button', { name: '−' });
+    expect(button.className).toContain('inline-flex');
+    expect(button.className).toContain('items-center');
+    expect(button.className).toContain('justify-center');
+    expect(button.className).toContain('h-8');
+    expect(button.className).toContain('w-8');
+  });
 });
