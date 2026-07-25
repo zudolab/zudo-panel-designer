@@ -25,6 +25,7 @@
     "@image-tracer-ts/browser": "^1.0.3",
     "@zpd/core": "workspace:*",
     "@zpd/patterns": "workspace:*",
+    "opentype.js": "^2.0.0",
     "path-bool": "^1.0.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

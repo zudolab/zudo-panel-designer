@@ -39,6 +39,7 @@ import type {
 import { rectToRing } from './primitives';
 import { ringsToRegions } from './regions';
 import { CANVAS_DEFAULT_JOIN_STYLE, strokeSubpathsToInputs, type StrokeSubpath } from './stroker';
+import { textGeometrySource } from './text-outline';
 import type { IrTolerance } from './tolerance';
 
 function unsupported(
@@ -216,7 +217,11 @@ function handoffSource(
 
 /** #211 owns pattern layers; until it registers a source this hands off. */
 export const patternHandoffSource = handoffSource('pattern', 'pattern-layer');
-/** #212 owns text layers. */
+/**
+ * The pre-#212 hand-off. Kept exported (and tested) because it is the shape
+ * every not-yet-implemented extractor takes, but it is no longer in
+ * `BUILTIN_GEOMETRY_SOURCES` — `textGeometrySource` outlines text for real.
+ */
 export const textHandoffSource = handoffSource('text', 'text-layer');
 /** Terminal: `image-layer` becomes the `image-layer-present` refusal. */
 export const imageGeometrySource = handoffSource('image', 'image-layer');
@@ -225,6 +230,6 @@ export const BUILTIN_GEOMETRY_SOURCES: readonly LayerGeometrySource[] = [
   shapeGeometrySource,
   pathGeometrySource,
   patternHandoffSource,
-  textHandoffSource,
+  textGeometrySource,
   imageGeometrySource,
 ];
