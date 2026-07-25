@@ -152,7 +152,7 @@ export function AlignPanel({ ctx, selectedIds }: AlignPanelProps) {
               placement="top"
               disabled={alignDisabled}
               onClick={() => handleAlign(btn.value)}
-              className="h-8 w-8 !px-0 text-base"
+              className="h-8 w-8 !px-0"
             >
               {btn.icon}
             </ChromeButton>
@@ -170,7 +170,7 @@ export function AlignPanel({ ctx, selectedIds }: AlignPanelProps) {
               placement="top"
               disabled={distributeDisabled}
               onClick={() => handleDistribute(btn.value)}
-              className="h-8 w-8 !px-0 text-base"
+              className="h-8 w-8 !px-0"
             >
               {btn.icon}
             </ChromeButton>

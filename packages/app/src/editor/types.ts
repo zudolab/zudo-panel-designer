@@ -34,6 +34,15 @@ export interface ToolContext {
   // document-incarnation state, so read the flat view HERE — never
   // re-flatten doc.layers ad hoc.
   readonly flatLayers: readonly Layer[];
+  // Monotonic counter bumped SYNCHRONOUSLY by every document and selection
+  // mutator below, before the React update it queues. `doc` / `selectedIds`
+  // read through refs that resync in a passive effect, so between a mutator
+  // call and React's flush they still report the PRE-mutation state. Any
+  // async action must capture this counter before awaiting and re-read it
+  // afterwards: an unchanged value is the only proof that nothing happened
+  // in the meantime. Compare for INEQUALITY only — the value is meaningless
+  // on its own, and undo/redo bump it without knowing their own result.
+  readonly mutationEpoch: number;
 
   // coordinate helpers (screen px relative to the canvas <-> document mm)
   toMm(screen: Pt): Pt;

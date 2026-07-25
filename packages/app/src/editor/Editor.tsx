@@ -73,13 +73,22 @@ export function Editor() {
     abortGesture,
     undo,
     redo,
+    readMutationEpoch,
   } = useDocHistory(initialDoc);
   const saveStatus = useAutosave(doc);
   // Selection state (#44): the stored ids are RAW (exactly what select() /
   // selectIds() was given); every read derives the normalized view (de-duped,
   // doc-order, stale ids dropped) via normalizeSelectedIds. Lazy on purpose —
   // see selection.ts for why eager filtering would break select-after-commit.
-  const [rawSelectedIds, setRawSelectedIds] = useState<readonly string[]>([]);
+  const [rawSelectedIds, setRawSelectedIdsState] = useState<readonly string[]>([]);
+  // Selection is the other half of ctx.mutationEpoch (the document half lives
+  // in useDocHistory). Bumped here, before the setState queues, so an async
+  // action resuming before React flushes still sees that the selection moved.
+  const selectionEpochRef = useRef(0);
+  const setRawSelectedIds = useCallback((ids: readonly string[]) => {
+    selectionEpochRef.current += 1;
+    setRawSelectedIdsState(ids);
+  }, []);
   const [activeToolId, setActiveToolId] = useState('select');
   const [camera, setCameraState] = useState<Camera | null>(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
@@ -206,6 +215,11 @@ export function Editor() {
       get flatLayers() {
         return projectFlatLayers(docRef.current.layers);
       },
+      get mutationEpoch() {
+        // Sum of two independently monotonic counters, so it changes whenever
+        // either half does. Only inequality is ever read from it.
+        return readMutationEpoch() + selectionEpochRef.current;
+      },
       toMm: (screenPt) =>
         cameraRef.current ? unproject(cameraRef.current, screenPt) : { x: 0, y: 0 },
       toScreen: (mmPt) => (cameraRef.current ? project(cameraRef.current, mmPt) : { x: 0, y: 0 }),
@@ -234,8 +248,10 @@ export function Editor() {
       abortGesture,
       undo,
       redo,
+      readMutationEpoch,
       readSelectedId,
       readSelectedIds,
+      setRawSelectedIds,
     ],
   );
 
@@ -329,6 +345,9 @@ export function Editor() {
       },
       get flatLayers() {
         return ctx.flatLayers;
+      },
+      get mutationEpoch() {
+        return ctx.mutationEpoch;
       },
       toMm: ctx.toMm,
       toScreen: ctx.toScreen,

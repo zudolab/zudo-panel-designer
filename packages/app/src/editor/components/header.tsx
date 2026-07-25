@@ -1,5 +1,5 @@
 import { useRef, type ChangeEvent } from 'react';
-import { downloadPanelConfig } from '../download';
+import { downloadPanelConfig, exportGerberZip } from '../download';
 import { importJsonFile } from '../import';
 import { newPanelAction } from '../replace-doc';
 import type { ToolContext } from '../types';
@@ -86,7 +86,7 @@ export function Header({
           ?
         </ChromeButton>
         <ChromeButton
-          className="flex items-center gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
+          className="gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
           title="Import panel config JSON"
           aria-label="Import panel config JSON"
           onClick={() => importInputRef.current?.click()}
@@ -102,13 +102,22 @@ export function Header({
           onChange={handleImportFileChange}
         />
         <ChromeButton
-          className="flex items-center gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
+          className="gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
           title="Download panel config JSON"
           aria-label="Download panel config JSON"
           onClick={() => downloadPanelConfig(ctx.doc)}
         >
           <Download className="h-4 w-4" />
           JSON
+        </ChromeButton>
+        <ChromeButton
+          className="gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
+          title="Download Gerber export (.zip)"
+          aria-label="Download Gerber export (.zip)"
+          onClick={() => void exportGerberZip(ctx.doc)}
+        >
+          <Download className="h-4 w-4" />
+          Gerber
         </ChromeButton>
 
         <span className="mx-1 h-5 w-px bg-neutral-700" />

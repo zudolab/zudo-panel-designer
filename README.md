@@ -42,14 +42,26 @@ from bottom to top as **Copper → Solder mask → Silkscreen**; the Layers UI
 shows that same stack top to bottom as **Silkscreen → Solder mask → Copper**.
 Container membership, rather than an object's old color field, determines the
 effective material: Copper is exposed **gold/HASL** copper, Solder mask is
-black, and Silkscreen is white. Solder-mask artwork is positive coverage; omitted
-areas and even-odd path holes reveal copper beneath it.
+black, and Silkscreen is white. Solder-mask artwork is **inverted**: a mask
+shape marks where the mask is _removed_, exposing the copper — or the bare FR4
+substrate wherever no copper lies under the opening. So an empty but visible
+Solder mask container means full mask coverage, hiding the container means no
+mask anywhere, and an even-odd hole inside a mask shape keeps its mask instead
+of opening it.
 
 The three roots cannot be renamed, deleted, grouped, selected, or reordered.
 Ordinary groups remain available inside each material and objects can move
 between containers to change material. Panel JSON is v5; older v1–v4 files
-migrate into the fixed stack on import. This is a foundation for future Gerber
-output—zpd does not currently export Gerbers.
+migrate into the fixed stack on import.
+
+The same fixed stack drives the Gerber export. **Download Gerber (.zip)**
+writes `.GTL` (copper), `.GTS` (solder mask), `.GTO` (silkscreen), and `.GKO`
+(board outline) plus a README.txt. It is **artwork only** — no Excellon drill
+file and no mounting-hole geometry — so it is artwork for an already-specified
+Takazudo blank panel, not a standalone orderable board. One known limitation
+(issue #218): the current boolean backend corrupts the union for many built-in
+pattern generators (36 of 62 at the last measurement), and the exporter
+refuses those layers rather than emitting geometry known to be wrong.
 
 ## Monorepo layout
 

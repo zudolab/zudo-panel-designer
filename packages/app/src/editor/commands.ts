@@ -32,9 +32,18 @@ import {
   type PcbLayerStack,
 } from '@zpd/core';
 import { applyAlign, applyDistribute, canAlign, canDistribute, type Reference } from './align-ops';
-import { downloadPanelConfig } from './download';
+import { downloadPanelConfig, exportGerberZip } from './download';
 import { pickImportJsonFile } from './import';
 import { isMac } from './is-mac';
+import {
+  canApplyPathfinderOp,
+  createPathfinderRunner,
+  PATHFINDER_OP_LABELS,
+  PATHFINDER_OPS,
+  resolvePathfinderInputs,
+  type PathfinderOp,
+} from './pathfinder';
+import { dispatchPathfinderOp } from './pathfinder-run';
 import { allTools } from './registry/tools';
 import { newPanelAction } from './replace-doc';
 import type { ToolContext, ToolKeyEvent, ToolModule } from './types';
@@ -241,6 +250,32 @@ function distributeCommand(id: string, label: string, axis: DistributeAxis): Com
     category: 'Align',
     run: (ctx) => applyDistribute(ctx, ctx.selectedIds, axis, ALIGN_REFERENCE),
     isEnabled: (ctx) => canDistribute(ctx.doc, ctx.selectedIds, ALIGN_REFERENCE),
+  };
+}
+
+// Chordless (palette-only), same treatment as Align/Distribute above — the
+// Path Finder panel (components/pathfinder-panel.tsx) is the keyboard-free
+// entry point, this is the command-palette one. Each command builds its OWN
+// runner per dispatch rather than sharing the panel's: this registry's own
+// rule is "read ctx fresh, no pre-bound closures" (see this file's header),
+// and `createPathfinderRunner` is cheap to construct — the lazily-imported
+// path-bool module it awaits is cached by the module system regardless of
+// how many runner instances ask for it. dispatchPathfinderOp (shared with
+// the panel) is what turns a no-op/error into user-visible toast feedback.
+function pathfinderCommandId(op: PathfinderOp): string {
+  return `pathfinder-${op.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}`;
+}
+
+function pathfinderCommand(op: PathfinderOp): CommandDef {
+  return {
+    id: pathfinderCommandId(op),
+    label: PATHFINDER_OP_LABELS[op],
+    category: 'Pathfinder',
+    run: (ctx) => {
+      void dispatchPathfinderOp(createPathfinderRunner(ctx), op);
+    },
+    isEnabled: (ctx) =>
+      canApplyPathfinderOp(op, resolvePathfinderInputs(ctx.doc.layers, ctx.selectedIds).length),
   };
 }
 
@@ -489,6 +524,11 @@ const STATIC_COMMANDS: CommandDef[] = [
   distributeCommand('align-distribute-h', 'Distribute Horizontally', 'horizontal'),
   distributeCommand('align-distribute-v', 'Distribute Vertically', 'vertical'),
 
+  // ── Pathfinder (#214) ────────────────────────────────────────────────────
+  // Panel order (dispatch.ts's PATHFINDER_OPS): Shape Modes row, then the
+  // Pathfinders row — `minusBack` last, matching where the panel puts it.
+  ...PATHFINDER_OPS.map((op) => pathfinderCommand(op)),
+
   // ── File ──────────────────────────────────────────────────────────────
   {
     id: 'file-new-panel',
@@ -511,6 +551,15 @@ const STATIC_COMMANDS: CommandDef[] = [
     label: 'Download JSON',
     category: 'File',
     run: (ctx) => downloadPanelConfig(ctx.doc),
+    isEnabled: ALWAYS_ENABLED,
+  },
+  {
+    id: 'file-download-gerber',
+    label: 'Download Gerber (.zip)',
+    category: 'File',
+    run: (ctx) => {
+      void exportGerberZip(ctx.doc);
+    },
     isEnabled: ALWAYS_ENABLED,
   },
 

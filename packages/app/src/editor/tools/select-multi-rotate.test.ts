@@ -71,6 +71,9 @@ function makeHarness(initialDoc: DocState) {
     get flatLayers() {
       return projectFlatLayers(history.present.layers);
     },
+    // Constant: this stub reads synchronously, so there is no React flush
+    // window for the epoch to cover (see pathfinder/runner.ts).
+    mutationEpoch: 0,
     toMm: (p: Pt) => p,
     toScreen: (p: Pt) => p,
     commit: (next) => {

@@ -12,7 +12,7 @@ order:
 | Container | Role | Effective display color | PCB meaning |
 | --- | --- | --- | --- |
 | Copper | `copper` | gold (`#d4af37`) | Exposed copper with the product's HASL finish |
-| Solder mask | `solder-mask` | black (`#151515`) | Positive solder-mask coverage |
+| Solder mask | `solder-mask` | black (`#151515`) | Solder-mask openings—artwork removes mask |
 | Silkscreen | `silkscreen` | white (`#f2f0e9`) | Printed silkscreen |
 
 The Layers UI reverses that order so the visible top surface appears first:
@@ -28,10 +28,14 @@ and material colors are fixed.
   stroke is enabled, but they do not override container membership in v5.
 </Note>
 
-Solder-mask artwork uses positive coverage: painted regions cover copper,
-while missing mask and holes in an even-odd path reveal the gold/HASL copper
-below. Raster image layers are design references only. They live in Copper by
-default but are excluded from manufacturing and 3D material maps.
+Solder-mask artwork is inverted (`palette.ts`, `mask-sheet.ts`): a drawn
+region is an **opening** where the mask is removed, exposing the gold/HASL
+copper below—or the bare FR4 substrate wherever no copper lies under that
+opening. A *visible* but empty Solder mask container is therefore full mask
+coverage, and a *hidden* one means no mask at all. A hole in an even-odd path
+punches back into the opening, so that area keeps its mask. Raster image
+layers are design references only. They live in Copper by default but are
+excluded from manufacturing and 3D material maps.
 
 ## Compatibility color indexes
 

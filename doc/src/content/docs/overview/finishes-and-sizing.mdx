@@ -13,7 +13,7 @@ fixed layers:
 | PCB material layer | Display/fabrication appearance |
 | --- | --- |
 | Copper | Gold, representing exposed copper with the product's HASL surface finish |
-| Solder mask | Black coverage above copper |
+| Solder mask | Black coverage above copper, opened wherever mask artwork is drawn |
 | Silkscreen | White printing at the top |
 
 These material roles are fixed—there is no fourth material or custom-color
@@ -34,12 +34,23 @@ its effective material. Copper is the requested gold/HASL finish, Solder mask
 is black, and Silkscreen is white—even if imported legacy children carry a
 misleading color field.
 
-Solder-mask artwork is **positive coverage**: painted mask covers copper;
-absence of mask and holes in an even-odd path reveal the copper below.
+Solder-mask artwork is **inverted**: a drawn mask shape is an **opening**
+where the mask is removed, exposing the copper below—or the bare FR4 substrate
+wherever no copper lies under that opening. The panel's black is the mask
+sheet itself, so an empty but *visible* Solder mask container is full
+coverage, while *hiding* the container means no mask anywhere. A hole in an
+even-odd path is a hole in the opening, so that area keeps its mask.
 
 <Info>
-This material model is groundwork for future Gerber output. zpd does not yet
-export Gerber files.
+This material model is what the Gerber export writes. **Download Gerber
+(.zip)** emits `.GTL` (copper), `.GTS` (solder mask, declared with negative
+file polarity), `.GTO` (silkscreen), and `.GKO` (board outline profile), plus
+a README.txt. It is **artwork only**—no Excellon drill file and no
+mounting-hole geometry—so it describes artwork for an already-specified
+Takazudo blank panel, not a standalone orderable board. One known limitation
+(issue #218): the current boolean backend corrupts the union for many built-in
+pattern generators (36 of 62 at the last measurement), and the exporter
+refuses those layers instead of emitting geometry known to be wrong.
 </Info>
 
 ## Panel width: HP
