@@ -51,9 +51,11 @@ v5 persists exactly three fixed roots, in physical bottom-to-top order:
 Copper, Solder mask, then Silkscreen. Each has `kind: "pcb-layer"`, a stable
 `id`, a `role`, optional persisted `hidden`, and ordinary `children`. The UI
 shows the reverse top-to-bottom order. The container determines effective
-material—gold/HASL copper, black positive solder-mask coverage, or white
-silkscreen—so legacy child colors are normalized on import. Mask absence and
-even-odd holes reveal copper underneath.
+material—gold/HASL copper, black solder mask, or white silkscreen—so legacy
+child colors are normalized on import. Solder-mask children are **openings**,
+not coverage: they mark where mask is removed. A persisted `hidden: true` on
+the Solder mask root therefore means no mask anywhere, while an empty visible
+root means full coverage.
 
 The roots are not ordinary groups: users cannot rename, delete, select, group,
 or reorder them. Ordinary groups can be nested under each root and artwork can
@@ -166,4 +168,5 @@ partitions their paint into the v5 fixed material stack, preserving ordinary
 groups where possible and normalizing material from container membership. v5
 input is also repaired defensively if fixed-root metadata is missing,
 duplicated, or reordered. This is a versioned JSON migration, not a Gerber
-export format; Gerber output is a future possibility, not a current feature.
+export format; the Gerber files come from the separate artwork-only `.zip`
+export ([PCB material layers & sizing](../overview/finishes-and-sizing.mdx)).

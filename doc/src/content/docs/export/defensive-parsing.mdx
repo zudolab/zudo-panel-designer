@@ -87,5 +87,6 @@ others.
   or future format from being silently accepted by the import UI and
   autosave. See [Round-Trip → Importing](./round-trip.mdx#importing).
 
-The repaired result is still PanelConfig JSON, not Gerber data. Gerber export
-remains future work.
+The repaired result is still PanelConfig JSON, not Gerber data. Gerber files
+come from the separate artwork-only `.zip` export, which runs off the
+in-memory document rather than off this file.
