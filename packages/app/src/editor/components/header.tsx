@@ -86,7 +86,7 @@ export function Header({
           ?
         </ChromeButton>
         <ChromeButton
-          className="flex items-center gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
+          className="gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
           title="Import panel config JSON"
           aria-label="Import panel config JSON"
           onClick={() => importInputRef.current?.click()}
@@ -102,7 +102,7 @@ export function Header({
           onChange={handleImportFileChange}
         />
         <ChromeButton
-          className="flex items-center gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
+          className="gap-1 border-amber-600 bg-amber-600/20 text-amber-200 hover:bg-amber-600/30"
           title="Download panel config JSON"
           aria-label="Download panel config JSON"
           onClick={() => downloadPanelConfig(ctx.doc)}
