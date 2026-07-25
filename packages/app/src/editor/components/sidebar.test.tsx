@@ -121,6 +121,18 @@ describe('Sidebar — guides are view furniture, not layers', () => {
   });
 });
 
+describe('Sidebar — Pathfinder section gating (#214)', () => {
+  it('is hidden with nothing selected', () => {
+    renderSidebar({ selectedIds: [] });
+    expect(screen.queryByRole('button', { name: 'Pathfinder' })).toBeNull();
+  });
+
+  it('appears once at least one layer is selected', () => {
+    renderSidebar({ selectedIds: ['s1'] });
+    expect(screen.getByRole('button', { name: 'Pathfinder' })).toBeTruthy();
+  });
+});
+
 describe('Sidebar — Layers section lifecycle', () => {
   it('renders the committed doc stack immediately even when the live ctx ref is one render behind', () => {
     const moved: ShapeLayer = { ...LAYER, id: 'moved', name: 'Moved to silk', color: 2 };

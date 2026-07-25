@@ -352,3 +352,132 @@ export function Layer({ className }: IconProps) {
     </Svg>
   );
 }
+
+// ── Path Finder — ten Illustrator-style op glyphs (issue #214). Semantic
+// reference: pgen's composer-pathfinder-panel.tsx:21-118, a "back square
+// upper-left / front square lower-right / shared overlap" family — redrawn
+// here rather than pasted per this module's contract. pgen's own square
+// coords (4,4)-(22,22) sit 1 unit off-centre in a 24×24 box; every glyph
+// below that draws both squares is shifted -1/-1 (to 3,3-21,21) so its ink
+// bbox centres exactly on (12,12), same as the rest of this set.
+const PF_UNION_PATH = 'M3 3H15V9H21V21H9V15H3Z';
+const PF_BACK_MINUS_OVERLAP_PATH = 'M3 3H15V9H9V15H3Z';
+const PF_FRONT_MINUS_OVERLAP_PATH = 'M15 9H21V21H9V15H15Z';
+
+// composer-pathfinder-panel.tsx:44 (iconPathfinderUnite).
+export function PathfinderUnite({ className }: IconProps) {
+  return (
+    <Svg className={className} strokeWidth={1.6}>
+      {/* Single merged silhouette — no seam between the two inputs. */}
+      <path d={PF_UNION_PATH} fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+// composer-pathfinder-panel.tsx:51 (iconPathfinderMinusFront).
+export function PathfinderMinusFront({ className }: IconProps) {
+  return (
+    <Svg className={className} strokeWidth={1.6}>
+      <path d={PF_BACK_MINUS_OVERLAP_PATH} fill="currentColor" stroke="none" />
+      <rect x="9" y="9" width="12" height="12" opacity="0.4" />
+    </Svg>
+  );
+}
+
+// composer-pathfinder-panel.tsx:58 (iconPathfinderIntersect).
+export function PathfinderIntersect({ className }: IconProps) {
+  return (
+    <Svg className={className} strokeWidth={1.6}>
+      <rect x="3" y="3" width="12" height="12" opacity="0.4" />
+      <rect x="9" y="9" width="12" height="12" opacity="0.4" />
+      <rect x="9" y="9" width="6" height="6" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+// composer-pathfinder-panel.tsx:66 (iconPathfinderExclude).
+export function PathfinderExclude({ className }: IconProps) {
+  return (
+    <Svg className={className} fill="currentColor" stroke="none">
+      {/* evenodd knocks the overlap out automatically — both squares filled
+          except where they cover twice. */}
+      <path fillRule="evenodd" d="M3 3H15V15H3V3ZM9 9H21V21H9V9Z" />
+    </Svg>
+  );
+}
+
+// composer-pathfinder-panel.tsx:73 (iconPathfinderMinusBack).
+export function PathfinderMinusBack({ className }: IconProps) {
+  return (
+    <Svg className={className} strokeWidth={1.6}>
+      <path d={PF_FRONT_MINUS_OVERLAP_PATH} fill="currentColor" stroke="none" />
+      <rect x="3" y="3" width="12" height="12" opacity="0.4" />
+    </Svg>
+  );
+}
+
+// composer-pathfinder-panel.tsx:80 (iconPathfinderDivide).
+export function PathfinderDivide({ className }: IconProps) {
+  return (
+    <Svg className={className} strokeWidth={1.6}>
+      {/* Both squares stay full-strength — Divide keeps every resulting face
+          as its own object. */}
+      <rect x="3" y="3" width="12" height="12" />
+      <rect x="9" y="9" width="12" height="12" />
+      <rect x="9" y="9" width="6" height="6" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+// composer-pathfinder-panel.tsx:89 (iconPathfinderTrim).
+export function PathfinderTrim({ className }: IconProps) {
+  return (
+    <Svg className={className} strokeWidth={1.6}>
+      {/* Back's notch is pulled in past the overlap so a thin gap separates
+          the two fills — no internal merge. */}
+      <path d="M3 3H15V8.2H8.2V15H3Z" fill="currentColor" stroke="none" />
+      <rect x="9" y="9" width="12" height="12" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+// composer-pathfinder-panel.tsx:97 (iconPathfinderMerge).
+export function PathfinderMerge({ className }: IconProps) {
+  return (
+    <Svg className={className} strokeWidth={1.6}>
+      <path d={PF_UNION_PATH} fill="currentColor" stroke="none" />
+      {/* Faint diagonal chord across the consumed corner — "adjoining
+          regions" (a seam remains), not a fully-open merge like Unite. */}
+      <path d="M15 9L9 15" opacity="0.35" />
+    </Svg>
+  );
+}
+
+// composer-pathfinder-panel.tsx:105 (iconPathfinderCrop), extended onto the
+// same two-square family grid the other nine glyphs share — pgen's own Crop
+// draws only the front square, at 2/3 the row's visual weight, which reads
+// noticeably smaller here once actually placed next to its nine siblings. A
+// faint back-square ghost restores the family's 18×18 footprint (and this
+// module's centring); the front square stays full-strength — "the shape
+// whose outline bounds the crop" — vs. Intersect's two equally-faint squares.
+export function PathfinderCrop({ className }: IconProps) {
+  return (
+    <Svg className={className} strokeWidth={1.6}>
+      <rect x="3" y="3" width="12" height="12" opacity="0.4" />
+      <rect x="9" y="9" width="12" height="12" />
+      <rect x="9" y="9" width="6" height="6" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+// composer-pathfinder-panel.tsx:112 (iconPathfinderOutline).
+export function PathfinderOutline({ className }: IconProps) {
+  return (
+    <Svg className={className} strokeWidth={1.6}>
+      {/* Both squares split at their two crossing points — small stroke
+          gaps, no fill. */}
+      <path d="M3 3L15 3L15 8M15 10L15 15L10 15M8 15L3 15L3 3" />
+      <path d="M9 9L14 9M16 9L21 9L21 21L9 21L9 16M9 14L9 9" />
+    </Svg>
+  );
+}

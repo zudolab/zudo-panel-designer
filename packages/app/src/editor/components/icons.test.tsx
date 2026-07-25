@@ -35,6 +35,16 @@ const REQUIRED_ICON_NAMES = [
   'StarOutline',
   'ClosePath',
   'Layer',
+  'PathfinderUnite',
+  'PathfinderMinusFront',
+  'PathfinderIntersect',
+  'PathfinderExclude',
+  'PathfinderMinusBack',
+  'PathfinderDivide',
+  'PathfinderTrim',
+  'PathfinderMerge',
+  'PathfinderCrop',
+  'PathfinderOutline',
 ] as const;
 
 const iconComponents = Object.entries(Icons).filter(([, value]) => typeof value === 'function') as [
