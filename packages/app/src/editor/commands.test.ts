@@ -927,5 +927,96 @@ describe('commandsByCategory', () => {
     expect(flattened.length).toBe(all.length);
     expect(grouped.get('Tool')?.length).toBe(5);
     expect(grouped.get('Align')?.length).toBe(8);
+    expect(grouped.get('Pathfinder')?.length).toBe(10);
+  });
+});
+
+describe('pathfinder commands (#214) — real isEnabled gating + real dispatch through the runner', () => {
+  it('registers exactly one chordless, palette-only command per op, in panel order', () => {
+    const ids = allCommands()
+      .filter((c) => c.category === 'Pathfinder')
+      .map((c) => c.id);
+    expect(ids).toEqual([
+      'pathfinder-unite',
+      'pathfinder-minus-front',
+      'pathfinder-intersect',
+      'pathfinder-exclude',
+      'pathfinder-divide',
+      'pathfinder-trim',
+      'pathfinder-merge',
+      'pathfinder-crop',
+      'pathfinder-outline',
+      'pathfinder-minus-back',
+    ]);
+    for (const cmd of allCommands().filter((c) => c.category === 'Pathfinder')) {
+      expect(cmd.chord).toBeUndefined();
+      expect(commandShortcutDisplay(cmd)).toBeUndefined();
+    }
+  });
+
+  it('pathfinder-unite is disabled under 2 eligible leaves and enabled at 2+', () => {
+    const unite = allCommands().find((c) => c.id === 'pathfinder-unite')!;
+    const oneLeafCtx = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [rect('a', 0, 0)] },
+      selectedIds: ['a'],
+    });
+    expect(unite.isEnabled(oneLeafCtx)).toBe(false);
+
+    const twoLeafCtx = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] },
+      selectedIds: ['a', 'b'],
+    });
+    expect(unite.isEnabled(twoLeafCtx)).toBe(true);
+  });
+
+  it('pathfinder-divide and pathfinder-outline are enabled at a single eligible leaf', () => {
+    const oneLeafCtx = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [rect('a', 0, 0)] },
+      selectedIds: ['a'],
+    });
+    const divide = allCommands().find((c) => c.id === 'pathfinder-divide')!;
+    const outline = allCommands().find((c) => c.id === 'pathfinder-outline')!;
+    expect(divide.isEnabled(oneLeafCtx)).toBe(true);
+    expect(outline.isEnabled(oneLeafCtx)).toBe(true);
+  });
+
+  // Real geometry (lazy `import('path-bool')`), same as dispatch.test.ts —
+  // proves run() actually reaches createPathfinderRunner (runner.ts) and
+  // lands its one commit, rather than a hand-rolled dispatch in commands.ts.
+  it.each([
+    'pathfinder-unite',
+    'pathfinder-minus-front',
+    'pathfinder-intersect',
+    'pathfinder-exclude',
+    'pathfinder-divide',
+    'pathfinder-trim',
+    'pathfinder-merge',
+    'pathfinder-crop',
+    'pathfinder-outline',
+    'pathfinder-minus-back',
+  ])('%s commits exactly once when run through the real runner', async (id) => {
+    const ctx = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [rect('a', 0, 0), rect('b', 5, 5)] },
+      selectedIds: ['a', 'b'],
+    });
+    const cmd = allCommands().find((c) => c.id === id)!;
+    expect(cmd.isEnabled(ctx)).toBe(true);
+    cmd.run(ctx);
+    await vi.waitFor(() => expect(ctx.commit).toHaveBeenCalledTimes(1));
+  });
+
+  // The palette itself gates on isEnabled before calling run() — but
+  // runner.ts ALSO refuses under-minimum input on its own (defense in
+  // depth), so even a direct run() call is a safe no-op: no commit fires.
+  it('run() on an under-minimum selection is a safe no-op (runner.ts re-checks the same table)', async () => {
+    const ctx = stubCommandCtx({
+      doc: { panelHp: 12, guides: [], layers: [rect('a', 0, 0)] },
+      selectedIds: ['a'],
+    });
+    const unite = allCommands().find((c) => c.id === 'pathfinder-unite')!;
+    expect(unite.isEnabled(ctx)).toBe(false);
+    unite.run(ctx);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(ctx.commit).not.toHaveBeenCalled();
   });
 });

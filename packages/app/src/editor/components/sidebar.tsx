@@ -9,6 +9,7 @@ import { CollapsibleSection } from './collapsible-section';
 import { HelpPanel } from './help-panel';
 import { InspectorHost } from './inspector-host';
 import { LayerList } from './layer-list';
+import { PathfinderPanel } from './pathfinder-panel';
 import { RotateSelectionPanel } from './rotate-selection-panel';
 
 export interface SidebarProps {
@@ -88,6 +89,14 @@ export function Sidebar({
         <CollapsibleSection title="Align & Distribute">
           <AlignPanel ctx={ctx} selectedIds={selectedIds} />
         </CollapsibleSection>
+
+        {/* Gated on a real selection (#214) — hidden with nothing selected,
+            shown (with per-button disabled state) once something is. */}
+        {selectedIds.length >= 1 && (
+          <CollapsibleSection title="Pathfinder">
+            <PathfinderPanel ctx={ctx} selectedIds={selectedIds} />
+          </CollapsibleSection>
+        )}
 
         <CollapsibleSection
           title={selectedLayer ? `Properties — ${selectedLayer.type}` : 'Properties'}
