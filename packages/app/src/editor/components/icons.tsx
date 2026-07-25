@@ -445,10 +445,24 @@ export function PathfinderTrim({ className }: IconProps) {
 export function PathfinderMerge({ className }: IconProps) {
   return (
     <Svg className={className} strokeWidth={1.6}>
-      <path d={PF_UNION_PATH} fill="currentColor" stroke="none" />
-      {/* Faint diagonal chord across the consumed corner — "adjoining
-          regions" (a seam remains), not a fully-open merge like Unite. */}
-      <path d="M15 9L9 15" opacity="0.35" />
+      {/* Merge keeps the union SILHOUETTE but leaves a seam between the two
+          adjoining regions — that is exactly what distinguishes it from Unite,
+          so the seam has to survive at the 16px render size.
+
+          It is drawn as a GAP between two filled pieces, not as an overlaid
+          stroke. The previous version layered a 0.35-opacity `currentColor`
+          chord on top of a solid `currentColor` fill — same colour on same
+          colour, so it was invisible at every size, not merely small: a
+          browser measurement pass found Unite and Merge pixel-identical at
+          16px (0 pixels differing above threshold, max delta 15/255).
+
+          Piece 1 is the back square minus the overlap. Piece 2 is the front
+          square with only its two SHARED edges — y=9 across x∈[9,15] and x=9
+          down y∈[9,15] — inset by 1.8 units (~1.2px at 16px, comparable to the
+          family's 1.6 stroke). Its exterior edges stay put, so the combined
+          18×18 footprint and this module's centring are unchanged. */}
+      <path d={PF_BACK_MINUS_OVERLAP_PATH} fill="currentColor" stroke="none" />
+      <path d="M15 9H21V21H9V15H10.8V10.8H15Z" fill="currentColor" stroke="none" />
     </Svg>
   );
 }
