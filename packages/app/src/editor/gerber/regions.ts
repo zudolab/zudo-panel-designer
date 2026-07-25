@@ -12,6 +12,7 @@
 import type { KernelPoint, KernelRing } from '../geometry-kernel';
 import { flattenRing, pointInPolygon, ringInteriorPoint } from '../geometry-kernel';
 import { flattenRingAdaptive, polygonSignedArea } from './flatten';
+import { splitPointTouchingLobes } from './primitives';
 import type { IrPoint, IrRegion, IrRing } from './ir';
 import type { IrTolerance } from './tolerance';
 
@@ -49,14 +50,17 @@ function ringMin(ring: IrRing): { x: number; y: number } {
  * flattened, so the flattener is never in the containment decision.
  */
 export function ringsToRegions(rings: readonly KernelRing[], tolerance: IrTolerance): IrRegion[] {
+  // Two shapes meeting at exactly one corner arrive as a single non-simple run
+  // (see `splitPointTouchingLobes`). Split before anything reads a ring's
+  // interior, because the containment test is only valid on simple rings.
+  const simple = rings.flatMap((ring) => (ring.length > 0 ? splitPointTouchingLobes(ring) : []));
+
   const classified: ClassifiedRing[] = [];
-  for (let i = 0; i < rings.length; i++) {
-    const ring = rings[i];
-    if (ring.length === 0) continue;
+  for (let i = 0; i < simple.length; i++) {
     classified.push({
       index: i,
-      poly: flattenRing(ring),
-      interior: ringInteriorPoint(ring),
+      poly: flattenRing(simple[i]),
+      interior: ringInteriorPoint(simple[i]),
       depth: 0,
     });
   }
@@ -73,7 +77,7 @@ export function ringsToRegions(rings: readonly KernelRing[], tolerance: IrTolera
   const regionByRingIndex = new Map<number, { outer: IrRing; holes: IrRing[]; depth: number }>();
   for (const c of classified) {
     if (c.depth % 2 !== 0) continue;
-    const outer = flattenRingAdaptive(rings[c.index], tolerance.flattenMm, tolerance.minSegmentMm);
+    const outer = flattenRingAdaptive(simple[c.index], tolerance.flattenMm, tolerance.minSegmentMm);
     if (outer.length < 3) continue;
     regionByRingIndex.set(c.index, {
       outer: orient(outer, true),
@@ -89,7 +93,7 @@ export function ringsToRegions(rings: readonly KernelRing[], tolerance: IrTolera
     );
     const region = parent ? regionByRingIndex.get(parent.index) : undefined;
     if (!region) continue;
-    const hole = flattenRingAdaptive(rings[c.index], tolerance.flattenMm, tolerance.minSegmentMm);
+    const hole = flattenRingAdaptive(simple[c.index], tolerance.flattenMm, tolerance.minSegmentMm);
     if (hole.length < 3) continue;
     region.holes.push(orient(hole, false));
   }

@@ -17,13 +17,25 @@ import { splitCubicAt } from '../geometry-kernel';
 import type { IrPoint } from './ir';
 import { MAX_FLATTEN_DEPTH } from './tolerance';
 
-/** Perpendicular distance from `p` to the infinite line through `a`,`b`. */
-function lineDistance(p: KernelPoint, a: KernelPoint, b: KernelPoint): number {
+/**
+ * Distance from `p` to the CHORD SEGMENT `a`–`b` — deliberately not to the
+ * infinite line through them.
+ *
+ * A control point that projects far beyond an endpoint but sits almost on the
+ * line has a near-zero perpendicular distance, so a line test calls the cubic
+ * flat while the curve swings millimetres past its own chord:
+ * `p0=(0,0) c1=(-10,0.001) c2=(0.3,0.001) p3=(1,0)` measures 1 µm off the line
+ * and reaches x ≈ −4.2 mm. Clamping the projection catches that longitudinal
+ * overshoot. Segment distance is always ≥ line distance, so this can only make
+ * the flatness test stricter, never looser.
+ */
+function chordDistance(p: KernelPoint, a: KernelPoint, b: KernelPoint): number {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const len2 = dx * dx + dy * dy;
   if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
-  return Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / Math.sqrt(len2);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
 /**
@@ -78,7 +90,7 @@ export function flattenCubicInto(
     return;
   }
 
-  const deviation = Math.max(lineDistance(c.c1, c.p0, c.p3), lineDistance(c.c2, c.p0, c.p3));
+  const deviation = Math.max(chordDistance(c.c1, c.p0, c.p3), chordDistance(c.c2, c.p0, c.p3));
   // The true chord deviation of a cubic is at most 3/4 of its control-point
   // deviation, so testing the control points directly is conservative — the
   // emitted polyline stays comfortably inside the budget rather than on it.

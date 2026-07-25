@@ -49,7 +49,7 @@ import type {
 import { reverseRing, ringInteriorPoint, ringSignedArea } from '../geometry-kernel';
 import { circularArcToCubics, ellipseToRing } from './arc';
 import { flattenChain, polygonSignedArea } from './flatten';
-import { degenerateCubic, rectToRing } from './primitives';
+import { degenerateCubic, rectToRing, splitPointTouchingLobes } from './primitives';
 import type { IrTolerance } from './tolerance';
 
 const TAU = Math.PI * 2;
@@ -409,7 +409,12 @@ function validatedHoleContours(
   engine: BooleanEngine,
 ): KernelRing[] {
   if (innerRing.length === 0) return [];
-  const faces = engine.arrange([{ contours: [innerRing], fillRule: 'nonzero' }]).unite();
+  const faces = engine
+    .arrange([{ contours: [innerRing], fillRule: 'nonzero' }])
+    .unite()
+    // The distance probe below reads each face's interior, which is only
+    // meaningful on a simple ring.
+    .flatMap((ring) => splitPointTouchingLobes(ring));
   const holes: KernelRing[] = [];
   for (const face of faces) {
     if (distanceToClosedPolyline(ringInteriorPoint(face), source) + WELD_MM < h) continue;

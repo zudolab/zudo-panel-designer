@@ -266,6 +266,10 @@ export async function buildGerberIr(
           ? slices.solderMask
           : slices.silkscreen;
     const overrun: Layer[] = [];
+    // Running total, not a re-scan per layer: the ceiling is 20,000 rings, and
+    // re-counting every accumulated input after each extraction is quadratic
+    // in the layer count right where the limit lives.
+    let ringCount = 0;
     for (const layer of sliceLayers) {
       // Hidden layers never reach extraction and never trigger a refusal —
       // the identical guard every existing manufacturing pass uses.
@@ -275,8 +279,12 @@ export async function buildGerberIr(
         refusals.add(REFUSAL_CODE_FOR_REASON[result.reason], layer);
         continue;
       }
-      inputs.push(...result.groups.filter((g) => g.contours.length > 0));
-      if (countRings(inputs) > limits.maxRingsPerLayer) overrun.push(layer);
+      for (const group of result.groups) {
+        if (group.contours.length === 0) continue;
+        inputs.push(group);
+        ringCount += group.contours.length;
+      }
+      if (ringCount > limits.maxRingsPerLayer) overrun.push(layer);
     }
     if (overrun.length > 0) refusals.addMany('complexity-overrun', overrun);
     inputsByRole.set(role, inputs);
@@ -322,10 +330,4 @@ export async function buildGerberIr(
       layers: [materialLayers[0], materialLayers[1], materialLayers[2], outline],
     },
   };
-}
-
-function countRings(inputs: readonly KernelInput[]): number {
-  let total = 0;
-  for (const input of inputs) total += input.contours.length;
-  return total;
 }

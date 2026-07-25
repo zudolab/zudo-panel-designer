@@ -99,6 +99,30 @@ describe('ringsToRegions — nesting (Decision 0.3)', () => {
     expect(countRegionVertices(ringsToRegions(NESTED, TOL))).toBe(16);
   });
 
+  it('splits a point-touching run into simple lobes before classifying it', () => {
+    // Two squares meeting at exactly one corner come back from path-bool as a
+    // single non-simple run with the shared vertex repeated (a documented
+    // kernel limit). Emitting that as one IrRing would break the contract and
+    // hand the writer a self-touching G36 contour.
+    const bothLobes = [...rectToRing(0, 0, 10, 10), ...rectToRing(10, 10, 10, 10)];
+    const regions = ringsToRegions([bothLobes], TOL);
+    expect(regions).toHaveLength(2);
+    expect(regions.map((r) => bbox(r.outer))).toEqual([
+      [0, 0, 10, 10],
+      [10, 10, 20, 20],
+    ]);
+    for (const region of regions) {
+      expect(region.outer).toHaveLength(4);
+      expect(polygonSignedArea(region.outer)).toBeGreaterThan(0);
+    }
+  });
+
+  it('leaves an ordinary simple ring whole', () => {
+    const regions = ringsToRegions([rectToRing(0, 0, 10, 10)], TOL);
+    expect(regions).toHaveLength(1);
+    expect(regions[0].outer).toHaveLength(4);
+  });
+
   it('drops a ring that flattens below 3 vertices', () => {
     expect(ringsToRegions([rectToRing(0, 0, 1e-7, 1e-7)], TOL)).toEqual([]);
   });

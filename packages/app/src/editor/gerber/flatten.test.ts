@@ -83,6 +83,22 @@ describe('adaptive flattening (Decision 6.2)', () => {
     );
   });
 
+  it('subdivides a cubic whose control overshoots the chord but hugs its line', () => {
+    // A line-distance flatness test calls this flat — both controls sit 1 µm
+    // off the p0→p3 line — while the curve swings out to x ≈ −4.2 mm. Emitting
+    // it as one chord would silently drop millimetres of artwork.
+    const overshoot: KernelCubic = {
+      p0: { x: 0, y: 0 },
+      c1: { x: -10, y: 0.001 },
+      c2: { x: 0.3, y: 0.001 },
+      p3: { x: 1, y: 0 },
+    };
+    const polyline = flattenChain([overshoot], flattenMm, minSegmentMm);
+    expect(polyline.length).toBeGreaterThan(2);
+    expect(Math.min(...polyline.map((p) => p.x))).toBeLessThan(-4);
+    expect(maxChordDeviation([overshoot], polyline)).toBeLessThanOrEqual(flattenMm);
+  });
+
   it('terminates on a degenerate cusped cubic instead of subdividing forever', () => {
     const cusp: KernelCubic = {
       p0: { x: 0, y: 0 },

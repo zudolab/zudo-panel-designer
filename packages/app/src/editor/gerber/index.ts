@@ -60,5 +60,5 @@ export {
   flattenRingAdaptive,
   polygonSignedArea,
 } from './flatten';
-export { degenerateCubic, polygonToRing, rectToRing } from './primitives';
+export { degenerateCubic, polygonToRing, rectToRing, splitPointTouchingLobes } from './primitives';
 export { countRegionVertices, ringsToRegions } from './regions';
