@@ -193,7 +193,25 @@ export type GerberRefusalCode =
    * separate result field so #215 still renders ONE collected refusal list,
    * and so an exhaustive switch fails to compile rather than silently skipping.
    */
-  | 'unsupported-layer-type';
+  | 'unsupported-layer-type'
+  /**
+   * ADDITIVE to Decision 8's closed list, and deliberately so (#215/#218).
+   * `path-bool`, the #206 kernel's boolean backend, corrupts the union for a
+   * measured subset of the 62 registered pattern generators — not a tolerance
+   * quibble, but the wrong shape entirely on some (`seigaiha` unions to 100%
+   * wrong) and a near-total area loss on others (`via-grid-array` retains
+   * 0.5%). Decision 8's binding rule is "a refusal aborts the export; no file
+   * is produced" — silently shipping known-corrupted fabrication geometry is
+   * exactly what that rule exists to prevent, so a pattern layer naming one
+   * of these ids refuses instead.
+   *
+   * The affected set is `pattern-union-unreliable.generated.ts`, a GENERATED
+   * constant (not hand-maintained) measured by the same end-to-end sweep
+   * `pattern-parity.test.ts` ratchets against — see that file's header. When
+   * #218 fixes the union backend, regenerating collapses the set to empty and
+   * this code stops firing for every pattern, with no code change here.
+   */
+  | 'pattern-union-unreliable';
 
 export interface GerberRefusal {
   readonly code: GerberRefusalCode;

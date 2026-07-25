@@ -53,6 +53,23 @@ const ROLE_SPEC: Record<IrLayerRole, RoleSpec> = {
   outline: { extension: '.GKO', fileFunction: 'Profile,NP', label: 'board outline profile' },
 };
 
+// Extension/label-only views of ROLE_SPEC, for callers (zip.ts's README) that
+// need a filename or a plain-English label without paying for a full
+// gerberLayerText() serialization.
+export const GERBER_ROLE_EXTENSION: Record<IrLayerRole, GerberFileExtension> = Object.fromEntries(
+  (Object.entries(ROLE_SPEC) as [IrLayerRole, RoleSpec][]).map(([role, spec]) => [
+    role,
+    spec.extension,
+  ]),
+) as Record<IrLayerRole, GerberFileExtension>;
+
+export const GERBER_ROLE_LABEL: Record<IrLayerRole, string> = Object.fromEntries(
+  (Object.entries(ROLE_SPEC) as [IrLayerRole, RoleSpec][]).map(([role, spec]) => [
+    role,
+    spec.label,
+  ]),
+) as Record<IrLayerRole, string>;
+
 const FILE_POLARITY_ATTRIBUTE: Record<NonNullable<IrLayer['filePolarity']>, string> = {
   positive: 'Positive',
   negative: 'Negative',

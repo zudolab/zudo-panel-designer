@@ -172,3 +172,105 @@ export function defaultParamsOf(gen: PanelPatternGenerator): Record<string, numb
   for (const def of gen.paramDefs) params[def.key] = def.defaultValue;
   return params;
 }
+
+export interface UnionSweepSpec {
+  readonly label: string;
+  readonly set: { readonly sizeMm: number; readonly pixels: number };
+  readonly tolerance: number;
+  readonly params: (gen: PanelPatternGenerator) => Record<string, number>;
+}
+
+/**
+ * The three parameter sets swept for BOTH recorder-only parity
+ * (`pattern-parity.test.ts`'s per-generator tests) and the end-to-end union
+ * measurement below — a single source so the two can never silently drift
+ * apart, and so "verified" means verified across the range a `PatternLayer`
+ * actually exposes, not just at its defaults.
+ *
+ * The union sweep MUST cover more than defaults: a codex review of #215
+ * caught `grid-lines` corrupting end-to-end ONLY when `pitch` and `lineWidth`
+ * are BOTH at their minimum (2 mm, 0.1 mm) — exactly the 'min' spec below,
+ * invisible to a default-only sweep, and a real, un-refused combination a
+ * `PatternLayer`'s `size`/`params` can reach in the app.
+ */
+export const UNION_SWEEP_SPECS: readonly UnionSweepSpec[] = [
+  {
+    label: 'default parameters',
+    set: { sizeMm: 24, pixels: 480 }, // 0.05 mm/px
+    tolerance: 0.02,
+    params: defaultParamsOf,
+  },
+  {
+    label: 'every parameter at its minimum',
+    set: { sizeMm: 16, pixels: 320 }, // 0.05 mm/px
+    tolerance: 0.05,
+    params: (gen) => extremeParams(gen, 'min'),
+  },
+  {
+    label: 'every parameter at its maximum',
+    set: { sizeMm: 16, pixels: 320 }, // 0.05 mm/px
+    tolerance: 0.05,
+    params: (gen) => extremeParams(gen, 'max'),
+  },
+];
+
+export interface UnionReliabilityEntry {
+  readonly name: string;
+  /** e.g. "default parameters: 168641px, 80.3%; every parameter at its minimum: threw: …". */
+  readonly detail: string;
+}
+
+/**
+ * Every registered generator whose END-TO-END result (record → kernel union
+ * → square clip) disagrees with the independent reference render at ANY of
+ * `specs` — the measurement `pattern-union-unreliable.generated.ts` is
+ * generated from (#218), and what `pattern-parity.test.ts` re-measures on
+ * every run to catch that file drifting from reality. A generator is
+ * reliable only if it survives EVERY spec — one bad parameter combination
+ * anywhere in the sweep is enough to refuse it (Decision 8's "refuse rather
+ * than ship a plausible-looking wrong file" applied to the measurement
+ * itself, not only to the export path).
+ *
+ * ASYNC, and yields to the event loop between generators, even though every
+ * individual step is synchronous CPU work. 62 generators × 3 specs of real
+ * kernel unions run ~75s back to back with the default `UNION_SWEEP_SPECS` —
+ * long enough to starve vitest's own worker↔main RPC heartbeat, which has a
+ * hardcoded, non-configurable 60s timeout (`[vitest-worker]: Timeout calling
+ * "onTaskUpdate"`, observed reliably once this sweep grew past defaults-only
+ * to cover the parameter extremes too). A `setTimeout(0)` between generators
+ * breaks the block into ~62 short slices instead of one long one.
+ */
+export async function measureUnionUnreliability(
+  engine: BooleanEngine,
+  generators: readonly PanelPatternGenerator[],
+  specs: readonly UnionSweepSpec[] = UNION_SWEEP_SPECS,
+): Promise<UnionReliabilityEntry[]> {
+  const entries: UnionReliabilityEntry[] = [];
+  for (const gen of generators) {
+    const failures: string[] = [];
+    for (const spec of specs) {
+      const result = runParity(gen, engine, { ...spec.set, params: spec.params(gen) });
+      if (result.unionError) {
+        failures.push(`${spec.label}: threw: ${result.unionError}`);
+      } else if (result.deep > 0 || result.areaError > spec.tolerance) {
+        failures.push(
+          `${spec.label}: ${result.deep}px, ${(result.areaError * 100).toFixed(1)}%`,
+        );
+      }
+    }
+    if (failures.length > 0) entries.push({ name: gen.name, detail: failures.join('; ') });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return entries;
+}
+
+/** `measureUnionUnreliability`'s names alone, sorted — the exporter's shape. */
+export async function measureUnionUnreliableNames(
+  engine: BooleanEngine,
+  generators: readonly PanelPatternGenerator[],
+  specs: readonly UnionSweepSpec[] = UNION_SWEEP_SPECS,
+): Promise<string[]> {
+  return (await measureUnionUnreliability(engine, generators, specs))
+    .map((entry) => entry.name)
+    .sort();
+}
