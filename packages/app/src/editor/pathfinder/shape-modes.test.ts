@@ -78,6 +78,20 @@ describe('Minus Front', () => {
     expect(spec.fill).toBe(0);
     expect(spec.name).toBe('Minus Front');
   });
+
+  it('a 1mm border frame comes back as a real layer, not an empty no-op', async () => {
+    // Regression: `ringInteriorPoint`'s inward step clears a thin wall and lands
+    // in the hole, which made the frame's two rings each other's container and
+    // dropped the whole result. See the containment note in convert.ts.
+    const result = await minusFront(
+      [rectShape('outer', 0, 0, 100, 100, 0), rectShape('inner', 1, 1, 98, 98, 2)],
+      engine,
+    );
+    expect(result.specs).toHaveLength(1);
+    expect(holeCount(result.specs[0]!)).toBe(1);
+    expectAreaClose(resultNetArea(result), 100 * 100 - 98 * 98);
+    expect(result.target).toEqual({ role: 'copper', frontmostLeafId: 'inner' });
+  });
 });
 
 // ── 3. Intersect ────────────────────────────────────────────────────────────

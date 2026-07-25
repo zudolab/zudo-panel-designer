@@ -83,6 +83,19 @@ the boolean has to agree with what is on screen. Shape leaves stay `nonzero`.
 For a simple single ring the rules coincide, so only self-intersecting pen paths
 are affected.
 
+### Ring containment needs an area guard
+
+`ringsToSpecs` classifies outer-vs-hole by even-odd containment of each ring's
+interior point. That point comes from the kernel's `ringInteriorPoint`, which
+steps inward from the ring's topmost vertex by a fraction of that ring's own
+bbox diagonal and only verifies the result against **that** ring. On a thin
+frame (a 100mm square minus a 98mm one) the step clears the 1mm wall and lands
+inside the hole, so a container search without an area guard makes the two rings
+each other's container, gives both odd depth, and drops the whole result
+silently. Containment implies strictly greater area for the non-overlapping
+rings a boolean returns, so only larger rings are considered. Pinned by the
+thin-frame tests in `convert.test.ts` and `shape-modes.test.ts`.
+
 ### Cross-material destination
 
 A result lands in the container of the **frontmost (topmost) eligible input**,

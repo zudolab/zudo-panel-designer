@@ -302,11 +302,23 @@ export function ringsToSpecs(
     poly: flattenRing(ring),
   }));
 
-  // containers[i] = indices of rings that strictly contain ring i's interior point
+  // containers[i] = indices of rings that contain ring i's interior point.
+  //
+  // The area guard is NOT redundant. `ringInteriorPoint` steps inward from the
+  // topmost vertex by a fraction of the ring's own bbox diagonal and only
+  // verifies the result is inside THAT ring — for a thin frame (a 100mm square
+  // minus a 98mm one) that step clears the 1mm wall and lands inside the hole.
+  // Without the guard the two rings would each record the other as a container,
+  // both would come out odd-depth, and a perfectly valid Minus Front / Exclude
+  // result would vanish as an empty no-op. Containment implies strictly greater
+  // area for the non-overlapping rings a boolean returns, so requiring it costs
+  // nothing and removes the cycle. Pinned by the thin-frame test.
   const containers: number[][] = meta.map((m, i) => {
     const idxs: number[] = [];
+    const ownArea = Math.abs(m.area);
     for (let j = 0; j < meta.length; j++) {
-      if (j !== i && pointInPolygon(m.rep, meta[j]!.poly)) idxs.push(j);
+      if (j === i || Math.abs(meta[j]!.area) <= ownArea) continue;
+      if (pointInPolygon(m.rep, meta[j]!.poly)) idxs.push(j);
     }
     return idxs;
   });

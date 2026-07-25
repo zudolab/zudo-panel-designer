@@ -31,6 +31,7 @@ import {
   rectPoints,
   rectShape,
   shapeLayerOf,
+  specArea,
   specNetArea,
 } from './test-fixtures';
 import type { ResolvedInputStyle } from './types';
@@ -255,6 +256,55 @@ describe('ringsToSpecs', () => {
 
   it('emits nothing for no rings', () => {
     expect(ringsToSpecs([], GOLD, 'Unite')).toEqual([]);
+  });
+});
+
+// ── Thin-wall containment (regression) ─────────────────────────────────────
+//
+// `ringInteriorPoint` steps inward from a ring's topmost vertex by a fraction
+// of that ring's OWN bbox diagonal and only checks the result against that same
+// ring — so on a thin frame the step clears the wall and lands inside the hole.
+// Classifying containment without an area guard then made the outer and inner
+// rings each other's container, gave both odd depth, and silently dropped the
+// whole result. A border trace is exactly this shape, so it is not exotic.
+
+describe('thin-walled results', () => {
+  it('a 1mm frame survives Minus Front instead of vanishing as a no-op', () => {
+    const rings = engine
+      .arrange([
+        leafToKernelInput(rectShape('outer', 0, 0, 100, 100, 1)),
+        leafToKernelInput(rectShape('inner', 1, 1, 98, 98, 2)),
+      ])
+      .subtract();
+    const specs = ringsToSpecs(rings, GOLD, 'Minus Front');
+
+    expect(specs).toHaveLength(1);
+    expect(holeCount(specs[0]!)).toBe(1);
+    expectAreaClose(specNetArea(specs[0]!), 100 * 100 - 98 * 98);
+    expect(Math.sign(ringSignedArea(specHoleRings(specs[0]!)[0]!))).toBe(
+      -Math.sign(ringSignedArea(specOuterRing(specs[0]!))),
+    );
+  });
+
+  it('still splits an island out of a thin frame’s hole (nesting depth intact)', () => {
+    // A thin frame plus a disc sitting inside its hole: the frame is one spec
+    // with one hole, the disc is its own top-level spec — not a third level.
+    const rings = engine
+      .arrange([
+        leafToKernelInput(rectShape('outer', 0, 0, 100, 100, 1)),
+        leafToKernelInput(rectShape('inner', 1, 1, 98, 98, 2)),
+      ])
+      .subtract()
+      .concat(engine.arrange([leafToKernelInput(rectShape('island', 40, 40, 20, 20, 1))]).unite());
+    const specs = ringsToSpecs(rings, GOLD, 'Exclude');
+
+    expect(specs).toHaveLength(2);
+    const frame = specs.find((spec) => holeCount(spec) === 1);
+    const island = specs.find((spec) => holeCount(spec) === 0);
+    expect(frame).toBeDefined();
+    expect(island).toBeDefined();
+    expectAreaClose(specNetArea(frame!), 100 * 100 - 98 * 98);
+    expectAreaClose(specArea(island!), 400);
   });
 });
 
