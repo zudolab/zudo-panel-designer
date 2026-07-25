@@ -74,6 +74,17 @@ declare module 'opentype.js' {
     getKerningValue(left: number | OpenTypeGlyph, right: number | OpenTypeGlyph): number;
     readonly substitution: {
       getLigatures(feature: string, script?: string, language?: string): OpenTypeLigature[];
+      /**
+       * NOTE the argument order — `(script, language, feature, lookupType)`,
+       * not `(feature, script, …)` like `getLigatures`. An omitted `script`
+       * defaults to `'DFLT'`, which is why callers pass it explicitly.
+       */
+      getLookupTables(
+        script: string | undefined,
+        language: string | undefined,
+        feature: string,
+        lookupType: number,
+      ): unknown[];
     };
   }
 

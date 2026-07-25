@@ -514,6 +514,67 @@ describe('subset selection', () => {
   });
 });
 
+describe('GSUB features the canvas applies by default', () => {
+  it('applies `liga` from a font whose GSUB has only a latn script table', async () => {
+    // Audiowide is that font. opentype.js defaults an omitted script to 'DFLT',
+    // so asking for ligatures without naming 'latn' silently returns none and
+    // "fi" exports as two separate glyphs at the wrong advance.
+    const layer = text({ content: 'fi', fontFamily: 'Audiowide', sizeMm: 8 });
+    const { font } = await latinFont('Audiowide');
+    const scale = layer.sizeMm / font.unitsPerEm;
+    const f = font.charToGlyph('f');
+    const i = font.charToGlyph('i');
+    const ligature = font.substitution.getLigatures('liga', 'latn')[0];
+    const ligated = font.glyphs.get(ligature.by)!;
+    expect(ligature.sub).toEqual([f.index, i.index]);
+
+    const bounds = regionsBounds(regionsOf(await extract(layer)));
+    expect(bounds.maxX).toBeCloseTo(layer.x + ligated.xMax! * scale, 3);
+    // …and the unligated placement is a different number, so the assertion
+    // above genuinely proves the substitution ran.
+    const unligated = layer.x + (f.advanceWidth! + i.xMax!) * scale;
+    expect(Math.abs(bounds.maxX - unligated)).toBeGreaterThan(0.01);
+  });
+
+  it('refuses text a contextual feature would reshape', async () => {
+    // Inter's `calt` is lookup types [4, 6]: the type-6 half rewrites hyphen and
+    // greater into `.case` variants beside capitals and the type-4 half then
+    // ligates whichever survived. Running only the half we can evaluate would
+    // draw a DIFFERENT arrow from the one the editor showed.
+    const result = await extract(text({ fontFamily: 'Inter', content: 'IN -> OUT' }));
+    expect(result).toMatchObject({ kind: 'unsupported', reason: 'missing-glyph' });
+    expect((result as { detail: string }).detail).toContain('"->"');
+  });
+
+  it('does not refuse ordinary text containing the same characters', async () => {
+    // A lone hyphen matches no rule — the guard is sequence-exact, not a
+    // character blacklist, or every `IN-1` label would refuse.
+    expect(
+      regionsOf(await extract(text({ fontFamily: 'Inter', content: 'IN-1' }))).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('refuses a decomposed combining mark but not its precomposed form', async () => {
+    // e + U+0301 is placed by GPOS mark attachment, which is not evaluated
+    // here; laid out on its own advance the accent would land beside the e.
+    const decomposed = await extract(text({ fontFamily: 'Inter', content: 'e\u0301' }));
+    expect(decomposed).toMatchObject({ kind: 'unsupported', reason: 'missing-glyph' });
+    expect((decomposed as { detail: string }).detail).toContain('U+0301');
+
+    expect(
+      regionsOf(await extract(text({ fontFamily: 'Inter', content: '\u00e9' }))).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('refuses a complex script rather than laying it out in cmap order', async () => {
+    // Rajdhani ships a devanagari subset, so the codepoints resolve and no
+    // missing-glyph fires — but reordering and conjuncts are not implemented.
+    const result = await extract(text({ fontFamily: 'Rajdhani', content: 'हिन्दी' }));
+    expect(result).toMatchObject({ kind: 'unsupported', reason: 'missing-glyph' });
+    expect((result as { detail: string }).detail).toContain('devanagari');
+  });
+});
+
 describe('refusals (Decision 8)', () => {
   it('refuses a family outside the 10 curated @fontsource packages', async () => {
     const result = await extract(text({ fontFamily: 'Roboto Slab', content: 'Hi' }));
