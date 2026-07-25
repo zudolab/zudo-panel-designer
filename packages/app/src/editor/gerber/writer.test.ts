@@ -232,6 +232,41 @@ describe('coordinate formatting', () => {
   });
 });
 
+describe('large but legal geometry', () => {
+  // Decision 8 permits 2,000,000 flattened vertices across the IR, so a single
+  // ring can run well past the ~125,000 arguments V8 accepts in one call. Any
+  // `push(...lines)` in the emission path throws RangeError on input like this
+  // and aborts a valid export.
+  const denseRing = Array.from({ length: 200_000 }, (_, i) => ({
+    x: (i % 1000) / 1000,
+    y: 20 + i / 200_000,
+  }));
+
+  it('emits a 200,000-vertex ring without overflowing the call stack', () => {
+    const layer: IrLayer = {
+      role: 'copper',
+      filePolarity: 'positive',
+      renderAs: 'filled-region',
+      regions: [{ outer: denseRing, holes: [denseRing] }],
+    };
+
+    const text = emit(layer);
+    // outer + hole, each with a move, n-1 segments and the explicit close.
+    expect(text.split('\n').filter((line) => /D0[12]\*$/.test(line))).toHaveLength(2 * 200_001);
+  });
+
+  it('emits a dense stroked profile without overflowing the call stack', () => {
+    const layer: IrLayer = {
+      role: 'outline',
+      filePolarity: null,
+      renderAs: 'stroked-contour',
+      regions: [{ outer: denseRing, holes: [denseRing] }],
+    };
+
+    expect(() => emit(layer)).not.toThrow();
+  });
+});
+
 describe('gerberFileSet', () => {
   it('always writes all four files with the download.ts filename convention', () => {
     expect(gerberFileSet(fixtureIr(MASK_LAYER_EMPTY), OPTIONS).map((f) => f.filename)).toEqual([

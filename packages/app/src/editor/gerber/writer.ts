@@ -76,6 +76,16 @@ function operation(p: IrPoint, dCode: 'D01' | 'D02'): string {
 }
 
 /**
+ * Never `target.push(...lines)`. Decision 8's ceiling allows 2,000,000 flattened
+ * vertices across the IR, so a single legal ring can be far past the ~125,000
+ * arguments V8 accepts in one call — spreading it throws RangeError and aborts
+ * an otherwise valid export.
+ */
+function append(target: string[], lines: readonly string[]): void {
+  for (const line of lines) target.push(line);
+}
+
+/**
  * One implicitly-closed IR ring as an explicitly-closed Gerber contour. The
  * closing segment is emitted even though the spec auto-closes a region: it
  * removes any chance of the two closure conventions disagreeing (Decision 3.5).
@@ -84,17 +94,21 @@ function contourLines(ring: IrRing, panelHeightMm: number): string[] {
   const gerberRing = toGerberRing(ring, panelHeightMm);
   const first = gerberRing[0];
   const lines = [operation(first, 'D02')];
-  for (const point of gerberRing.slice(1)) lines.push(operation(point, 'D01'));
+  for (let i = 1; i < gerberRing.length; i += 1) lines.push(operation(gerberRing[i], 'D01'));
   lines.push(operation(first, 'D01'));
   return lines;
 }
 
 function filledRegionLines(region: IrRegion, panelHeightMm: number): string[] {
-  const lines = ['G36*', ...contourLines(region.outer, panelHeightMm), 'G37*'];
+  const lines = ['G36*'];
+  append(lines, contourLines(region.outer, panelHeightMm));
+  lines.push('G37*');
   // Even-odd holes are expressed as per-region polarity, not as winding: clear
   // each hole, then restore dark so the next region paints (Decision 3.5).
   for (const hole of region.holes) {
-    lines.push('%LPC*%', 'G36*', ...contourLines(hole, panelHeightMm), 'G37*', '%LPD*%');
+    lines.push('%LPC*%', 'G36*');
+    append(lines, contourLines(hole, panelHeightMm));
+    lines.push('G37*', '%LPD*%');
   }
   return lines;
 }
@@ -107,7 +121,7 @@ function filledRegionLines(region: IrRegion, panelHeightMm: number): string[] {
  */
 function strokedContourLines(region: IrRegion, panelHeightMm: number): string[] {
   const lines = contourLines(region.outer, panelHeightMm);
-  for (const hole of region.holes) lines.push(...contourLines(hole, panelHeightMm));
+  for (const hole of region.holes) append(lines, contourLines(hole, panelHeightMm));
   return lines;
 }
 
@@ -159,7 +173,7 @@ export function gerberLayerText(
   // Emitted in IR order: regions are disjoint and ordered outer-before-contained
   // upstream, so this is a plain painter's-algorithm stream with no containment
   // analysis here (Decision 0.3).
-  for (const region of layer.regions) lines.push(...emitRegion(region, panel.heightMm));
+  for (const region of layer.regions) append(lines, emitRegion(region, panel.heightMm));
   lines.push('M02*');
   return `${lines.join('\n')}\n`;
 }
