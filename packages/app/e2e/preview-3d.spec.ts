@@ -424,6 +424,21 @@ test('@smoke 3D preview reload recovery restores the panel and starts a fresh re
 test('@smoke 3D preview refreshes font surfaces and reopens on current editor state', async ({
   page,
 }) => {
+  // Same reasoning as the two budgets already declared in this file: this is a
+  // heavyweight scenario that outgrew the default. It gates a font request,
+  // mounts the preview, fingerprints a surface, releases the font and waits for
+  // the surface to change, disposes, changes HP, re-selects a layer, reopens
+  // through the command palette, and reads four surface pixels — two complete
+  // mount/dispose cycles in one test.
+  //
+  // It was ALREADY at the edge before it started failing: on the previous PR
+  // (#199) it passed in 28.9s against the 30s default — 1.1s of headroom on an
+  // oversubscribed 2-worker runner under software WebGL. Anything at all, in
+  // this branch or in CI weather, tips it. Give it the same explicit local
+  // budget its siblings have rather than leaving a test that is one slow run
+  // from red.
+  test.slow();
+
   let fontRequestObserved = false;
   let releaseFontRequest: () => void = () => {};
   const fontRequestGate = new Promise<void>((resolve) => {
