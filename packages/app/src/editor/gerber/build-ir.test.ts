@@ -14,9 +14,11 @@ import {
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { BooleanEngine } from '../geometry-kernel';
 import { createBooleanEngine } from '../geometry-kernel';
+import { readFile } from 'node:fs/promises';
 import { buildGerberIr, type BuildGerberIrResult } from './build-ir';
 import { polygonSignedArea } from './flatten';
 import type { GerberIr, IrRegion, IrRing } from './ir';
+import { setCuratedFontFileLoaderForTests } from './text-fonts';
 
 const HP = 16;
 const WIDTH = panelWidthMm(HP); // 80.9
@@ -24,6 +26,14 @@ const WIDTH = panelWidthMm(HP); // 80.9
 let engine: BooleanEngine;
 beforeAll(async () => {
   engine = await createBooleanEngine();
+  // Text layers now resolve through the real outliner (#212), which loads a
+  // `?url` font asset. Vitest resolves that to `/@fs/<abs path>`, which `fetch`
+  // cannot read but the filesystem can — same seam text-fonts.test.ts uses.
+  setCuratedFontFileLoaderForTests(async (url) => {
+    const path = url.startsWith('/@fs') ? url.slice('/@fs'.length) : url;
+    const buffer = await readFile(path);
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  });
 });
 
 function doc(
@@ -305,7 +315,13 @@ describe('refusals (Decision 8)', () => {
     expect(result.refusals[0].layers).toEqual([{ id: 'pat', name: 'Grid' }]);
   });
 
-  it('refuses a text layer with no source registered rather than dropping it', async () => {
+  // Was "refuses a text layer with no source registered". That premise died when
+  // #212 registered `textGeometrySource` as a built-in: `unsupported-layer-type`
+  // is now unreachable for text, exactly as #209 predicted when it added the code
+  // ("transitional — unreachable once #211/#212 register"). The surviving value of
+  // this case is the original intent — a text layer must never be silently DROPPED
+  // — so it is asserted against the real outliner instead of against a refusal.
+  it('outlines a text layer instead of dropping it', async () => {
     const text: TextLayer = {
       id: 'txt',
       name: 'Legend',
@@ -318,10 +334,10 @@ describe('refusals (Decision 8)', () => {
       color: 2,
     };
     const result = await build(doc({ silkscreen: [text] }));
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.refusals[0].code).toBe('unsupported-layer-type');
-    expect(result.refusals[0].layers).toEqual([{ id: 'txt', name: 'Legend' }]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const silkscreen = result.ir.layers.find((layer) => layer.role === 'silkscreen');
+    expect(silkscreen?.regions.length ?? 0).toBeGreaterThan(0);
   });
 
   it('reports every refusal together — one dialog, not four in sequence', async () => {
