@@ -18,7 +18,7 @@ import { buildGerberIr } from './gerber/build-ir';
 import type { GerberRefusal } from './gerber/ir';
 import type { GerberEmitOptions } from './gerber/writer';
 import { gerberZipBytes, gerberZipFilename, GERBER_ARTWORK_ONLY_STATEMENT } from './gerber/zip';
-import { toastSuccess } from './registry/toasts';
+import { toastError, toastSuccess } from './registry/toasts';
 
 export function panelConfigJson(doc: DocState): string {
   return JSON.stringify(serializePanelConfig(doc), null, 2);
@@ -104,6 +104,17 @@ function refusalListNode(refusals: readonly GerberRefusal[]): ReactNode {
  * Takes `doc` rather than a full `ToolContext`, matching `downloadPanelConfig`
  * — everything else it needs (the dialog registry, the toast queue) is a
  * module-level import, not context.
+ *
+ * `downloadGerberZip` can REJECT rather than resolve to a refusal — the
+ * kernel's lazy `import('path-bool')`, the outliner's lazy `opentype.js` +
+ * font fetch, or the union itself (measurably capable of throwing outright,
+ * see `kernel-limits.test.ts`) can all fail for reasons Decision 8's refusal
+ * codes don't model. Both entry points (header.tsx, commands.ts) call this
+ * fire-and-forget (`void exportGerberZip(...)`), so an uncaught rejection
+ * here would be a genuinely silent failure — no dialog, no toast, nothing —
+ * which is exactly the outcome the whole refusal system exists to prevent.
+ * The try/catch below is that same "never silent" rule applied to the
+ * unexpected-crash case, not only the anticipated-refusal one.
  */
 export async function exportGerberZip(doc: DocState): Promise<void> {
   const widthMm = panelWidthMm(doc.panelHp);
@@ -115,17 +126,23 @@ export async function exportGerberZip(doc: DocState): Promise<void> {
   });
   if (!confirmed) return;
 
-  const result = await downloadGerberZip(doc);
-  if (result.ok) {
-    toastSuccess('Gerber export downloaded');
-    return;
+  try {
+    const result = await downloadGerberZip(doc);
+    if (result.ok) {
+      toastSuccess('Gerber export downloaded');
+      return;
+    }
+    // Both buttons just dismiss — this is an acknowledgement, not a real
+    // yes/no choice — so the resolved boolean is intentionally unused.
+    await confirmDialog({
+      title: `Gerber export blocked — ${result.refusals.length} issue${result.refusals.length === 1 ? '' : 's'}`,
+      children: refusalListNode(result.refusals),
+      confirmLabel: 'OK',
+      danger: true,
+    });
+  } catch (error) {
+    toastError('Gerber export failed', {
+      description: error instanceof Error ? error.message : String(error),
+    });
   }
-  // Both buttons just dismiss — this is an acknowledgement, not a real
-  // yes/no choice — so the resolved boolean is intentionally unused.
-  await confirmDialog({
-    title: `Gerber export blocked — ${result.refusals.length} issue${result.refusals.length === 1 ? '' : 's'}`,
-    children: refusalListNode(result.refusals),
-    confirmLabel: 'OK',
-    danger: true,
-  });
 }

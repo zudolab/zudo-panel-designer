@@ -3,15 +3,21 @@
  *
  * Source of truth: `measureUnionUnreliability()` in `pattern-parity.ts`, the
  * SAME end-to-end sweep `pattern-parity.test.ts`'s "end-to-end parity through
- * the kernel union" suite ratchets against — every registered pattern
- * generator, run through record → #206 kernel union → square clip, compared
- * against an independent software-canvas render (`raster-oracle.ts`).
+ * the kernel union, across every parameter sweep" suite ratchets against —
+ * every registered pattern generator, run through record → #206 kernel union
+ * → square clip, compared against an independent software-canvas render
+ * (`raster-oracle.ts`), at EVERY entry in `UNION_SWEEP_SPECS`: default
+ * parameters, every parameter at its minimum, and every parameter at its
+ * maximum. A generator lands here if it fails ANY of the three — a codex
+ * review of #215 caught `grid-lines` corrupting only at its 'min' extreme
+ * (`pitch`/`lineWidth` both at their floor), invisible to a default-only
+ * sweep and a real combination a `PatternLayer`'s `size`/`params` can reach.
  *
  * `path-bool` (the #206 kernel's current boolean backend) corrupts the union
  * for the ids below — see #218 for the root cause (a backend defect, not a
  * caller bug: two plain squares mis-union with no pattern generator involved)
- * and the measured failure modes, from "0.5% of the area survives" through
- * "100% wrong" to an outright throw.
+ * and the measured failure modes, from a few percent of area wrong through
+ * 100% wrong to an outright throw.
  *
  * `build-ir.ts` refuses to export a pattern layer naming one of these ids
  * (`GerberRefusalCode: 'pattern-union-unreliable'`, #215) rather than ship
@@ -25,11 +31,11 @@
  *
  * `pattern-parity.test.ts` fails loudly if this file drifts from a fresh
  * measurement — that is what keeps the refusal honest as the backend
- * improves. Once every generator passes, regenerating collapses this to an
- * empty array and the refusal above stops firing for every pattern, with no
- * hand-edit required to retire it.
+ * improves. Once every generator passes every spec, regenerating collapses
+ * this to an empty array and the refusal above stops firing for every
+ * pattern, with no hand-edit required to retire it.
  *
- * Measured 2026-07-25: 27/62 generators, default parameters, 24 mm square.
+ * Measured 2026-07-25: 36/62 generators, across default/min/max parameters.
  */
 export const UNION_UNRELIABLE_PATTERN_IDS: readonly string[] = [
   'ammann-bars',
@@ -38,22 +44,31 @@ export const UNION_UNRELIABLE_PATTERN_IDS: readonly string[] = [
   'aztec-step-fret',
   'cairo-pentagonal',
   'circuit-board-tiles',
+  'concentric-circles',
+  'crosshatch',
   'diamond-lattice',
+  'grid-lines',
   'guilloche',
   'herringbone',
   'hex-circuit',
   'hex-lattice',
   'igeta',
+  'isometric-cube-grid',
   'kagome',
+  'kolam-sikku',
   'masu-tsunagi',
   'maurer-rose',
   'meander',
+  'ogee',
   'rings-interlock',
+  'rub-el-hizb',
+  'scallops',
   'seigaiha',
   'shippo',
   'smith-truchet',
   'snowflakes-geometric',
   'steiner-chain',
+  'ten-point-rosette',
   'valknut-grid',
   'vesica-lens-circle-mesh',
   'via-grid-array',

@@ -43,35 +43,22 @@ import { PATTERN_GENERATORS } from '@zpd/patterns';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createBooleanEngine, type BooleanEngine } from '../geometry-kernel';
 import {
-  defaultParamsOf,
-  extremeParams,
   measureUnionUnreliability,
   runParity,
-  UNION_SWEEP_MAX_AREA_ERROR,
-  UNION_SWEEP_SET,
+  UNION_SWEEP_SPECS,
   type ParityResult,
   type UnionReliabilityEntry,
 } from './pattern-parity';
 import { UNION_UNRELIABLE_PATTERN_IDS } from './pattern-union-unreliable.generated';
 
-// A 24 mm square is a legitimate pattern-layer size (the square is positioned
-// and resizable since #96) and keeps the boolean work proportionate to a test
-// suite while every generator still tiles several motifs across it. Generator
-// parameters are absolute millimetres, so the motifs are full size either way.
-// Shared with the end-to-end union sweep below via pattern-parity.ts, so the
-// generated pattern-union-unreliable.generated.ts constant and this file's
-// own ratchet can never silently measure two different things.
-const DEFAULT_SET: { sizeMm: number; pixels: number } = UNION_SWEEP_SET; // 0.05 mm per pixel
-const EXTREME_SET = { sizeMm: 16, pixels: 320 }; // 0.05 mm per pixel
-
-/**
- * Filled-area agreement. Looser at the parameter extremes because a minimum
- * line width turns a generator's whole output into boundary: a 0.1 mm rule at
- * 0.05 mm/px is two pixels wide, so a half-pixel of edge is a quarter of its
- * area and says nothing about whether the shape is right. `deep === 0` is the
- * assertion carrying the weight in those cases.
- */
-const MAX_AREA_ERROR = { default: UNION_SWEEP_MAX_AREA_ERROR, extreme: 0.05 };
+// The three (label, size/pixels, tolerance, params) sweeps are defined ONCE in
+// pattern-parity.ts and shared with the end-to-end union measurement below —
+// see UNION_SWEEP_SPECS's own doc comment for why a default-only sweep is not
+// enough (a codex review of #215 caught grid-lines corrupting end-to-end only
+// at its 'min' extreme). SETS below is that shared source, not a second
+// definition — so this file's own ratchet and the union sweep can never
+// silently measure two different things.
+const SETS = UNION_SWEEP_SPECS;
 
 /**
  * Generators whose RECORDED geometry still disagrees with the reference render.
@@ -112,27 +99,6 @@ function describeFailure(
     `reference filled ${result.filledA}, area error ${(areaError * 100).toFixed(2)}%`
   );
 }
-
-const SETS = [
-  {
-    label: 'default parameters',
-    set: DEFAULT_SET,
-    tolerance: MAX_AREA_ERROR.default,
-    params: defaultParamsOf,
-  },
-  {
-    label: 'every parameter at its minimum',
-    set: EXTREME_SET,
-    tolerance: MAX_AREA_ERROR.extreme,
-    params: (g: (typeof PATTERN_GENERATORS)[number]) => extremeParams(g, 'min'),
-  },
-  {
-    label: 'every parameter at its maximum',
-    set: EXTREME_SET,
-    tolerance: MAX_AREA_ERROR.extreme,
-    params: (g: (typeof PATTERN_GENERATORS)[number]) => extremeParams(g, 'max'),
-  },
-];
 
 describe('pattern parity — the registry itself', () => {
   it('sweeps every registered generator, and the count is pinned', () => {
@@ -189,7 +155,13 @@ for (const { label, set, tolerance, params } of SETS) {
 }
 
 /**
- * End-to-end, through the kernel's union.
+ * End-to-end, through the kernel's union, across ALL of `UNION_SWEEP_SPECS`
+ * (default parameters AND both parameter extremes) — not defaults alone. A
+ * generator verified only at its defaults is NOT verified: `PatternLayer`'s
+ * `size`/`params` are user-controlled, and a codex review of #215 caught
+ * `grid-lines` corrupting end-to-end only when every parameter sits at its
+ * minimum, a combination the app can produce and a default-only sweep cannot
+ * see.
  *
  * A ratchet rather than a per-generator assertion, deliberately. The failures
  * are not this module's to fix — they are path-bool mis-resolving exact
@@ -199,15 +171,22 @@ for (const { label, set, tolerance, params } of SETS) {
  * stands, and the failing names are printed so nobody has to guess.
  *
  * The sweep runs ONCE in `beforeAll` and both `it`s below read its result —
- * `measureUnionUnreliability` is the expensive half (a real kernel union per
- * generator), and running it twice would double this suite's cost for no
- * extra coverage.
+ * `measureUnionUnreliability` is the expensive half (three real kernel unions
+ * per generator, one per spec), and running it twice would double this
+ * suite's cost for no extra coverage.
  */
-describe('end-to-end parity through the kernel union', () => {
+// Re-measured after widening the sweep past defaults-only (see the doc
+// comment above) — printed by this same suite, not a number pulled out of the
+// air. Lower than the old defaults-only floor (35) because "reliable" now
+// means reliable across every spec, a strictly harder bar: 36/62 fail at
+// least one spec, so 26 pass all three.
+const MIN_PASSING = 26;
+
+describe('end-to-end parity through the kernel union, across every parameter sweep', () => {
   let entries: UnionReliabilityEntry[] = [];
 
-  beforeAll(() => {
-    entries = measureUnionUnreliability(engine, PATTERN_GENERATORS);
+  beforeAll(async () => {
+    entries = await measureUnionUnreliability(engine, PATTERN_GENERATORS);
     // Printed, not swallowed: the list is the deliverable of this test.
     console.log(
       `union-corrupted generators (${entries.length}/62): ` +
@@ -215,10 +194,10 @@ describe('end-to-end parity through the kernel union', () => {
     );
   }, 900_000);
 
-  it('at least 35 of 62 generators survive the union intact at default parameters', () => {
+  it('at least MIN_PASSING of 62 generators survive the union intact across every parameter sweep', () => {
     const passing = PATTERN_GENERATORS.length - entries.length;
     const failing = entries.map((e) => e.name).join(' ');
-    expect(passing, `union failures: ${failing}`).toBeGreaterThanOrEqual(35);
+    expect(passing, `union failures: ${failing}`).toBeGreaterThanOrEqual(MIN_PASSING);
   });
 
   /**
