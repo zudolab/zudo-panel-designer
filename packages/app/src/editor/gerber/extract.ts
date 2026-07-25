@@ -36,6 +36,7 @@ import type {
   LayerGeometrySource,
 } from './ir';
 import { groupsToRegions, unsupportedLayer } from './layer-result';
+import { patternGeometrySource } from './pattern-source';
 import { rectToRing } from './primitives';
 import { CANVAS_DEFAULT_JOIN_STYLE, strokeSubpathsToInputs, type StrokeSubpath } from './stroker';
 import { textGeometrySource } from './text-outline';
@@ -185,7 +186,13 @@ function handoffSource(
   };
 }
 
-/** #211 owns pattern layers; until it registers a source this hands off. */
+/**
+ * The `pattern-layer` hand-off Decision 0.4 describes. #211 now registers a
+ * real source ahead of it in {@link BUILTIN_GEOMETRY_SOURCES}, so this is
+ * unreachable in the built-in walk; it stays exported because the hand-off is
+ * part of the pinned contract and a caller assembling its own source list can
+ * still want it.
+ */
 export const patternHandoffSource = handoffSource('pattern', 'pattern-layer');
 /**
  * The pre-#212 hand-off. Kept exported (and tested) because it is the shape
@@ -199,7 +206,7 @@ export const imageGeometrySource = handoffSource('image', 'image-layer');
 export const BUILTIN_GEOMETRY_SOURCES: readonly LayerGeometrySource[] = [
   shapeGeometrySource,
   pathGeometrySource,
-  patternHandoffSource,
+  patternGeometrySource,
   textGeometrySource,
   imageGeometrySource,
 ];

@@ -9,6 +9,7 @@ import {
   type PatternLayer,
   type PcbLayerStack,
   type ShapeLayer,
+  type TextLayer,
 } from '@zpd/core';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { BooleanEngine } from '../geometry-kernel';
@@ -292,12 +293,35 @@ describe('refusals (Decision 8)', () => {
     expect(result.refusals[0].layers).toEqual([]);
   });
 
-  it('refuses a pattern layer with no source registered rather than dropping it', async () => {
+  // #211's recorder is now a built-in source, so a pattern layer no longer
+  // reaches the transitional `unsupported-layer-type` code — its `patternType`
+  // is resolved against the registry instead, and 'grid' is not a registered
+  // generator id. Text layers still exercise the hand-off refusal below.
+  it('refuses a pattern layer naming a generator that is not registered', async () => {
     const result = await build(doc({ copper: [pattern] }));
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.refusals[0].code).toBe('unsupported-layer-type');
+    expect(result.refusals[0].code).toBe('unknown-pattern-id');
     expect(result.refusals[0].layers).toEqual([{ id: 'pat', name: 'Grid' }]);
+  });
+
+  it('refuses a text layer with no source registered rather than dropping it', async () => {
+    const text: TextLayer = {
+      id: 'txt',
+      name: 'Legend',
+      type: 'text',
+      content: 'ZPD',
+      fontFamily: 'Inter',
+      sizeMm: 4,
+      x: 5,
+      y: 5,
+      color: 2,
+    };
+    const result = await build(doc({ silkscreen: [text] }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.refusals[0].code).toBe('unsupported-layer-type');
+    expect(result.refusals[0].layers).toEqual([{ id: 'txt', name: 'Legend' }]);
   });
 
   it('reports every refusal together — one dialog, not four in sequence', async () => {
@@ -313,8 +337,8 @@ describe('refusals (Decision 8)', () => {
     const byCode = new Map(result.refusals.map((r) => [r.code, r]));
     expect([...byCode.keys()].sort()).toEqual([
       'image-layer-present',
+      'unknown-pattern-id',
       'unlisted-panel-hp',
-      'unsupported-layer-type',
     ]);
     expect(byCode.get('image-layer-present')!.layers.map((l) => l.id)).toEqual(['img', 'img2']);
   });
