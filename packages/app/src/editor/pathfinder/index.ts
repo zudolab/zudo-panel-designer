@@ -54,3 +54,17 @@ export {
   PATHFINDER_OPS,
   shouldGroupResult,
 } from './dispatch';
+
+export type { PathfinderApplyResult } from './mutation';
+export { applyPathfinderResult, PATHFINDER_OP_LABELS, specToPathLayer } from './mutation';
+
+export type {
+  PathfinderHost,
+  PathfinderNoOpReason,
+  PathfinderRevision,
+  PathfinderRunner,
+  PathfinderRunnerOptions,
+  PathfinderRunOutcome,
+  PathfinderStaleReason,
+} from './runner';
+export { createPathfinderRunner, pathfinderRevision } from './runner';
