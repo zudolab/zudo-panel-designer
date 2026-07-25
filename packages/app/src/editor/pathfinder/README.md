@@ -27,18 +27,82 @@ dragging the Path Finder along.
 | `faces-ops.ts`   | Divide / Trim / Merge / Crop over the planar arrangement.                                                        |
 | `outline-op.ts`  | Edge extraction.                                                                                                 |
 | `dispatch.ts`    | The op list, the min-input table, `applyPathfinderOp`.                                                           |
+| `mutation.ts`    | Op result → new layer tree. Pure, synchronous, `PcbLayerStack` in / out.                                         |
+| `runner.ts`      | Dispatch, the stale-input guard, one history commit.                                                             |
 
 ## What is NOT here
 
-**Committing a result to the document.** An op returns
-`{ specs, target }` — geometry plus a destination. Minting ids, inserting at
-the slot, grouping a multi-spec result, and folding it all into one undo entry
-belong to the panel/UI sub-issue.
+**The panel.** Buttons, enabled state, icons and keyboard bindings are the UI
+sub-issue (#214). `createPathfinderRunner(host).run(op)` is the whole surface
+it needs; `canApplyPathfinderOp` gates the buttons and `PATHFINDER_OP_LABELS`
+names them.
 
 **Stroke expansion.** `outlineOp` emits **open, unfilled** paths whose stroke is
 the source's fill colour. That is correct Pathfinder behaviour, and it is _not_
 turning a stroked centreline into a filled polygon — a separate sub-issue owns
 that. The kernel's README says the same about itself.
+
+## Committing a result (#213)
+
+An op returns `{ specs, target }` — geometry plus a destination.
+`mutation.ts` turns that into a tree and `runner.ts` commits it, in one undo
+entry. Four decisions live there:
+
+- **Tree shape.** A multi-piece result becomes ONE group node in the frontmost
+  input's slot, not N flat siblings — Illustrator's behaviour, and it keeps the
+  pieces one selectable unit and one contiguous z-band. A single spec is a lone
+  leaf. `shouldGroupResult` is the predicate.
+- **One undo entry.** The whole thing is one pure stack→stack transform handed
+  to `commit()` once. zpd's history snapshots the full document, so the new
+  group, the consumed inputs and the pruned groups revert together — the
+  tree-SHAPE change is inside the snapshot. pgen's `flushSync`-in-a-reducer
+  ordering has no analogue here and was not ported.
+- **Empty-group cleanup.** zpd DOES clean up (pgen does not, and inherits
+  orphan groups). A group is dropped when it was an ancestor of a consumed
+  input and has no children left; the sweep cascades to parents. A group that
+  was ALREADY empty before the op is left alone — undoing a Path Finder op
+  must not resurrect something the user emptied in an earlier edit.
+- **Multi-colour attribution.** The insert routes through
+  `replacePcbNodeWithNodes`, so the several attributed colours a faces op can
+  carry into one container are normalized to the destination material like any
+  other insertion. Only the null/non-null paint channels survive: an unfilled
+  spec stays unfilled, so Outline's edges keep their single painted channel.
+
+### Stale input
+
+Geometry is asynchronous (lazy `import('path-bool')`, async op entry points),
+so between the click and the result the user may edit the document, change the
+selection, or dispatch another op. `runner.ts` captures a revision at dispatch
+and discards any result that no longer matches it. Without this, an edit made
+while the kernel is still loading is silently overwritten.
+
+Three checks, all after the await and before any write:
+
+| Check          | Source                          | Catches                                        |
+| -------------- | ------------------------------- | ---------------------------------------------- |
+| **superseded** | a per-dispatch sequence number  | a newer op dispatched while this one ran       |
+| **state**      | `doc.layers` ref + selected ids | an edit or selection change the host has shown |
+| **epoch**      | `host.mutationEpoch`            | a mutation React has queued but not flushed    |
+
+The epoch exists because the state check is **not sufficient in React**.
+`ToolContext.doc` / `.selectedIds` read refs that resync in a passive effect,
+so a mutation dispatched while geometry is pending is invisible to them until
+React renders. A continuation resuming inside that window would pass the state
+check and commit a whole-document snapshot built from the superseded doc,
+reverting the user's edit. `mutationEpoch` is bumped synchronously inside every
+mutator (`use-doc-history.ts` for the document half, `Editor.tsx` for the
+selection half), so it moves at call time rather than at flush time — and it
+covers undo / redo / gesture aborts, which never name their own resulting
+document. Any other host wiring this runner up must provide the same guarantee;
+a constant epoch compiles and is correct only when the host's reads are
+synchronous.
+
+The epoch is deliberately **coarse** — it counts mutations without describing
+them, so it cannot tell a guide drag from a layer edit. Against a host that
+provides one, any document or selection mutation landing during the await
+cancels the op, even one that left `doc.layers` alone. That is the intended
+trade: a Path Finder op is cheap and repeatable, reverting a user's edit is
+not, and the window traded away is the few milliseconds a boolean takes.
 
 ## Ported from pgen, with real deletions
 
