@@ -36,6 +36,7 @@ import {
 import type { BooleanEngine, KernelInput, KernelRing } from '../geometry-kernel';
 import { createBooleanEngine } from '../geometry-kernel';
 import { BUILTIN_GEOMETRY_SOURCES } from './extract';
+import { createPatternGeometrySource } from './pattern-source';
 import type {
   GerberIr,
   GerberRefusal,
@@ -222,7 +223,17 @@ export async function buildGerberIr(
 ): Promise<BuildGerberIrResult> {
   const tolerance: IrTolerance = { ...DEFAULT_IR_TOLERANCE, ...options.tolerance };
   const limits: IrComplexityLimits = { ...DEFAULT_IR_LIMITS, ...options.limits };
-  const sources = [...(options.sources ?? []), ...BUILTIN_GEOMETRY_SOURCES];
+  // The pattern source is rebuilt with THIS call's ceilings when they differ
+  // from the defaults. `IrExtractContext` carries only what every extractor
+  // needs (Decision 0.4) and so cannot carry limits, and the pattern recorder
+  // is the one extractor that does unbounded work before returning — a caller
+  // asking for a stricter ceiling for DoS reasons would otherwise get the
+  // default one applied to the very step it was trying to bound.
+  const sources = [
+    ...(options.sources ?? []),
+    ...(options.limits ? [createPatternGeometrySource({ limits })] : []),
+    ...BUILTIN_GEOMETRY_SOURCES,
+  ];
   const refusals = new RefusalCollector();
 
   // `panelWidthMm` falls back to hp * 5.08 for an unlisted HP, self-documented

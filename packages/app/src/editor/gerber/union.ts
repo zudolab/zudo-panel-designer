@@ -244,6 +244,24 @@ function unionComponent(engine: BooleanEngine, inputs: readonly KernelInput[]): 
  * of copper on the board.
  */
 export function unionInputs(engine: BooleanEngine, inputs: readonly KernelInput[]): KernelRing[] {
+  return unionComponents(engine, inputs).flat();
+}
+
+/**
+ * The same union, kept SPLIT by component instead of flattened.
+ *
+ * Downstream this is the difference between handing the orchestrator one
+ * compound operand holding every ring the layer produced and handing it one
+ * operand per disjoint piece. The former is exactly the shape path-bool
+ * mis-resolves (`kernel-limits.test.ts`), so the split is not cosmetic: it
+ * carries the separation this module worked to establish through
+ * `buildGerberIr`'s own `arrange()` rather than throwing it away at the
+ * boundary.
+ */
+export function unionComponents(
+  engine: BooleanEngine,
+  inputs: readonly KernelInput[],
+): KernelRing[][] {
   const kept: KernelInput[] = [];
   const boxes: Bbox[] = [];
   for (const input of inputs) {
@@ -255,14 +273,12 @@ export function unionInputs(engine: BooleanEngine, inputs: readonly KernelInput[
   }
   if (kept.length === 0) return [];
 
-  const out: KernelRing[] = [];
+  const out: KernelRing[][] = [];
   for (const component of connectedComponents(boxes, engine.epsilons.snap)) {
     const operands = component.map((i) => kept[i]);
-    out.push(
-      ...(operands.length > CHUNK
-        ? unionComponent(engine, operands)
-        : resolveBatch(engine, operands)),
-    );
+    const rings =
+      operands.length > CHUNK ? unionComponent(engine, operands) : resolveBatch(engine, operands);
+    if (rings.length > 0) out.push(rings);
   }
   return out;
 }

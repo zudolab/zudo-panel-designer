@@ -72,7 +72,7 @@ import {
   bboxesOverlapStrictly,
   inputBbox,
   ringBbox,
-  unionInputs,
+  unionComponents,
   type Bbox,
 } from './union';
 
@@ -100,6 +100,29 @@ export interface PatternGeometryOverride {
 }
 
 export const PATTERN_GEOMETRY_OVERRIDES: readonly PatternGeometryOverride[] = [];
+
+/**
+ * KNOWN LIMITATION, stated here because it is the thing most likely to scrap a
+ * board and it is not visible from any one function.
+ *
+ * `pattern-parity.test.ts` measures every registered generator twice. The
+ * recorder — everything in this file — matches the editor on 58 of 62 at
+ * default parameters, and the four exceptions are named there. But end-to-end,
+ * once the #206 kernel unions the operands, only 35 of 62 come out right, and
+ * the failures are silent: the export succeeds and the artwork is wrong.
+ *
+ * Nothing here refuses those layers, and that is a deliberate choice rather
+ * than an oversight. A refusal would have to cover 27 generators, not a handful,
+ * which makes it a product decision about whether Gerber export ships at all
+ * for pattern-heavy designs — Decision 8's list and #215's dialog, not this
+ * module's to make unilaterally. Refusing only the four the recorder knows
+ * about would be worse than refusing none: it would imply the other 58 are
+ * verified end-to-end, and 27 of them are not.
+ *
+ * `kernel-limits.test.ts` carries standalone reproductions, none of which
+ * involves a pattern generator, and `geometry-kernel/engine.ts`'s named
+ * paper.js fallback triggers T2 and T3 are both met.
+ */
 
 // ─── paint ops → kernel operands ───────────────────────────────────────────
 
@@ -481,7 +504,15 @@ export function patternLayerToOperands(
   }
 
   const reaching = operandsReachingSquare(operands, layer.size);
-  if (reaching.length > limits.maxRingsPerLayer) return { kind: 'overrun' };
+  // RINGS, not operands. Decision 8's ceiling counts what enters the boolean
+  // union, and one operand can carry several contours — every closed stroke is
+  // an outer boundary plus its hole, a compound nonzero fill is however many
+  // the generator drew, and an override group is unbounded. Counting operands
+  // would let a layer push well past 20,000 rings into the kernel while
+  // reporting a fraction of that.
+  let rings = 0;
+  for (const operand of reaching) rings += operand.contours.length;
+  if (rings > limits.maxRingsPerLayer) return { kind: 'overrun' };
   return { kind: 'operands', operands: reaching };
 }
 
@@ -495,11 +526,35 @@ export function patternLayerToRings(
   ctx: IrExtractContext,
   options: PatternGeometrySourceOptions = {},
 ): { readonly kind: 'rings'; readonly rings: KernelRing[] } | { readonly kind: 'overrun' } {
+  const grouped = patternLayerToRingGroups(layer, ctx, options);
+  if (grouped.kind === 'overrun') return grouped;
+  return { kind: 'rings', rings: grouped.groups.flat() };
+}
+
+/**
+ * The same geometry, kept split into the disjoint pieces the union produced.
+ *
+ * `extractCubics` hands these to `buildGerberIr` as SEPARATE operands rather
+ * than as one compound group. That is what carries this module's whole
+ * separation strategy across the boundary: the orchestrator runs its own
+ * `arrange()` over everything a material layer contributes, and one compound
+ * operand holding every ring of a dense pattern is precisely the input shape
+ * path-bool mis-resolves (`kernel-limits.test.ts`).
+ */
+export function patternLayerToRingGroups(
+  layer: PatternLayer,
+  ctx: IrExtractContext,
+  options: PatternGeometrySourceOptions = {},
+): { readonly kind: 'groups'; readonly groups: KernelRing[][] } | { readonly kind: 'overrun' } {
   const operands = patternLayerToOperands(layer, ctx, options);
   if (operands.kind === 'overrun') return operands;
-  const united = unionInputs(ctx.engine, operands.operands);
-  const clipped = clipRingsToSquare(united, layer.size, ctx.tolerance);
-  return { kind: 'rings', rings: clipped.map((ring) => translateRing(ring, layer.x, layer.y)) };
+  const groups: KernelRing[][] = [];
+  for (const component of unionComponents(ctx.engine, operands.operands)) {
+    const clipped = clipRingsToSquare(component, layer.size, ctx.tolerance);
+    if (clipped.length > 0)
+      groups.push(clipped.map((ring) => translateRing(ring, layer.x, layer.y)));
+  }
+  return { kind: 'groups', groups };
 }
 
 export function createPatternGeometrySource(
@@ -510,7 +565,7 @@ export function createPatternGeometrySource(
   const resolve = (
     layer: Layer,
     ctx: IrExtractContext,
-  ): { rings: KernelRing[] } | Extract<IrLayerResult, { kind: 'unsupported' }> => {
+  ): { groups: KernelRing[][] } | Extract<IrLayerResult, { kind: 'unsupported' }> => {
     const pattern = layer as PatternLayer;
     // `PatternLayer.patternType` is deliberately opaque data preserved even
     // when unrecognised (`types.ts:31-32`). The renderer draws nothing; the
@@ -521,10 +576,10 @@ export function createPatternGeometrySource(
     ) {
       return unsupported(layer, 'unknown-pattern-id', pattern.patternType);
     }
-    const result = patternLayerToRings(pattern, ctx, { ...options, overrides });
+    const result = patternLayerToRingGroups(pattern, ctx, { ...options, overrides });
     if (result.kind === 'overrun')
       return unsupported(layer, 'complexity-overrun', pattern.patternType);
-    return { rings: result.rings };
+    return { groups: result.groups };
   };
 
   return {
@@ -535,7 +590,7 @@ export function createPatternGeometrySource(
       return {
         kind: 'regions',
         layerId: layer.id,
-        regions: ringsToRegions(result.rings, ctx.tolerance),
+        regions: ringsToRegions(result.groups.flat(), ctx.tolerance),
       };
     },
     async extractCubics(layer, ctx): Promise<IrLayerCubicResult> {
@@ -544,10 +599,12 @@ export function createPatternGeometrySource(
       return {
         kind: 'cubics',
         layerId: layer.id,
-        // One resolved operand: the rings bound a planar set, so `nonzero`
-        // reads their outer/hole nesting at any depth and no two of them share
-        // a collinear edge for the arrangement to misjudge.
-        groups: result.rings.length > 0 ? [{ contours: result.rings, fillRule: 'nonzero' }] : [],
+        // ONE OPERAND PER DISJOINT PIECE, never one compound operand holding
+        // the lot. Each piece's rings bound a planar set, so `nonzero` reads
+        // their outer/hole nesting at any depth; keeping the pieces apart is
+        // what stops the orchestrator's own arrangement from re-introducing the
+        // exact-coincidence corruption this module avoided.
+        groups: result.groups.map((contours) => ({ contours, fillRule: 'nonzero' as const })),
       };
     },
   };

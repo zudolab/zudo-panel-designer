@@ -68,12 +68,13 @@ export {
   PATTERN_GEOMETRY_OVERRIDES,
   patternGeometrySource,
   patternLayerToOperands,
+  patternLayerToRingGroups,
   patternLayerToRings,
   recordGenerator,
 } from './pattern-source';
 
 export type { Bbox } from './union';
-export { connectedComponents, inputBbox, ringBbox, unionInputs } from './union';
+export { connectedComponents, inputBbox, ringBbox, unionComponents, unionInputs } from './union';
 
 export type { StrokeCap, StrokeJoin, StrokeStyle, StrokeSubpath } from './stroker';
 export { CANVAS_DEFAULT_JOIN_STYLE, maxTurnForHalfWidth, strokeSubpathsToInputs } from './stroker';

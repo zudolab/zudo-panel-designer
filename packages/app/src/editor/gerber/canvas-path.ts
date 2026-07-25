@@ -302,8 +302,16 @@ export class CanvasPathBuilder {
     this.subpaths.push(new Subpath(sub.start));
   }
 
+  /**
+   * The path AS IT IS NOW, copied.
+   *
+   * The copy is load-bearing, not defensive habit: Canvas commits a paint using
+   * the path at the moment of the call, and the path keeps growing afterwards.
+   * Handing out the live segment array would let a later `lineTo` reach back and
+   * change what an already-recorded `fill()` painted.
+   */
   snapshot(): CanvasSubpath[] {
-    return this.subpaths.map((s) => ({ contour: s.cubics, closed: s.closed, start: s.start }));
+    return this.subpaths.map((s) => ({ contour: [...s.cubics], closed: s.closed, start: s.start }));
   }
 }
 
