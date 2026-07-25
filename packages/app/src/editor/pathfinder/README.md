@@ -72,15 +72,37 @@ entry. Four decisions live there:
 
 Geometry is asynchronous (lazy `import('path-bool')`, async op entry points),
 so between the click and the result the user may edit the document, change the
-selection, or dispatch another op. `runner.ts` captures a revision —
-`doc.layers` by reference plus the selection ids — and a dispatch sequence
-number, and discards a result that no longer matches either. Without it, an
-edit made while the kernel is still loading is silently overwritten.
+selection, or dispatch another op. `runner.ts` captures a revision at dispatch
+and discards any result that no longer matches it. Without this, an edit made
+while the kernel is still loading is silently overwritten.
 
-The revision is deliberately keyed on `doc.layers`, not `doc`: a panel-size or
-guide edit during the await produces a new doc with the same layer tree, and
-throwing away a finished boolean over that would be user-hostile. The commit
-reads the live doc for the same reason, so such an edit survives.
+Three checks, all after the await and before any write:
+
+| Check          | Source                          | Catches                                        |
+| -------------- | ------------------------------- | ---------------------------------------------- |
+| **superseded** | a per-dispatch sequence number  | a newer op dispatched while this one ran       |
+| **state**      | `doc.layers` ref + selected ids | an edit or selection change the host has shown |
+| **epoch**      | `host.mutationEpoch`            | a mutation React has queued but not flushed    |
+
+The epoch exists because the state check is **not sufficient in React**.
+`ToolContext.doc` / `.selectedIds` read refs that resync in a passive effect,
+so a mutation dispatched while geometry is pending is invisible to them until
+React renders. A continuation resuming inside that window would pass the state
+check and commit a whole-document snapshot built from the superseded doc,
+reverting the user's edit. `mutationEpoch` is bumped synchronously inside every
+mutator (`use-doc-history.ts` for the document half, `Editor.tsx` for the
+selection half), so it moves at call time rather than at flush time — and it
+covers undo / redo / gesture aborts, which never name their own resulting
+document. Any other host wiring this runner up must provide the same guarantee;
+a constant epoch compiles and is correct only when the host's reads are
+synchronous.
+
+The epoch is deliberately **coarse** — it counts mutations without describing
+them, so it cannot tell a guide drag from a layer edit. Against a host that
+provides one, any document or selection mutation landing during the await
+cancels the op, even one that left `doc.layers` alone. That is the intended
+trade: a Path Finder op is cheap and repeatable, reverting a user's edit is
+not, and the window traded away is the few milliseconds a boolean takes.
 
 ## Ported from pgen, with real deletions
 

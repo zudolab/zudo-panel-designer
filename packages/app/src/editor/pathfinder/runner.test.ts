@@ -65,27 +65,54 @@ interface TestHost {
   /** An outside edit, exactly as any other action would make it. */
   edit(next: DocState): void;
   undo(): void;
+  /** `lagReads` only: let the live getters catch up, as React's effect would. */
+  flush(): void;
 }
 
-function createTestHost(initial: DocState, selectedIds: readonly string[]): TestHost {
+/**
+ * `lagReads` models the editor's ToolContext: `doc` / `selectedIds` read refs
+ * that resync in a passive effect, so between a mutator call and React's flush
+ * they still report the PRE-mutation state — while `mutationEpoch` moves at
+ * call time. Off by default, since most cases do not need the delay.
+ */
+function createTestHost(
+  initial: DocState,
+  selectedIds: readonly string[],
+  options: { lagReads?: boolean } = {},
+): TestHost {
   const state = {
     history: createHistory(initial),
     selection: selectedIds,
     commits: 0,
+    epoch: 0,
+  };
+  let visible = { doc: state.history.present, selection: state.selection };
+  const flush = () => {
+    visible = { doc: state.history.present, selection: state.selection };
+  };
+  const publish = () => {
+    if (!options.lagReads) flush();
   };
   const host: PathfinderHost = {
     get doc() {
-      return state.history.present;
+      return visible.doc;
     },
     get selectedIds() {
-      return state.selection;
+      return visible.selection;
+    },
+    get mutationEpoch() {
+      return state.epoch;
     },
     commit(next) {
+      state.epoch += 1;
       state.history = commitHistory(state.history, next);
       state.commits += 1;
+      publish();
     },
     selectIds(ids) {
+      state.epoch += 1;
       state.selection = [...ids];
+      publish();
     },
   };
   return {
@@ -100,11 +127,16 @@ function createTestHost(initial: DocState, selectedIds: readonly string[]): Test
       return state.commits;
     },
     edit(next) {
+      state.epoch += 1;
       state.history = commitHistory(state.history, next);
+      publish();
     },
     undo() {
+      state.epoch += 1;
       state.history = undoHistory(state.history);
+      publish();
     },
+    flush,
   };
 }
 
@@ -131,7 +163,7 @@ describe('PathfinderHost', () => {
   it('is a port the editor’s ToolContext already satisfies', () => {
     // Compile-time, not runtime: `pnpm typecheck` fails if the port ever
     // drifts from ToolContext. That structural fit is why this module can take
-    // four members instead of importing the editor context — and it is what
+    // five members instead of importing the editor context — and it is what
     // keeps runner.ts free of React.
     const satisfied: ToolContext extends PathfinderHost ? true : never = true;
     expect(satisfied).toBe(true);
@@ -151,6 +183,25 @@ describe('pathfinderRevision', () => {
 
     test.edit(doc(createPcbLayerStack({ copper: [shape('a', 5)] })));
     expect(pathfinderRevision(test.host).layers).not.toBe(first.layers);
+  });
+
+  it('captures the selection by value, so a later mutation cannot rewrite it', () => {
+    const test = createTestHost(doc(createPcbLayerStack({ copper: [shape('a', 0)] })), ['a']);
+    const captured = pathfinderRevision(test.host);
+    test.host.selectIds(['b']);
+    expect(captured.selectedIds).toEqual(['a']);
+  });
+
+  it('records the host epoch even when nothing observable changed', () => {
+    const stack = createPcbLayerStack({ copper: [shape('a', 0)] });
+    const test = createTestHost(doc(stack), ['a'], { lagReads: true });
+    const before = pathfinderRevision(test.host);
+
+    test.edit(doc(createPcbLayerStack({ copper: [shape('a', 9)] })));
+    const after = pathfinderRevision(test.host);
+
+    expect(after.layers).toBe(before.layers); // reads have not caught up
+    expect(after.epoch).not.toBe(before.epoch); // but the epoch has
   });
 });
 
@@ -194,10 +245,11 @@ describe('createPathfinderRunner — applying', () => {
     expect(restored.children.map((child) => child.id)).toEqual(['back']);
   });
 
-  it('preserves a non-geometry edit made while the kernel was still working', async () => {
-    // panelHp/guides do not change `doc.layers`, so such an edit is NOT stale
-    // input — and the commit must build on the LIVE doc, not the captured one,
-    // or it would silently roll that edit back.
+  it('cancels rather than commits when a non-geometry edit lands mid-flight', async () => {
+    // A panelHp/guide edit leaves `doc.layers` alone, so the STATE check would
+    // let this through — the coarse epoch is what stops it. Cancelling costs a
+    // re-click; committing would write a whole-document snapshot built before
+    // the edit and silently revert it. This asserts the edit survives intact.
     const stack = createPcbLayerStack({ copper: [shape('back', 0), shape('front', 5)] });
     const test = createTestHost(doc(stack), ['back', 'front']);
     const gate = deferred<PathfinderOpResult>();
@@ -210,8 +262,10 @@ describe('createPathfinderRunner — applying', () => {
     test.edit(doc(stack, { panelHp: 42 }));
     gate.resolve(opResult([spec('Unite')], 'front'));
 
-    expect((await running).status).toBe('applied');
+    expect(await running).toEqual({ status: 'stale', op: 'unite', reason: 'host-changed' });
+    expect(test.commits).toBe(0);
     expect(test.host.doc.panelHp).toBe(42);
+    expect(test.host.doc.layers).toBe(stack);
   });
 
   it('tracks in-flight dispatches for a busy indicator', async () => {
@@ -281,6 +335,57 @@ describe('createPathfinderRunner — stale input is discarded', () => {
     expect(await running).toEqual({ status: 'stale', op: 'unite', reason: 'selection-changed' });
     expect(test.commits).toBe(0);
     expect(projectPcbLayerStack(test.host.doc.layers)).toHaveLength(3);
+  });
+
+  it('drops a result when only the host EPOCH moved (React has not flushed yet)', async () => {
+    // The regression this epoch exists for: a mutator queues its React update
+    // synchronously, but ToolContext's doc/selectedIds refs resync in a passive
+    // effect. A continuation resuming in that window sees the pre-edit document
+    // through both, so without the epoch it would pass the guard and commit a
+    // whole-document snapshot built from the superseded doc — reverting the
+    // user's delete.
+    const stack = createPcbLayerStack({ copper: [shape('back', 0), shape('front', 5)] });
+    const test = createTestHost(doc(stack), ['back', 'front'], { lagReads: true });
+    const gate = deferred<PathfinderOpResult>();
+    const runner = createPathfinderRunner(test.host, {
+      createEngine: createFakeEngine,
+      apply: () => gate.promise,
+    });
+
+    const running = runner.run('unite');
+    test.edit(doc(createPcbLayerStack({ copper: [shape('back', 0)] })));
+    expect(test.host.doc.layers).toBe(stack); // the reads still lag, as in React
+
+    gate.resolve(opResult([spec('Unite')], 'front'));
+    expect(await running).toEqual({ status: 'stale', op: 'unite', reason: 'host-changed' });
+    expect(test.commits).toBe(0);
+
+    test.flush();
+    expect(projectPcbLayerStack(test.host.doc.layers).map((l) => l.id)).toEqual(['back']);
+  });
+
+  it('does not confuse two selections that a joined key would collide', async () => {
+    // Layer ids come from whatever a persisted document contained, so any
+    // single separator can appear inside one: ['a<NUL>b', 'c'] and
+    // ['a', 'b', 'c'] join to the same NUL-delimited key. Comparing the arrays
+    // element-wise is what keeps the selection check exact.
+    const nul = String.fromCharCode(0);
+    const stack = createPcbLayerStack({
+      copper: [shape(`a${nul}b`, 0), shape('c', 5)],
+    });
+    const test = createTestHost(doc(stack), [`a${nul}b`, 'c']);
+    const gate = deferred<PathfinderOpResult>();
+    const runner = createPathfinderRunner(test.host, {
+      createEngine: createFakeEngine,
+      apply: () => gate.promise,
+    });
+
+    const running = runner.run('unite');
+    test.host.selectIds(['a', 'b', 'c']);
+    gate.resolve(opResult([spec('Unite')], 'c'));
+
+    expect(await running).toEqual({ status: 'stale', op: 'unite', reason: 'selection-changed' });
+    expect(test.commits).toBe(0);
   });
 
   it('drops a result SUPERSEDED by a later dispatch, and applies the later one', async () => {
