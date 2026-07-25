@@ -62,3 +62,15 @@ export {
 } from './flatten';
 export { degenerateCubic, polygonToRing, rectToRing, splitPointTouchingLobes } from './primitives';
 export { countRegionVertices, ringsToRegions } from './regions';
+
+// Text outlining (#212). `text-fonts` is NOT re-exported here on purpose: it
+// carries the 30 `@fontsource` asset URLs and is only ever reached through
+// `text-outline`'s `await import`, which is what keeps opentype.js and the font
+// tables out of the main chunk.
+export type { TextOutlineResult, TopBaselineProbe } from './text-outline';
+export {
+  fallbackTopBaselineDropMm,
+  setTopBaselineProbeForTests,
+  textGeometrySource,
+  textLayerToGroups,
+} from './text-outline';

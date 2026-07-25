@@ -86,6 +86,9 @@ importers:
       '@zpd/patterns':
         specifier: workspace:*
         version: link:../patterns
+      opentype.js:
+        specifier: ^2.0.0
+        version: 2.0.0
       path-bool:
         specifier: ^1.0.0
         version: 1.0.0
@@ -1794,6 +1797,10 @@ packages:
   node-releases@2.0.51:
     resolution: {integrity: sha512-wRNIrw4DmVLKQlbgOMdkMx27Wrpzes2hh5Jtbi2bjPd+4wJstWIqP5A+lscnqbm0xxmT5Bpg8Lec5ItEBwx6BQ==}
     engines: {node: '>=18'}
+
+  opentype.js@2.0.0:
+    resolution: {integrity: sha512-kCyjv6xdDY1W/jLWZ/L3QhhTlKUqDZMQ5+Jdlw12b3dXkKNpYBqqlMMj0YDQPShWFTMwgZI1hG14kN3XUDSg/A==}
+    hasBin: true
 
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
@@ -3700,6 +3707,8 @@ snapshots:
   natural-compare@1.4.0: {}
 
   node-releases@2.0.51: {}
+
+  opentype.js@2.0.0: {}
 
   optionator@0.9.4:
     dependencies:

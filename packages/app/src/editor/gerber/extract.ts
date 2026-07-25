@@ -33,27 +33,13 @@ import type {
   IrExtractContext,
   IrLayerCubicResult,
   IrLayerResult,
-  IrRegion,
   LayerGeometrySource,
 } from './ir';
+import { groupsToRegions, unsupportedLayer } from './layer-result';
 import { rectToRing } from './primitives';
-import { ringsToRegions } from './regions';
 import { CANVAS_DEFAULT_JOIN_STYLE, strokeSubpathsToInputs, type StrokeSubpath } from './stroker';
+import { textGeometrySource } from './text-outline';
 import type { IrTolerance } from './tolerance';
-
-function unsupported(
-  layer: Layer,
-  reason: Extract<IrLayerResult, { kind: 'unsupported' }>['reason'],
-  detail?: string,
-): IrLayerResult & { kind: 'unsupported' } {
-  return {
-    kind: 'unsupported',
-    layerId: layer.id,
-    layerName: layer.name,
-    reason,
-    ...(detail === undefined ? {} : { detail }),
-  };
-}
 
 function finite(...values: number[]): boolean {
   return values.every((v) => Number.isFinite(v));
@@ -157,21 +143,6 @@ export function pathLayerToGroups(
 
 // ─── sources ───────────────────────────────────────────────────────────────
 
-/**
- * The `IrLayerResult` form Decision 0.4 pins, derived from the cubic groups by
- * resolving them through the kernel and flattening. The orchestrator prefers
- * `extractCubics` (Decision 5 puts flattening last), so this path only runs for
- * a caller that consults a source directly.
- */
-async function groupsToRegions(
-  groups: readonly KernelInput[],
-  ctx: IrExtractContext,
-): Promise<IrRegion[]> {
-  if (groups.length === 0) return [];
-  const united = ctx.engine.arrange(groups.map((g) => ({ ...g }))).unite();
-  return ringsToRegions(united, ctx.tolerance);
-}
-
 function cubicSource(
   handles: Layer['type'],
   toGroups: (layer: Layer, ctx: IrExtractContext) => KernelInput[],
@@ -206,17 +177,21 @@ function handoffSource(
   return {
     handles,
     async extract(layer) {
-      return unsupported(layer, reason);
+      return unsupportedLayer(layer, reason);
     },
     async extractCubics(layer): Promise<IrLayerCubicResult> {
-      return unsupported(layer, reason);
+      return unsupportedLayer(layer, reason);
     },
   };
 }
 
 /** #211 owns pattern layers; until it registers a source this hands off. */
 export const patternHandoffSource = handoffSource('pattern', 'pattern-layer');
-/** #212 owns text layers. */
+/**
+ * The pre-#212 hand-off. Kept exported (and tested) because it is the shape
+ * every not-yet-implemented extractor takes, but it is no longer in
+ * `BUILTIN_GEOMETRY_SOURCES` — `textGeometrySource` outlines text for real.
+ */
 export const textHandoffSource = handoffSource('text', 'text-layer');
 /** Terminal: `image-layer` becomes the `image-layer-present` refusal. */
 export const imageGeometrySource = handoffSource('image', 'image-layer');
@@ -225,6 +200,6 @@ export const BUILTIN_GEOMETRY_SOURCES: readonly LayerGeometrySource[] = [
   shapeGeometrySource,
   pathGeometrySource,
   patternHandoffSource,
-  textHandoffSource,
+  textGeometrySource,
   imageGeometrySource,
 ];

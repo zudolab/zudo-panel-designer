@@ -89,7 +89,8 @@ const REFUSAL_MESSAGE: Record<GerberRefusalCode, string> = {
   'image-layer-present':
     'A raster image cannot be manufactured on the panel. Trace it to vector layers, or hide it, before exporting.',
   'non-curated-font': 'This text layer uses a font with no local file to outline.',
-  'missing-glyph': 'This text layer contains a character the resolved font subset does not carry.',
+  'missing-glyph':
+    'This text layer contains text the export cannot resolve to an outline in the resolved font subset.',
   'unknown-pattern-id': 'This pattern layer names a generator that is not registered.',
   'complexity-overrun':
     'This design is too dense to export: the boolean pipeline would have to process more geometry than the export can handle.',
