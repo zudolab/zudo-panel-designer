@@ -38,7 +38,8 @@ labelling it as a partial check.
 
 - `cd doc && pnpm build` as the gate, with `broken link:` grepped **explicitly** from its
   output — the build exits 0 even when it emits broken-link warnings, so exit code alone
-  proves nothing.
+  proves nothing. (Tracked upstream: Takazudo/zudo-front-builder#2046 asks zfb to expose a
+  strict mode; drop the grep once that lands.)
 - A brace scanner (strip fenced blocks and inline code spans, then flag any remaining
   `{ident}`) run over the changed `.mdx` files before committing.
 - Verifying anchors against **built HTML**, not source markdown.
