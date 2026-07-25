@@ -30,7 +30,7 @@ Every command reads `ctx` **fresh on every invocation** — commands are never p
 
 Two flags change how a command participates in the two surfaces below, independently:
 
-- **`chord` absent** ("chordless") — the command has no keyboard shortcut at all; it's reachable only from the command palette. Align, Distribute, New Panel, Import/Download JSON, Download Gerber, the three zoom actions, and Browse Google Fonts are all chordless by design.
+- **`chord` absent** ("chordless") — the command has no keyboard shortcut at all; it's reachable only from the command palette. Align, Distribute, New Panel, Import/Download JSON, Download Gerber (.zip), the three zoom actions, and Browse Google Fonts are all chordless by design.
 - **`displayOnly: true`** — the command *does* have a chord (or an explicit `shortcutDisplay`) worth showing, but its real gesture is owned by other code and `run()` is never invoked through the registry. Paste (the real gesture is the native `paste` event — see [Clipboard → Paste](./clipboard.mdx#paste)) and Nudge (`Arrows`, Shift = ×10 — `Editor.tsx`'s own arrow-key switch) are the only two.
 
 ### Chord matching
@@ -64,7 +64,7 @@ Opened by the bare `?` key (no modifier — the `help-shortcuts` command's chord
 - **Grouping** — matches are grouped under uppercase category headers, in registry order.
 - **Focus** — the search input autofocuses on open (a layout-effect trick deliberately wins the race against the dialog host's generic "focus the first focusable descendant" fallback, since the Close button sits earlier in DOM order — without it, a keystroke meant as a filter query could instead re-trigger an editor shortcut behind the modal).
 
-Chordless commands (Align, New Panel, Import/Download JSON, Download Gerber, zoom, Browse Google Fonts) do **not** appear here — they have nothing to show. Reach for the command palette to run those.
+Chordless commands (Align, New Panel, Import/Download JSON, Download Gerber (.zip), zoom, Browse Google Fonts) do **not** appear here — they have nothing to show. Reach for the command palette to run those.
 
 ## The command palette
 

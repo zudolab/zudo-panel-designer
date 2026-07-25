@@ -66,44 +66,49 @@ This is the editor-side trigger only; the shape of the exported JSON and how it'
 
 ### Gerber export
 
-The header's **⬇ Gerber** button (`title`/`aria-label` both read `Download Gerber export (.zip)`) and the command palette's **Download Gerber (.zip)** command (`file-download-gerber`, chordless — see [Shortcuts & Command Palette](./shortcuts-and-commands.mdx#the-command-palette)) both call `exportGerberZip(ctx.doc)` from `download.tsx`. The whole Gerber pipeline — the IR builder, extractors, boolean kernel, and RS-274X writer — sits behind a lazy `await import(...)`, never a static import, so it stays out of the main chunk for a feature that only runs on an export click.
+The header's **⬇ Gerber** button (`title`/`aria-label` both read `Download Gerber export (.zip)`) and the command palette's **Download Gerber (.zip)** command (`file-download-gerber`, chordless — see [Shortcuts & Command Palette](./shortcuts-and-commands.mdx#the-command-palette)) both call `exportGerberZip(ctx.doc)` from `download.tsx`. The whole Gerber pipeline — the IR builder, extractors, boolean kernel, and RS-274X writer — sits behind a lazy `await import(...)`, never a static import, so it stays out of the main chunk for a feature that only runs on an export click. The confirm gate's copy is the one exception: it lives in its own dependency-free module (`gerber/artwork-only-statement.ts`), statically imported, so the first dialog renders without waiting on that lazy chunk.
 
-`exportGerberZip` is a two-dialog flow:
+Unlike **⬇ JSON**, which writes its file on the spot, `exportGerberZip` is asynchronous and always interposes one confirm dialog before anything is generated:
 
-1. **Confirm gate.** Before anything is generated, a confirm dialog states the export is artwork only and appends the current panel spec:
+1. **Confirm gate.** The dialog states the export is artwork only, and appends the current panel spec:
 
    > **Export Gerber (.zip)**
-   > This export contains artwork only — copper, solder mask, silkscreen, and the board outline. It contains no drill file and no mounting-hole geometry. It is artwork for an already-specified Takazudo blank panel, not a standalone orderable board. `Panel: {hp}HP, {width} × {height} mm.`
+   > This export contains artwork only — copper, solder mask, silkscreen, and the board outline. It contains no drill file and no mounting-hole geometry. It is artwork for an already-specified Takazudo blank panel, not a standalone orderable board. `Panel: {panelHp}HP, {widthMm} × {heightMm} mm.`
    > [Cancel] [**Export .zip**]
 
    The dialog opens with focus already on **Cancel**. Cancelling here produces no file at all.
 
-2. **Success.** A *"Gerber export downloaded"* toast, and a `zpd-panel-{hp}hp-gerber.zip` download — see [Round-Trip → The Gerber export is not round-trippable](../export/round-trip.mdx#the-gerber-export-is-not-round-trippable) for what's inside.
+2. **Success.** A *"Gerber export downloaded"* toast, and a `zpd-panel-{panelHp}hp-gerber.zip` download — see [Round-Trip → The Gerber export is not round-trippable](../export/round-trip.mdx#the-gerber-export-is-not-round-trippable) for what's inside.
 
-3. **Refusal.** `buildGerberIr()` can refuse the export instead of producing one — every reason collected across the whole document, never reported one at a time. A second dialog then names them all together:
+3. **Refusal.** `buildGerberIr()` can refuse the export instead of producing one — every reason collected across the whole document, never reported one at a time. A second dialog, titled `Gerber export blocked — N issue(s)`, then names them all together:
 
    > **Gerber export blocked — 2 issues**
-   > This text layer uses a font with no local file to outline. (Label)
-   > A raster image cannot be manufactured on the panel. Trace it to vector layers, or hide it, before exporting. (Photo)
    > [Cancel] [**OK**]
 
-   This dialog is an **acknowledgement, not a choice** — both buttons simply dismiss it, and its **OK** button renders in red (`danger: true`). A refusal always **aborts the export and produces no file**: never a partial export, never a console warning. Every offending layer name is nested under its reason, as the parenthesized layer names above stand in for. Hidden layers are skipped before refusal evaluation entirely and so can never trigger one — which is why the image-layer message above says "…or hide it, before exporting."
+   Its body is one entry per reason, with the layers that caused that reason nested underneath:
 
-4. **Pipeline failure.** A rejection from the pipeline itself — e.g. the kernel's lazy `path-bool` import, or the outliner's lazy `opentype.js` font fetch, throwing — shows a *"Gerber export failed"* error toast carrying the error message. Both entry points call this fire-and-forget, so nothing here fails silently.
+   - This text layer uses a font with no local file to outline.
+     - Label
+   - A raster image cannot be manufactured on the panel. Trace it to vector layers, or hide it, before exporting.
+     - Photo
 
-The 8 refusal codes:
+   Document-level refusals such as `unlisted-panel-hp` carry no layer names, because no layer caused them. This dialog is an **acknowledgement, not a choice** — both buttons simply dismiss it, and its **OK** button renders in red (`danger: true`). A refusal always **aborts the export and produces no file**: never a partial export, never a console warning. Hidden layers are skipped before refusal evaluation entirely and so can never trigger one — which is why the image-layer message above says "…or hide it, before exporting."
 
-| Code | Meaning |
-| --- | --- |
-| `unlisted-panel-hp` | The panel's HP has no entry in the blank-panel spec table, so its width is only an approximation — not an order-ready dimension. |
-| `image-layer-present` | A raster image layer can't be manufactured on the panel — trace it to vector layers, or hide it. |
-| `non-curated-font` | A text layer uses a font with no local file to outline. |
-| `missing-glyph` | A text layer contains text that can't be resolved to an outline in the resolved font subset. |
-| `unknown-pattern-id` | A pattern layer names a generator that isn't registered. |
-| `complexity-overrun` | The design is too dense — the boolean pipeline would have to process more geometry than the export can handle. |
-| `unsupported-layer-type` | No geometry extractor is registered for this layer type. This is a completeness fallback rather than a live failure mode: every current layer type has a registered extractor, so this code isn't something normal use should ever hit. |
-| `pattern-union-unreliable` | The boolean union is measured to corrupt this specific pattern generator — a kernel backend defect ([issue #218](https://github.com/zudolab/zudo-panel-designer/issues/218)), not a caller mistake. |
+4. **Pipeline failure.** A rejection from the pipeline itself — e.g. the kernel's lazy `path-bool` import, or the outliner's lazy `opentype.js` font fetch, throwing — shows a *"Gerber export failed"* error toast carrying the error message. Both entry points call this fire-and-forget (`void exportGerberZip(...)`), so an uncaught rejection would surface nowhere at all: no dialog, no toast. Catching it here is what extends the "never fail silently" rule past the anticipated refusals to cover unexpected crashes too.
+
+Every refusal carries one of the codes below. **Dialog message** is the string the dialog prints verbatim; **Notes** is this page's own commentary.
+
+| Code | Dialog message | Notes |
+| --- | --- | --- |
+| `unlisted-panel-hp` | This panel HP has no entry in the blank-panel spec table, so its width is only an approximation — not an order-ready dimension. | Document-level, so no layer names are listed under it. |
+| `image-layer-present` | A raster image cannot be manufactured on the panel. Trace it to vector layers, or hide it, before exporting. | — |
+| `non-curated-font` | This text layer uses a font with no local file to outline. | — |
+| `missing-glyph` | This text layer contains text the export cannot resolve to an outline in the resolved font subset. | — |
+| `unknown-pattern-id` | This pattern layer names a generator that is not registered. | — |
+| `complexity-overrun` | This design is too dense to export: the boolean pipeline would have to process more geometry than the export can handle. | — |
+| `unsupported-layer-type` | No geometry extractor is registered for this layer type, so its artwork cannot be exported. | Exists to surface an unhandled type as a refusal rather than silently drop it. Every current layer type has a registered extractor, so normal use should never reach it. |
+| `pattern-union-unreliable` | The boolean union this export depends on is measured to corrupt this pattern generator — a #206/path-bool backend defect tracked in #218, not a caller bug. Refusing rather than shipping fabrication data already known to be wrong. | Layer names render as `<layer name> (pattern "<patternType>")`. Tracked as [issue #218](https://github.com/zudolab/zudo-panel-designer/issues/218). |
 
 :::note
-The document model, undo/redo history, and layer types referenced throughout this section (`DocState`, `Layer`, `PATTERN_GENERATORS`, `serializePanelConfig`, …) live in `@zpd/core` and `@zpd/patterns` and are covered in the Document Model section.
+The document model, undo/redo history, and layer types referenced throughout this page (`DocState`, `Layer`, `PATTERN_GENERATORS`, `serializePanelConfig`, …) live in `@zpd/core` and `@zpd/patterns` and are covered in the Document Model section.
 :::
