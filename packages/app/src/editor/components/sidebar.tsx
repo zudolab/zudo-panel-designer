@@ -94,7 +94,7 @@ export function Sidebar({
             shown (with per-button disabled state) once something is. */}
         {selectedIds.length >= 1 && (
           <CollapsibleSection title="Pathfinder">
-            <PathfinderPanel ctx={ctx} selectedIds={selectedIds} />
+            <PathfinderPanel ctx={ctx} doc={doc} selectedIds={selectedIds} />
           </CollapsibleSection>
         )}
 

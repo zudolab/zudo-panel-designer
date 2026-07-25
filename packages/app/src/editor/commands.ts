@@ -43,6 +43,7 @@ import {
   resolvePathfinderInputs,
   type PathfinderOp,
 } from './pathfinder';
+import { dispatchPathfinderOp } from './pathfinder-run';
 import { allTools } from './registry/tools';
 import { newPanelAction } from './replace-doc';
 import type { ToolContext, ToolKeyEvent, ToolModule } from './types';
@@ -259,7 +260,8 @@ function distributeCommand(id: string, label: string, axis: DistributeAxis): Com
 // rule is "read ctx fresh, no pre-bound closures" (see this file's header),
 // and `createPathfinderRunner` is cheap to construct — the lazily-imported
 // path-bool module it awaits is cached by the module system regardless of
-// how many runner instances ask for it.
+// how many runner instances ask for it. dispatchPathfinderOp (shared with
+// the panel) is what turns a no-op/error into user-visible toast feedback.
 function pathfinderCommandId(op: PathfinderOp): string {
   return `pathfinder-${op.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}`;
 }
@@ -270,11 +272,7 @@ function pathfinderCommand(op: PathfinderOp): CommandDef {
     label: PATHFINDER_OP_LABELS[op],
     category: 'Pathfinder',
     run: (ctx) => {
-      createPathfinderRunner(ctx)
-        .run(op)
-        .catch((err: unknown) => {
-          console.error(`pathfinder:${op}`, err);
-        });
+      void dispatchPathfinderOp(createPathfinderRunner(ctx), op);
     },
     isEnabled: (ctx) =>
       canApplyPathfinderOp(op, resolvePathfinderInputs(ctx.doc.layers, ctx.selectedIds).length),

@@ -9,7 +9,8 @@
 // pathfinder module's job (#208/#213) — this file wires buttons to
 // `createPathfinderRunner(ctx).run(op)`, which owns the async stale-input
 // guard and the one-undo-entry commit; nothing here re-derives either.
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import type { DocState } from '@zpd/core';
 import {
   canApplyPathfinderOp,
   createPathfinderRunner,
@@ -17,6 +18,7 @@ import {
   resolvePathfinderInputs,
   type PathfinderOp,
 } from '../pathfinder';
+import { dispatchPathfinderOp } from '../pathfinder-run';
 import type { ToolContext } from '../types';
 import { ChromeButton } from './chrome';
 import {
@@ -34,6 +36,17 @@ import {
 
 export interface PathfinderPanelProps {
   ctx: ToolContext;
+  // The COMMITTED doc from Editor's render — NOT the docRef-lagged ctx.doc
+  // (see rotate-selection-panel.tsx's identical doc-prop comment for why:
+  // ctx.doc resyncs in a passive effect, so the render a commit triggers
+  // still sees the PREVIOUS tree). Align/Distribute get away with reading
+  // ctx.doc directly because their ops never change WHICH ids are selected
+  // or eligible; a Path Finder op mints brand-new leaf ids and reselects
+  // them in the same commit, so pairing the fresh `selectedIds` below against
+  // a stale `ctx.doc` would resolve zero eligible leaves — every button
+  // (including Divide/Outline) would render disabled right after a
+  // successful op, with no further render to self-correct it.
+  doc: DocState;
   selectedIds: readonly string[];
 }
 
@@ -60,24 +73,30 @@ const PATHFINDER_BUTTONS: PathfinderButtonSpec[] = [
   { op: 'minusBack', icon: <PathfinderMinusBack className={ICON_CLASS} /> },
 ];
 
-export function PathfinderPanel({ ctx, selectedIds }: PathfinderPanelProps) {
+export function PathfinderPanel({ ctx, doc, selectedIds }: PathfinderPanelProps) {
   // `ctx` is a stable, getter-backed object for the life of the Editor (see
   // Editor.tsx's ctx useMemo), so one runner per panel instance is enough —
   // it is what carries the dispatch sequence number across clicks, letting
-  // a rapid second click supersede an in-flight first one (runner.ts).
+  // a rapid second click supersede an in-flight first one (runner.ts). Only
+  // used for DISPATCH (createPathfinderRunner reads ctx.doc/.selectedIds
+  // live, from inside a click handler, where the refs have already caught
+  // up) — never for this render's own gating math, see the `doc` prop above.
   const runner = useMemo(() => createPathfinderRunner(ctx), [ctx]);
 
-  // Same live tree + selection the runner will resolve at dispatch time;
-  // recomputed on every render so the gating never lags a commit.
-  const eligibleCount = resolvePathfinderInputs(ctx.doc.layers, selectedIds).length;
+  // The same committed tree this render's `selectedIds` was resolved
+  // against (both come from Editor's own commit-triggered render — see the
+  // `doc` prop's comment) — never lags a commit, unlike ctx.doc.
+  const eligibleCount = resolvePathfinderInputs(doc.layers, selectedIds).length;
+
+  // Dispatches in flight, across all ten buttons — the whole row is disabled
+  // while any is pending, mainly to cover the first (slowest) click, which
+  // also pays the lazy `import('path-bool')` cost (see runner.ts's `pending`
+  // doc comment: "the panel's busy state").
+  const [pendingCount, setPendingCount] = useState(0);
 
   function handleOp(op: PathfinderOp) {
-    // Fire-and-forget, like every other async command in this app (see
-    // use-clipboard.ts's routeImportFile calls) — a rejected geometry load
-    // is unexpected/catastrophic, not a per-click condition to branch on.
-    runner.run(op).catch((err: unknown) => {
-      console.error(`pathfinder:${op}`, err);
-    });
+    setPendingCount((n) => n + 1);
+    dispatchPathfinderOp(runner, op).finally(() => setPendingCount((n) => n - 1));
   }
 
   function renderRow(label: string, buttons: PathfinderButtonSpec[]) {
@@ -90,7 +109,7 @@ export function PathfinderPanel({ ctx, selectedIds }: PathfinderPanelProps) {
               key={btn.op}
               tooltip={PATHFINDER_OP_LABELS[btn.op]}
               placement="top"
-              disabled={!canApplyPathfinderOp(btn.op, eligibleCount)}
+              disabled={!canApplyPathfinderOp(btn.op, eligibleCount) || pendingCount > 0}
               onClick={() => handleOp(btn.op)}
               className="h-7 w-7 !p-0"
             >

@@ -446,22 +446,26 @@ export function PathfinderMerge({ className }: IconProps) {
   return (
     <Svg className={className} strokeWidth={1.6}>
       <path d={PF_UNION_PATH} fill="currentColor" stroke="none" />
-      {/* Faint seam along the consumed shared edge — "adjoining regions",
-          not a fully-open merge like Unite. */}
+      {/* Faint diagonal chord across the consumed corner — "adjoining
+          regions" (a seam remains), not a fully-open merge like Unite. */}
       <path d="M15 9L9 15" opacity="0.35" />
     </Svg>
   );
 }
 
-// composer-pathfinder-panel.tsx:105 (iconPathfinderCrop). pgen's Crop glyph
-// only ever draws the FRONT square (bbox 10,10-22,22 — off-centre even by
-// pgen's own account), so it is re-centred here as a standalone 12×12
-// square rather than shifted along the two-square family grid above.
+// composer-pathfinder-panel.tsx:105 (iconPathfinderCrop), extended onto the
+// same two-square family grid the other nine glyphs share — pgen's own Crop
+// draws only the front square, at 2/3 the row's visual weight, which reads
+// noticeably smaller here once actually placed next to its nine siblings. A
+// faint back-square ghost restores the family's 18×18 footprint (and this
+// module's centring); the front square stays full-strength — "the shape
+// whose outline bounds the crop" — vs. Intersect's two equally-faint squares.
 export function PathfinderCrop({ className }: IconProps) {
   return (
     <Svg className={className} strokeWidth={1.6}>
-      <rect x="6" y="6" width="12" height="12" />
-      <rect x="6" y="6" width="6" height="6" fill="currentColor" stroke="none" />
+      <rect x="3" y="3" width="12" height="12" opacity="0.4" />
+      <rect x="9" y="9" width="12" height="12" />
+      <rect x="9" y="9" width="6" height="6" fill="currentColor" stroke="none" />
     </Svg>
   );
 }
