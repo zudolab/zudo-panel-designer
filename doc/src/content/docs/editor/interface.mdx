@@ -87,13 +87,11 @@ The header's **⬇ Gerber** button and the command palette's **Download Gerber (
 3. **Refusal.** `buildGerberIr()` can refuse the export instead of producing one — every reason collected across the whole document, never reported one at a time. A second dialog then names them all together:
 
    > **Gerber export blocked — 2 issues**
-   > This text layer uses a font with no local file to outline.
-   >   - Label
-   > A raster image cannot be manufactured on the panel. Trace it to vector layers, or hide it, before exporting.
-   >   - Photo
+   > This text layer uses a font with no local file to outline. (Label)
+   > A raster image cannot be manufactured on the panel. Trace it to vector layers, or hide it, before exporting. (Photo)
    > [Cancel] [**OK**]
 
-   This dialog is an **acknowledgement, not a choice** — both buttons simply dismiss it. A refusal always **aborts the export and produces no file**: never a partial export, never a console warning. Every offending layer name is nested under its reason. Hidden layers are skipped before refusal evaluation entirely and so can never trigger one — which is why the image-layer message above ends "…or hide it".
+   This dialog is an **acknowledgement, not a choice** — both buttons simply dismiss it. A refusal always **aborts the export and produces no file**: never a partial export, never a console warning. Every offending layer name is nested under its reason, as the parenthesized layer names above stand in for. Hidden layers are skipped before refusal evaluation entirely and so can never trigger one — which is why the image-layer message above says "…or hide it, before exporting."
 
 4. **Pipeline failure.** A rejection from the pipeline itself — e.g. the kernel's lazy `path-bool` import, or the outliner's lazy `opentype.js` font fetch, throwing — shows a *"Gerber export failed"* error toast carrying the error message. Both entry points call this fire-and-forget, so nothing here fails silently.
 
