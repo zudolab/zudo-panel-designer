@@ -16,7 +16,7 @@ sidebar_position: 2
 - [検索可能なキーボードショートカットオーバーレイ](./shortcuts-and-commands.mdx#ショートカットオーバーレイ)を開く **?** ボタン。
 - パネル設定 JSON ファイルをインポートする **⬆ JSON** ボタン（[ラウンドトリップ → インポート](../export/round-trip.mdx#インポート)を参照）。
 - 現在のドキュメントを発注可能なパネル設定 JSON としてダウンロードする **⬇ JSON** ボタン（後述の [ダウンロードトリガー](#ダウンロードトリガー) を参照）。
-- 現在のドキュメントのアートワークを Gerber ファイル一式の zip としてダウンロードする **⬇ Gerber** ボタン（後述の [Gerber エクスポート](#ダウンロードトリガー-gerber-エクスポート) を参照）。
+- 現在のドキュメントのアートワークを Gerber ファイル一式の zip としてダウンロードする **⬇ Gerber** ボタン。アートワークだけである旨の確認を必ず挟みます（後述の [Gerber エクスポート](#ダウンロードトリガー-gerber-エクスポート) を参照）。
 - 確認のうえでデフォルトのスターター文書にリセットする **New panel** ボタン（[オートセーブと新規パネル → 新規パネル](./autosave.mdx#新規パネル)を参照）。
 
 アプリ全体は[コマンドレジストリ](./shortcuts-and-commands.mdx)によっても駆動されています。上記のショートカットはすべて、ヘッダーにボタンすら持たないもの（クリップボード、整列/分布、コマンドパレット自体）も含めて、同じ `commands.ts` の一覧を経由します。
@@ -68,28 +68,51 @@ sidebar_position: 2
 
 ヘッダーの **⬇ Gerber** ボタン（title と aria-label はどちらも `Download Gerber export (.zip)`）と、コマンドパレットの **Download Gerber (.zip)** コマンド（id は `file-download-gerber`。chord を持たないためパレットからしか到達できません——[ショートカットとコマンドパレット](./shortcuts-and-commands.mdx#コマンドパレット)を参照）は、どちらも `download.tsx` の `exportGerberZip(ctx.doc)` という同じ入り口を呼びます。**⬇ JSON** がその場でファイルを書き出すのとは違い、こちらは必ず確認ダイアログを 1 枚挟んでから走る非同期のフローです。
 
-1. **確認ゲート** — まだ何も生成しないうちに、**Export Gerber (.zip)** というタイトルのダイアログが、このエクスポートに含まれるのが銅・ソルダーマスク・シルクスクリーン・基板外形の **アートワークだけ** であること——ドリルファイルも取り付け穴のジオメトリも含まないため、すでに仕様の決まっている Takazudo のブランクパネル用のアートワークであって、単体で発注できる基板データではないこと——を伝えます。文末には現在のパネル仕様が `Panel: <hp>HP, <幅> × <高さ> mm.` の形で追記されます。ボタンは **Export .zip** と **Cancel** で、開いた時点でフォーカスが当たっているのは **Cancel** のほうです。ここでキャンセルするとファイルは 1 つも作られません。
+Gerber パイプライン本体——IR ビルダー、ジオメトリ抽出器、ブーリアンカーネル、RS-274X ライター——は、静的 import ではなく遅延 import の裏に置かれています。このボタンはヘッダーにあり、アプリのエントリから到達可能です。静的に import すると、エクスポートを押したときにしか動かない機能のために、パイプライン全体が毎回のページロードでパースされることになってしまいます。確認ゲートに出す文言だけは依存を持たない専用モジュール（`gerber/artwork-only-statement.ts`）に切り出されているので、この遅延読み込みを待たずに表示できます。
+
+1. **確認ゲート** — まだ何も生成しないうちに、確認ダイアログが開きます。
+
+   > **Export Gerber (.zip)**
+   > This export contains artwork only — copper, solder mask, silkscreen, and the board outline. It contains no drill file and no mounting-hole geometry. It is artwork for an already-specified Takazudo blank panel, not a standalone orderable board. `Panel: <hp>HP, <幅> × <高さ> mm.`
+   > [Cancel] [**Export .zip**]
+
+   ダイアログの本文は、この zip に入るのが銅・ソルダーマスク・シルクスクリーン・基板外形の **アートワークだけ** であることを伝えます。ドリルファイルも取り付け穴のジオメトリも含まないため、すでに仕様の決まっている Takazudo のブランクパネル用のアートワークであって、単体で発注できる基板データではありません。文末には現在のパネル仕様が続きます。開いた時点でフォーカスが当たっているのは **Cancel** のほうで、ここでキャンセルするとファイルは 1 つも作られません。
+
 2. **成功** — `Gerber export downloaded` の成功トーストが出て、`zpd-panel-<hp>hp-gerber.zip` のダウンロードが始まります。zip の中身については[ラウンドトリップ → Gerber エクスポートはラウンドトリップしない](../export/round-trip.mdx#gerber-エクスポートはラウンドトリップしない)を参照してください。
+
 3. **拒否** — ビルドが 1 つでも問題を見つけた場合は、後述の拒否ダイアログが開き、ファイルは作られません。
+
 4. **パイプラインの例外** — 拒否コードでは表現できない失敗——`path-bool` や `opentype.js` の遅延インポート、フォントの取得などが落ちるケース——は `Gerber export failed` のエラートーストになります。2 つの入り口はどちらも戻り値を待たない `void exportGerberZip(...)` の呼び出しなので、ここで catch しなければ、ダイアログもトーストも出ない本当にサイレントな失敗になってしまいます。「黙って失敗しない」という原則は、想定内の拒否だけでなく想定外のクラッシュにも同じように適用されています。
 
-Gerber パイプライン本体は静的 import ではなく `await import('./gerber/build-ir')` と `await import('./gerber/zip')` の裏にあります。このボタンはヘッダーにある——つまりアプリのエントリから到達可能な——ため、静的に import すると IR ビルダー、ストローカー、フラットナー、パターンレコーダー、ライター、fflate がまとめてメインチャンクに入り、エクスポートを押したときにしか動かない機能のために毎回のページロードでパースされることになるからです。確認ゲートに出す文言だけは依存を持たない専用モジュール（`gerber/artwork-only-statement.ts`）に切り出されているので、この遅延読み込みを待たずに表示できます。
+**拒否ダイアログは選択を求めるものではなく、確認を求めるものです。** タイトルは `Gerber export blocked — N issue(s)` で、`danger: true` が指定されているため確認ボタンは赤で表示されます。
 
-**拒否ダイアログは選択を求めるものではなく、確認を求めるものです。** タイトルは `Gerber export blocked — N issue(s)` で、`danger: true` が指定されているため確認ボタンは赤で表示されます。見つかった理由は **すべて** 1 つのリストにまとめて並び、各理由の下には原因になったレイヤーの名前が入れ子で列挙されます（`unlisted-panel-hp` のようなドキュメント単位の拒否には、対応するレイヤーがないので名前が付きません）。ボタンは **Cancel** と **OK** の 2 つですが——`confirmLabel` に `OK` を渡しているだけで、`cancelLabel` は `components/confirm-dialog.tsx` の既定値 `Cancel` のままです——**どちらを押しても、ダイアログを閉じる以外には何も起きません**。拒否されたときの扱いは、エクスポータの拘束的なルールとして決まっているからです。**拒否はエクスポートを中止し、ファイルを 1 つも生成しません。** 問題のあるレイヤーを飛ばして残りだけ出力することも、コンソール警告で済ませて黙って続行することもありません。
+> **Gerber export blocked — 2 issues**
+> [Cancel] [**OK**]
 
-拒否のきっかけになるのは、次の 8 つです。
+本文には、見つかった理由がすべて 1 つのリストにまとめて並びます。各理由の下には、原因になったレイヤーの名前が入れ子で列挙されます。
 
-- **`unlisted-panel-hp`** — その HP がブランクパネルの仕様表に載っておらず、幅が近似値にしかなりません。発注可能な寸法ではないため、出力しません。
-- **`image-layer-present`** — ラスタ画像はパネル上に製造できません。エクスポートの前に、ベクターレイヤーへトレースするか、非表示にしてください。
-- **`non-curated-font`** — その text レイヤーが、アウトライン化に使えるローカルファイルを持たないフォントを使っています。
-- **`missing-glyph`** — その text レイヤーに、解決されたフォントサブセットの中ではアウトラインに解決できない文字が含まれています。
-- **`unknown-pattern-id`** — その pattern レイヤーが、登録されていないジェネレータを名前で指しています。
-- **`complexity-overrun`** — デザインが密すぎます。ブーリアンパイプラインが処理しなければならないジオメトリが、エクスポートの扱える量を超えます。
-- **`unsupported-layer-type`** — そのレイヤータイプにジオメトリ抽出器が 1 つも登録されていないときの **フォールバック** です。登録済みのソースを全部当たってもなお扱えないものが残った場合に、黙って落とす代わりに拒否として表に出すために用意されています。組み込みのレイヤータイプにはいずれも抽出器があるため、通常の操作でこれに当たることはありません。
-- **`pattern-union-unreliable`** — このエクスポートが依存するブーリアン union が、その pattern ジェネレータを壊すことが計測で分かっています（`path-bool` バックエンド側の既知の不具合であって、呼び出し側のバグではありません。issue #218）。レイヤー名は `<レイヤー名> (pattern "<patternType>")` の形で表示されます。誤っていると分かっている製造データを出すよりは拒否する、という判断です。
+- This text layer uses a font with no local file to outline.
+  - Label
+- A raster image cannot be manufactured on the panel. Trace it to vector layers, or hide it, before exporting.
+  - Photo
+
+`unlisted-panel-hp` のようなドキュメント単位の拒否には、原因になったレイヤーがないので名前が付きません。ボタンは **Cancel** と **OK** の 2 つですが、どちらを押してもダイアログを閉じる以外には何も起きません。拒否されたときの扱いは、エクスポータの拘束的なルールとして決まっているからです。**拒否はエクスポートを中止し、ファイルを 1 つも生成しません。** 問題のあるレイヤーを飛ばして残りだけ出力することも、コンソール警告で済ませて黙って続行することもありません。
+
+拒否のきっかけになるコードは次のとおりです。**ダイアログのメッセージ** 列はダイアログがそのまま表示する文字列、**補足** 列はこのページ独自の説明です。
+
+| コード | ダイアログのメッセージ | 補足 |
+| --- | --- | --- |
+| `unlisted-panel-hp` | This panel HP has no entry in the blank-panel spec table, so its width is only an approximation — not an order-ready dimension. | ドキュメント単位の拒否なので、レイヤー名は付きません。 |
+| `image-layer-present` | A raster image cannot be manufactured on the panel. Trace it to vector layers, or hide it, before exporting. | — |
+| `non-curated-font` | This text layer uses a font with no local file to outline. | — |
+| `missing-glyph` | This text layer contains text the export cannot resolve to an outline in the resolved font subset. | — |
+| `unknown-pattern-id` | This pattern layer names a generator that is not registered. | — |
+| `complexity-overrun` | This design is too dense to export: the boolean pipeline would have to process more geometry than the export can handle. | — |
+| `unsupported-layer-type` | No geometry extractor is registered for this layer type, so its artwork cannot be exported. | 扱えないレイヤータイプを黙って落とす代わりに、拒否として表に出すために用意されています。組み込みのレイヤータイプにはいずれも抽出器があるため、通常の操作でこれに当たることはありません。 |
+| `pattern-union-unreliable` | The boolean union this export depends on is measured to corrupt this pattern generator — a #206/path-bool backend defect tracked in #218, not a caller bug. Refusing rather than shipping fabrication data already known to be wrong. | レイヤー名は `<レイヤー名> (pattern "<patternType>")` の形で表示されます。追跡先は [issue #218](https://github.com/zudolab/zudo-panel-designer/issues/218) です。 |
 
 **非表示のレイヤーは抽出そのものに到達しないため、決して拒否の原因になりません。** `image-layer-present` のメッセージが「ベクターレイヤーへトレースするか、*非表示にする*」の 2 択を案内しているのはこのためです。非表示にしたレイヤーはエクスポートから丸ごと外れます。
 
 :::note
-このセクション全体で参照しているドキュメントモデル、undo/redo 履歴、レイヤーの型（`DocState`、`Layer`、`PATTERN_GENERATORS`、`serializePanelConfig` など）は `@zpd/core` と `@zpd/patterns` にあり、ドキュメントモデルのセクションで解説します。
+このページ全体で参照しているドキュメントモデル、undo/redo 履歴、レイヤーの型（`DocState`、`Layer`、`PATTERN_GENERATORS`、`serializePanelConfig` など）は `@zpd/core` と `@zpd/patterns` にあり、ドキュメントモデルのセクションで解説します。
 :::
