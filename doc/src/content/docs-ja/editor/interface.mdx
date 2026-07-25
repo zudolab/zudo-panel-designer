@@ -66,7 +66,7 @@ sidebar_position: 2
 
 ### Gerber エクスポート
 
-ヘッダーの **⬇ Gerber** ボタン（title と aria-label はどちらも `Download Gerber export (.zip)`）と、コマンドパレットの **Download Gerber (.zip)** コマンド（id は `file-download-gerber`。chord を持たないためパレットからしか到達できません——[ショートカットとコマンドパレット](./shortcuts-and-commands.mdx#コマンドパレット)を参照）は、どちらも `download.tsx` の `exportGerberZip(doc)` という同じ入り口を呼びます。**⬇ JSON** がその場でファイルを書き出すのとは違い、こちらは必ず確認ダイアログを 1 枚挟んでから走る非同期のフローです。
+ヘッダーの **⬇ Gerber** ボタン（title と aria-label はどちらも `Download Gerber export (.zip)`）と、コマンドパレットの **Download Gerber (.zip)** コマンド（id は `file-download-gerber`。chord を持たないためパレットからしか到達できません——[ショートカットとコマンドパレット](./shortcuts-and-commands.mdx#コマンドパレット)を参照）は、どちらも `download.tsx` の `exportGerberZip(ctx.doc)` という同じ入り口を呼びます。**⬇ JSON** がその場でファイルを書き出すのとは違い、こちらは必ず確認ダイアログを 1 枚挟んでから走る非同期のフローです。
 
 1. **確認ゲート** — まだ何も生成しないうちに、**Export Gerber (.zip)** というタイトルのダイアログが、このエクスポートに含まれるのが銅・ソルダーマスク・シルクスクリーン・基板外形の **アートワークだけ** であること——ドリルファイルも取り付け穴のジオメトリも含まないため、すでに仕様の決まっている Takazudo のブランクパネル用のアートワークであって、単体で発注できる基板データではないこと——を伝えます。文末には現在のパネル仕様が `Panel: <hp>HP, <幅> × <高さ> mm.` の形で追記されます。ボタンは **Export .zip** と **Cancel** で、開いた時点でフォーカスが当たっているのは **Cancel** のほうです。ここでキャンセルするとファイルは 1 つも作られません。
 2. **成功** — `Gerber export downloaded` の成功トーストが出て、`zpd-panel-<hp>hp-gerber.zip` のダウンロードが始まります。zip の中身については[ラウンドトリップ → Gerber エクスポートはラウンドトリップしない](../export/round-trip.mdx#gerber-エクスポートはラウンドトリップしない)を参照してください。
