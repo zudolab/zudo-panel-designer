@@ -3,7 +3,7 @@ title: Round-Trip
 sidebar_position: 3
 ---
 
-The editor's **⬇ JSON** button (`packages/app/src/editor/download.ts`) downloads
+The editor's **⬇ JSON** button (`packages/app/src/editor/download.tsx`) downloads
 the current document as an order-ready panel config JSON, and the app now has
 a matching import path back in (the header's **⬆ JSON** button, drag-and-drop
 anywhere on the page, or the command palette's *Import JSON* command — see
@@ -96,3 +96,28 @@ file off disk, and asserts `parsePanelConfig(downloaded)` equals
 via the `window.__zpdTest` test bridge. See
 [Testing](../development/testing.mdx#e2e-with-playwright) for how that
 suite is structured.
+
+## The Gerber export is not round-trippable
+
+Everything above is the JSON round trip. The **⬇ Gerber** button (see
+[Interface → Download trigger → Gerber export](../editor/interface.mdx#gerber-export))
+produces a second export artifact, and it does not share any of the
+guarantee this page documents: it has no importer, is never fed back
+through `parsePanelConfig()`, and is not fed back into the editor at all.
+Treat it as terminal output, not an interchange format.
+
+A confirmed export downloads `zpd-panel-{hp}hp-gerber.zip`, containing
+exactly five entries:
+
+- `zpd-panel-{hp}hp.GTL` — top copper
+- `zpd-panel-{hp}hp.GTS` — top solder mask
+- `zpd-panel-{hp}hp.GTO` — top silkscreen
+- `zpd-panel-{hp}hp.GKO` — board outline profile
+- `README.txt` — restates the artwork-only limitation and adds: no
+  Excellon drill file, no bottom-side files, no paste layer
+
+There is no bottom-copper file, no bottom-silkscreen file, and no paste
+layer — the zip is artwork for an already-specified Takazudo blank panel,
+not a standalone orderable board (see
+[PCB material layers & sizing](../overview/finishes-and-sizing.mdx) for
+the material model this export writes from).
