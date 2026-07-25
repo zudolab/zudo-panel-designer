@@ -3,7 +3,7 @@ title: Round-Trip
 sidebar_position: 3
 ---
 
-The editor's **⬇ JSON** button (`packages/app/src/editor/download.ts`) downloads
+The editor's **⬇ JSON** button (`packages/app/src/editor/download.tsx`) downloads
 the current document as an order-ready panel config JSON, and the app now has
 a matching import path back in (the header's **⬆ JSON** button, drag-and-drop
 anywhere on the page, or the command palette's *Import JSON* command — see
@@ -96,3 +96,36 @@ file off disk, and asserts `parsePanelConfig(downloaded)` equals
 via the `window.__zpdTest` test bridge. See
 [Testing](../development/testing.mdx#e2e-with-playwright) for how that
 suite is structured.
+
+## The Gerber export is not round-trippable
+
+Everything above is the JSON round trip. The **⬇ Gerber** button (see
+[Interface → Download trigger → Gerber export](../editor/interface.mdx#download-trigger-gerber-export))
+produces a second export artifact, and the guarantee this page documents
+does not extend to it. Treat it as terminal output, not an interchange
+format.
+
+A successful export downloads `zpd-panel-<hp>hp-gerber.zip`, containing
+exactly five entries:
+
+- `zpd-panel-<hp>hp.GTL` — top copper
+- `zpd-panel-<hp>hp.GTS` — top solder mask
+- `zpd-panel-<hp>hp.GTO` — top silkscreen
+- `zpd-panel-<hp>hp.GKO` — board outline profile
+- `README.txt` — the panel spec line, a filename-to-role table for the four
+  Gerber files above, and the same artwork-only statement the confirm gate
+  shows, closing with: no Excellon drill file, no bottom-side files, no
+  paste layer
+
+Nothing reads that zip back in: the importer accepts panel config JSON and
+images/SVG only (see [Importing](#importing) above). The deeper reason is
+that Gerber sits *downstream* of the document model — by the time a file is
+written, layer structure, pattern parameters, and text strings have all been
+flattened into per-material, boolean-unioned regions, so the information a
+round trip would need is no longer in the file at all.
+
+The two artifacts have different jobs. The **JSON** is the one you save,
+reload, and order from; the **zip** is artwork handed to an already-specified
+Takazudo blank panel, not a board you can order on its own (see
+[PCB material layers & sizing](../overview/finishes-and-sizing.mdx) for the
+material model this export writes from).
