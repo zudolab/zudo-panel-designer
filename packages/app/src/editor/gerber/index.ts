@@ -44,6 +44,37 @@ export {
   textHandoffSource,
 } from './extract';
 
+export type { CanvasSubpath } from './canvas-path';
+export {
+  CanvasPathBuilder,
+  canvasArcSweep,
+  strokeSubpathsOf,
+  subpathFillRing,
+} from './canvas-path';
+
+export type { PaintOp, RecorderLimits } from './pattern-recorder';
+export {
+  createRecordingContext,
+  PatternComplexityError,
+  PatternRecorder,
+  UnsupportedCanvasMemberError,
+} from './pattern-recorder';
+
+export type { PatternGeometryOverride, PatternGeometrySourceOptions } from './pattern-source';
+export {
+  createPatternGeometrySource,
+  fillOperands,
+  operandsForOps,
+  PATTERN_GEOMETRY_OVERRIDES,
+  patternGeometrySource,
+  patternLayerToOperands,
+  patternLayerToRings,
+  recordGenerator,
+} from './pattern-source';
+
+export type { Bbox } from './union';
+export { connectedComponents, inputBbox, ringBbox, unionInputs } from './union';
+
 export type { StrokeCap, StrokeJoin, StrokeStyle, StrokeSubpath } from './stroker';
 export { CANVAS_DEFAULT_JOIN_STYLE, maxTurnForHalfWidth, strokeSubpathsToInputs } from './stroker';
 
