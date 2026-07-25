@@ -64,13 +64,9 @@ The header's **⬇ JSON** button calls `downloadPanelConfig(ctx.doc)` from `down
 
 This is the editor-side trigger only; the shape of the exported JSON and how it's consumed downstream is documented in the Export section.
 
-:::note
-The document model, undo/redo history, and layer types referenced throughout this section (`DocState`, `Layer`, `PATTERN_GENERATORS`, `serializePanelConfig`, …) live in `@zpd/core` and `@zpd/patterns` and are covered in the Document Model section.
-:::
-
 ### Gerber export
 
-The header's **⬇ Gerber** button and the command palette's **Download Gerber (.zip)** command (`file-download-gerber`, chordless — see [Shortcuts & Command Palette](./shortcuts-and-commands.mdx#the-command-palette)) both call `exportGerberZip(ctx.doc)` from `download.tsx`. The whole Gerber pipeline — the IR builder, extractors, boolean kernel, and RS-274X writer — sits behind a lazy `await import(...)`, never a static import, so it stays out of the main chunk for a feature that only runs on an export click.
+The header's **⬇ Gerber** button (`title`/`aria-label` both read `Download Gerber export (.zip)`) and the command palette's **Download Gerber (.zip)** command (`file-download-gerber`, chordless — see [Shortcuts & Command Palette](./shortcuts-and-commands.mdx#the-command-palette)) both call `exportGerberZip(ctx.doc)` from `download.tsx`. The whole Gerber pipeline — the IR builder, extractors, boolean kernel, and RS-274X writer — sits behind a lazy `await import(...)`, never a static import, so it stays out of the main chunk for a feature that only runs on an export click.
 
 `exportGerberZip` is a two-dialog flow:
 
@@ -80,7 +76,7 @@ The header's **⬇ Gerber** button and the command palette's **Download Gerber (
    > This export contains artwork only — copper, solder mask, silkscreen, and the board outline. It contains no drill file and no mounting-hole geometry. It is artwork for an already-specified Takazudo blank panel, not a standalone orderable board. `Panel: {hp}HP, {width} × {height} mm.`
    > [Cancel] [**Export .zip**]
 
-   Cancelling here produces no file at all.
+   The dialog opens with focus already on **Cancel**. Cancelling here produces no file at all.
 
 2. **Success.** A *"Gerber export downloaded"* toast, and a `zpd-panel-{hp}hp-gerber.zip` download — see [Round-Trip → The Gerber export is not round-trippable](../export/round-trip.mdx#the-gerber-export-is-not-round-trippable) for what's inside.
 
@@ -91,7 +87,7 @@ The header's **⬇ Gerber** button and the command palette's **Download Gerber (
    > A raster image cannot be manufactured on the panel. Trace it to vector layers, or hide it, before exporting. (Photo)
    > [Cancel] [**OK**]
 
-   This dialog is an **acknowledgement, not a choice** — both buttons simply dismiss it. A refusal always **aborts the export and produces no file**: never a partial export, never a console warning. Every offending layer name is nested under its reason, as the parenthesized layer names above stand in for. Hidden layers are skipped before refusal evaluation entirely and so can never trigger one — which is why the image-layer message above says "…or hide it, before exporting."
+   This dialog is an **acknowledgement, not a choice** — both buttons simply dismiss it, and its **OK** button renders in red (`danger: true`). A refusal always **aborts the export and produces no file**: never a partial export, never a console warning. Every offending layer name is nested under its reason, as the parenthesized layer names above stand in for. Hidden layers are skipped before refusal evaluation entirely and so can never trigger one — which is why the image-layer message above says "…or hide it, before exporting."
 
 4. **Pipeline failure.** A rejection from the pipeline itself — e.g. the kernel's lazy `path-bool` import, or the outliner's lazy `opentype.js` font fetch, throwing — shows a *"Gerber export failed"* error toast carrying the error message. Both entry points call this fire-and-forget, so nothing here fails silently.
 
@@ -107,3 +103,7 @@ The 8 refusal codes:
 | `complexity-overrun` | The design is too dense — the boolean pipeline would have to process more geometry than the export can handle. |
 | `unsupported-layer-type` | No geometry extractor is registered for this layer type. This is a completeness fallback rather than a live failure mode: every current layer type has a registered extractor, so this code isn't something normal use should ever hit. |
 | `pattern-union-unreliable` | The boolean union is measured to corrupt this specific pattern generator — a kernel backend defect ([issue #218](https://github.com/zudolab/zudo-panel-designer/issues/218)), not a caller mistake. |
+
+:::note
+The document model, undo/redo history, and layer types referenced throughout this section (`DocState`, `Layer`, `PATTERN_GENERATORS`, `serializePanelConfig`, …) live in `@zpd/core` and `@zpd/patterns` and are covered in the Document Model section.
+:::
