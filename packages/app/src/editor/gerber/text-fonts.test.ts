@@ -5,6 +5,7 @@
 // bump that reorders or drops a subset fails here instead of silently
 // exporting a character from the wrong file.
 import { readFile } from 'node:fs/promises';
+import { loadTestFontFile, resolveTestFontPath } from './test-font-loader';
 import { basename, dirname } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { CURATED_FONTS } from '../fonts';
@@ -17,17 +18,8 @@ import {
   subsetFileForCodePoint,
 } from './text-fonts';
 
-// Vitest resolves a `?url` import to `/@fs/<absolute path>`, which `fetch`
-// cannot read but the filesystem can.
-function fsPath(url: string): string {
-  return url.startsWith('/@fs') ? url.slice('/@fs'.length) : url;
-}
-
 beforeAll(() => {
-  setCuratedFontFileLoaderForTests(async (url) => {
-    const buffer = await readFile(fsPath(url));
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  });
+  setCuratedFontFileLoaderForTests(loadTestFontFile);
 });
 
 describe('parseUnicodeRange', () => {
@@ -50,7 +42,7 @@ describe('curated font registry', () => {
 
   it('orders every face by CSS priority — the reverse of index.css', async () => {
     for (const face of CURATED_FONT_FACES.values()) {
-      const packageDir = dirname(dirname(fsPath(face.files[0].url)));
+      const packageDir = dirname(dirname(resolveTestFontPath(face.files[0].url)));
       const familyId = basename(packageDir);
       const css = await readFile(`${packageDir}/index.css`, 'utf8');
 

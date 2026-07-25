@@ -14,7 +14,7 @@ import {
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { BooleanEngine } from '../geometry-kernel';
 import { createBooleanEngine } from '../geometry-kernel';
-import { readFile } from 'node:fs/promises';
+import { loadTestFontFile } from './test-font-loader';
 import { buildGerberIr, type BuildGerberIrResult } from './build-ir';
 import { polygonSignedArea } from './flatten';
 import type { GerberIr, IrRegion, IrRing } from './ir';
@@ -29,11 +29,7 @@ beforeAll(async () => {
   // Text layers now resolve through the real outliner (#212), which loads a
   // `?url` font asset. Vitest resolves that to `/@fs/<abs path>`, which `fetch`
   // cannot read but the filesystem can — same seam text-fonts.test.ts uses.
-  setCuratedFontFileLoaderForTests(async (url) => {
-    const path = url.startsWith('/@fs') ? url.slice('/@fs'.length) : url;
-    const buffer = await readFile(path);
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  });
+  setCuratedFontFileLoaderForTests(loadTestFontFile);
 });
 
 function doc(

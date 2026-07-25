@@ -17,6 +17,7 @@
 // baseline — is pinned to Blink's documented rule and to the runtime probe,
 // and is asserted here only against that rule.
 import { readFile } from 'node:fs/promises';
+import { loadTestFontFile } from './test-font-loader';
 import {
   createPcbLayerContainer,
   PANEL_HEIGHT_MM,
@@ -59,11 +60,7 @@ let engine: BooleanEngine;
 let ctx: IrExtractContext;
 
 beforeAll(async () => {
-  setCuratedFontFileLoaderForTests(async (url) => {
-    const path = url.startsWith('/@fs') ? url.slice('/@fs'.length) : url;
-    const buffer = await readFile(path);
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  });
+  setCuratedFontFileLoaderForTests(loadTestFontFile);
   engine = await createBooleanEngine();
   ctx = {
     panel: { hp: HP, widthMm: panelWidthMm(HP), heightMm: PANEL_HEIGHT_MM },

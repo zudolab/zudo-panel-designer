@@ -2,7 +2,7 @@
 // both the exact bytes and — via fflate's own unzipSync, a real independent
 // parser — the archive's structural validity are directly assertable here,
 // same spirit as writer.test.ts's byte-exact Gerber assertions.
-import { readFile } from 'node:fs/promises';
+import { loadTestFontFile } from './test-font-loader';
 import {
   createPcbLayerContainer,
   type DocState,
@@ -34,11 +34,7 @@ beforeAll(async () => {
   // Same seam build-ir.test.ts uses: the real outliner (#212) lazy-loads a
   // `?url` font asset that vitest resolves to `/@fs/<abs path>`, which `fetch`
   // cannot read in this environment but the filesystem can.
-  setCuratedFontFileLoaderForTests(async (url) => {
-    const path = url.startsWith('/@fs') ? url.slice('/@fs'.length) : url;
-    const buffer = await readFile(path);
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  });
+  setCuratedFontFileLoaderForTests(loadTestFontFile);
 });
 
 // A pattern id NOT in pattern-union-unreliable.generated.ts, so this fixture

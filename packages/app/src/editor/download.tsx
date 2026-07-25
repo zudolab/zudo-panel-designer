@@ -14,10 +14,15 @@ import { PANEL_HEIGHT_MM, panelWidthMm, serializePanelConfig, type DocState } fr
 // (Decision 3.3), with no separate version constant to keep in sync by hand.
 import packageJson from '../../package.json';
 import { confirmDialog } from './components/confirm-dialog-api';
-import { buildGerberIr } from './gerber/build-ir';
+// The whole Gerber pipeline is behind `await import(...)` below, never a static
+// import. It is reachable from the header (and therefore from the app entry),
+// so a static import drags build-ir + extract + stroker + flatten + regions +
+// the pattern recorder + the writer + fflate into the MAIN chunk, parsed on
+// every page load for a feature that only runs on an export click. Type-only
+// imports are fine — they erase.
+import { GERBER_ARTWORK_ONLY_STATEMENT } from './gerber/artwork-only-statement';
 import type { GerberRefusal } from './gerber/ir';
 import type { GerberEmitOptions } from './gerber/writer';
-import { gerberZipBytes, gerberZipFilename, GERBER_ARTWORK_ONLY_STATEMENT } from './gerber/zip';
 import { toastError, toastSuccess } from './registry/toasts';
 
 export function panelConfigJson(doc: DocState): string {
@@ -62,6 +67,10 @@ function gerberEmitOptionsNow(): GerberEmitOptions {
  * `Blob`/`URL.createObjectURL` — no file is produced, per Decision 8.
  */
 export async function downloadGerberZip(doc: DocState): Promise<GerberDownloadResult> {
+  const [{ buildGerberIr }, { gerberZipBytes, gerberZipFilename }] = await Promise.all([
+    import('./gerber/build-ir'),
+    import('./gerber/zip'),
+  ]);
   const result = await buildGerberIr(doc);
   if (!result.ok) return result;
   const bytes = gerberZipBytes(result.ir, gerberEmitOptionsNow());

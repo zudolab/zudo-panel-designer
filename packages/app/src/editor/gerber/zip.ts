@@ -1,3 +1,5 @@
+import { GERBER_ARTWORK_ONLY_STATEMENT } from './artwork-only-statement';
+export { GERBER_ARTWORK_ONLY_STATEMENT } from './artwork-only-statement';
 // Pure `.zip` + README assembly (#215): GerberIr in, zip bytes out. No DOM, no
 // filesystem — mirroring writer.ts's own split from any DOM concern, which is
 // what `download.ts`'s DOM shell for downloadGerberZip() builds on.
@@ -21,11 +23,6 @@ export function gerberZipFilename(hp: number): string {
   return `zpd-panel-${hp}hp-gerber.zip`;
 }
 
-// Decision 2.4, word-for-word what DECISIONS.md pins — the export UI shows
-// this BEFORE the download happens (gerber-export.tsx); this is the copy that
-// survives the zip being separated from the app, same statement, same words.
-export const GERBER_ARTWORK_ONLY_STATEMENT =
-  'This export contains artwork only — copper, solder mask, silkscreen, and the board outline. It contains no drill file and no mounting-hole geometry. It is artwork for an already-specified Takazudo blank panel, not a standalone orderable board.';
 
 /**
  * File→function mapping, panel dimensions, and the artwork-only statement
