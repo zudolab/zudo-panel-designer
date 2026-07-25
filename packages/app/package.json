@@ -36,10 +36,12 @@
     "@tailwindcss/vite": "^4.3.2",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
+    "@tracespace/parser": "5.0.0-next.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.185.1",
     "@vitejs/plugin-react": "^5.2.0",
+    "gerber-parser": "4.2.7",
     "jsdom": "^27.4.0",
     "tailwindcss": "^4.3.2",
     "vite": "^7.3.6"
