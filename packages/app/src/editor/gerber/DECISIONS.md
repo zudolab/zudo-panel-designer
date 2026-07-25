@@ -71,8 +71,14 @@ export interface IrLayer {
    * attribute (Decision 3). It NEVER causes a geometric operation. Solder mask
    * is 'negative' and its geometry is still emitted uncomplemented, exactly as
    * it arrives (Decision 3).
+   *
+   * `null` means the attribute is NOT emitted for this file. The 'outline'
+   * role is `null`: file polarity is not meaningful for a Profile, and
+   * emitting it there would be an extra, unasked-for attribute that breaks
+   * #210's byte-exact fixtures. The field is required-but-nullable rather than
+   * optional so a fixture author must make the choice explicitly.
    */
-  readonly filePolarity: 'positive' | 'negative';
+  readonly filePolarity: 'positive' | 'negative' | null;
   /**
    * How the writer renders `regions`. 'filled-region' → G36/G37 contours.
    * 'stroked-contour' → D02/D01 moves with the profile aperture, used only by
@@ -330,7 +336,13 @@ Solder mask  %TF.FileFunction,Soldermask,Top*%
 Silkscreen   %TF.FileFunction,Legend,Top*%
              %TF.FilePolarity,Positive*%
 Outline      %TF.FileFunction,Profile,NP*%
+             (no TF.FilePolarity — IrLayer.filePolarity is null for 'outline')
 ```
+
+The outline file emits **no** `TF.FilePolarity`. File polarity is not meaningful
+for a Profile, and #209/#210 build independently, so the omission has to be
+stated on both sides — in the IR type (`filePolarity: null`) and here — or one
+side emits an attribute the other's fixtures do not expect.
 
 ### 3.2 Solder-mask polarity — verified against the code, not the docs
 
@@ -521,8 +533,9 @@ Pinned parameters:
 - **Pattern strokes use whatever the generator set at `stroke()` time** — the
   recorder captures style at call time, not at assignment time (#211).
 - Stroker output is **cubic rings** in the kernel's `EngineRing` form, with
-  round caps and round joins as KAPPA arcs. It feeds the boolean pipeline, so it
-  must not be pre-flattened.
+  round caps and round joins as cubic arcs subdivided per Decision 6.1 (a round
+  cap on a wide stroke is an arc like any other and gets the same 2.5 µm bound).
+  It feeds the boolean pipeline, so it must not be pre-flattened.
 - **Expansion happens before clipping**, and before the union.
 - `strokeWidth <= 0` or a non-finite width contributes no geometry (matching
   `renderer.ts:432`'s `layer.strokeWidth > 0` guard). Not a refusal.
@@ -535,6 +548,7 @@ Pipeline order, fixed:
 extract (cubics, doc mm)
   → bake rotation
   → stroke-expand (cubics)
+  → clip to the pattern square      ← pattern layers ONLY, per layer
   → union per material (kernel)
   → clip to profile (kernel)
   → adaptive flatten (Decision 6)
@@ -544,22 +558,82 @@ extract (cubics, doc mm)
 Flattening is **last**, after all boolean work, so precision is not spent twice
 and the kernel's exact `cubicSignedArea` still applies to the real curves.
 
+### 5.1 The per-pattern square clip is mandatory and is NOT the profile clip
+
+`renderer.ts:405-411` applies `ctx.rect(0, 0, size, size); ctx.clip()`
+**around** the generator call, before the panel clip — a separate clip op
+composing to `panel ∩ square`. A `PatternLayer`'s square need not cover the
+panel (`types.ts:24-28`: it is a positioned square since #96, and a panel HP
+change deliberately leaves it un-resized), and generators routinely draw
+through their square's edges.
+
+So the profile clip alone is **not** sufficient: geometry outside the pattern
+square but inside the panel is invisible in the editor and would still be
+manufactured. Each pattern layer is intersected with its own
+`(x, y, size, size)` square, as a real boolean intersection via the #206
+kernel, **after stroke expansion** (Canvas clips the rasterised stroke, so an
+expanded stroke that crosses the square edge is cut, not kept) and **before**
+the material union.
+
+Two clips, two purposes, both required: the square clip is per pattern layer;
+the profile clip (Decision 7) is per material layer.
+
 ---
 
 ## Decision 6 — Coordinate format and flattening tolerance
 
 Format: `%FSLAX46Y46*%` + `%MOMM*%` (Decision 3.4).
 
-**Adaptive flattening, max chord deviation ≤ 5 µm (0.005 mm).**
+**Total geometric error budget: 5 µm (0.005 mm), split in two.**
+
+| Stage | Budget |
+|---|---|
+| Arc → cubic approximation (Decision 6.1) | ≤ 2.5 µm |
+| Cubic → polyline flattening (Decision 6.2) | ≤ 2.5 µm |
+
+The split exists because these two errors **add**, and the second one is where
+everybody looks. A 5 µm flattener downstream of an arc approximation that is
+itself 17 µm off does not produce 5 µm geometry.
+
+### 6.1 Arc → cubic approximation
+
+Applies to **every** circular or elliptical arc in the pipeline: `ShapeLayer`
+ellipses (Decision 9), the stroker's round caps and round joins (Decision 5),
+and the pattern recorder's `ctx.arc` (#211 — 32 call sites).
+
+The classic 4-cubic KAPPA circle has a peak radial error of ≈ `2.725e-4 × r`,
+which is **1.7 µm at r = 6.4 mm but 17.4 µm at r = 64 mm** — a full-panel-height
+ellipse blows the whole budget on its own, before the flattener runs. The
+approximation error also falls as `θ⁶`, so halving the arc angle divides it by
+64.
+
+Pinned rule:
+
+- Start at **8 cubics per full ellipse / 2 per quadrant** (45° arcs). That alone
+  puts a 64 mm radius at ≈ 0.27 µm, i.e. every ellipse that fits a 128.5 mm
+  panel is already inside budget at the starting value.
+- Then **verify by measurement, not by formula**: evaluate each cubic at
+  `t = 0.5` and compare against the true arc point at the corresponding
+  parameter. While the deviation exceeds **2.5 µm**, halve the arc angle and
+  re-measure. Cap at 256 segments per full ellipse. Measuring beats a
+  transcribed error formula — it cannot be mistyped, and it is the assertion the
+  test wants anyway.
+- Exact renderer parity is impossible here in principle and that is fine:
+  `ctx.ellipse`'s internal approximation is browser-defined and not specified
+  anywhere. We target the **true** ellipse to within 2.5 µm; whatever the
+  browser drew is within a few µm of that. The raster-parity tolerance in
+  Decision 10 must accommodate this, rather than demanding pixel equality.
+
+### 6.2 Cubic → polyline flattening, max chord deviation ≤ 2.5 µm
 
 - `core/src/path-geometry.ts:54`'s `DEFAULT_FLATTEN_SEGMENTS = 24` is a fixed
   segment count per cubic *regardless of arc length*. Correct for hit-testing;
   wrong for fabrication — it over-samples a 0.1 mm curve and under-samples a
   120 mm one by the same factor. **#209 writes its own adaptive flattener and
   does not reuse it.** The core constant stays untouched; hit-testing is fine.
-- 5 µm is ~0.004% of the panel height and roughly an order of magnitude below
-  any fab's minimum feature size, while staying 5000× the 1 nm coordinate
-  quantum so the tolerance is never lost to rounding.
+- The 5 µm total is ~0.004% of the panel height and roughly an order of
+  magnitude below any fab's minimum feature size, while staying 5000× the 1 nm
+  coordinate quantum so the tolerance is never lost to rounding.
 - Recursion bound: **24 subdivision levels**, and a minimum emitted segment
   length of **1 µm**. Degenerate/cusped cubics must terminate rather than
   subdivide forever.
@@ -568,8 +642,11 @@ Format: `%FSLAX46Y46*%` + `%MOMM*%` (Decision 3.4).
   not bound chord error on a cubic with unevenly distributed control points.
 - Consecutive vertices closer than 1 µm are collapsed; a ring left with fewer
   than 3 vertices is dropped.
-- Test (from #209's acceptance): max chord deviation ≤ 5 µm on a
-  high-curvature fixture, measured against the analytic curve.
+- Test (from #209's acceptance): max chord deviation ≤ 2.5 µm on a
+  high-curvature fixture, measured against the analytic curve — plus an
+  end-to-end assertion that an r = 64 mm ellipse lands within 5 µm of the true
+  ellipse, which is the check that catches an in-budget flattener sitting on
+  top of an out-of-budget arc approximation.
 
 ---
 
@@ -590,6 +667,10 @@ the `FSLAX46` range, which Decision 3.4's rounding rule relies on.
 
 The clip is a real boolean intersection via the #206 kernel, not a bbox reject —
 a shape straddling the edge must be cut, not dropped and not kept whole.
+
+This is **not** the only clip. Pattern layers are additionally clipped to their
+own square earlier in the pipeline (Decision 5.1); the profile clip does not
+subsume it, because a pattern square can be smaller than the panel.
 
 ---
 
@@ -691,8 +772,11 @@ exporter gets the same array instance the editor uses — a freshly-projected
 array bumps the document incarnation and can invalidate cached pivots mid-
 session.
 
-Ellipses are extracted as 4 KAPPA cubics (the kernel exports `KAPPA`), matching
-`ctx.ellipse`'s own approximation to well within Decision 6's tolerance.
+Ellipses are extracted as cubic arcs starting at **8 segments**, subdivided
+until the measured radial error is ≤ 2.5 µm — **not** the 4-cubic KAPPA form.
+The kernel exports `KAPPA` and 4 cubics is the reflex answer, but its
+`2.725e-4 × r` peak error is 17 µm on a full-panel-height ellipse, over three
+times the entire budget. See Decision 6.1.
 
 ---
 
@@ -709,12 +793,28 @@ checks, all required:
    that **we did not write it**. It re-parses every emitted file and asserts the
    coordinate stream, format spec, and region/polarity structure. It also
    arbitrates Decision 3.3's `TF.SameCoordinates` question.
-2. **Raster round-trip diff, in CI.** Render the IR to a canvas and diff it
-   against `preview/surface-maps.ts` / `paintInvertedPanelStack` output for the
-   same document. This is the only oracle that catches *semantic* errors a
-   syntax parser cannot see — a dropped layer, a mirrored panel, an inverted
-   mask. It works precisely because the IR is in document space (Decision 0.1),
-   so no flip has to be undone to compare.
+2. **Two raster diffs, not one.** These are separate checks with separate
+   coverage, and conflating them leaves the writer untested:
+
+   - **2a — IR vs editor (validates the EXTRACTOR).** Render the IR to a canvas
+     and diff against `preview/surface-maps.ts` / `paintInvertedPanelStack` for
+     the same document. Catches dropped layers, a missing pattern-square clip,
+     bad normalisation. Works precisely because the IR is in document space
+     (Decision 0.1), so no flip has to be undone. **It cannot catch a Y-flip or
+     polarity bug, because it never runs the writer** — do not claim otherwise.
+   - **2b — emitted Gerber vs editor (validates the WRITER).** Plot the actual
+     `.GTL`/`.GTS`/`.GTO`/`.GKO` bytes with a third-party plotter and diff the
+     result against the same editor raster. This is the only automated check
+     that sees a missing, doubled, or half-applied Y flip, a swapped
+     `%LPD*%`/`%LPC*%`, or geometry lost during serialisation.
+
+   For 2b use the tracespace plotter/renderer chain (`@tracespace/plotter` +
+   `@tracespace/renderer` → SVG → raster) as a `devDependency` if it installs
+   and plots cleanly. If it does not, move 2b to #216 as a scripted
+   `gerbv --export=png` step and say so in a code comment — **do not delete it
+   and do not substitute 2a for it.** Allow a few-µm tolerance in both diffs per
+   Decision 6.1.
+
 3. **A human look through an independent viewer, once, in #216.** Open the
    produced zip in `gerbv` or Ucamco's free reference viewer and confirm the
    panel is not mirrored, on an **asymmetric** design with legible text. A
@@ -741,14 +841,17 @@ because they are the two failures that scrap boards:
 2. **Fileset**: `.GTL`/`.GTS`/`.GTO`/`.GKO` only, always written, no drill data;
    the artwork-only limitation appears in the export UI before download.
 3. **Attributes**: exact X2 strings as listed; solder mask is uncomplemented
-   geometry in a `Negative`-polarity file; creation date is injected, not
-   ambient.
+   geometry in a `Negative`-polarity file; the outline file emits no
+   `TF.FilePolarity` at all; creation date is injected, not ambient.
 4. **Hidden mask container**: emit a full-panel opening rectangle — an empty
    `.GTS` would mean the opposite (full coverage).
 5. **Stroker**: implement a real one (round/butt/square caps, round/miter joins,
-   miter limit 10); apertures cannot express what the pattern generators use.
-6. **Format/tolerance**: `%FSLAX46Y46*%` + `%MOMM*%`, adaptive flattening at
-   ≤5 µm chord error, flattened last after all boolean work.
+   miter limit 10); apertures cannot express what the pattern generators use —
+   and every pattern layer is separately clipped to its own square, which the
+   profile clip does not cover.
+6. **Format/tolerance**: `%FSLAX46Y46*%` + `%MOMM*%`, 5 µm total error split
+   ≤2.5 µm arc→cubic and ≤2.5 µm adaptive flattening, flattened last after all
+   boolean work.
 7. **Clipping**: real boolean intersection with the board outline, honouring the
    editor's 0.35-alpha "this will not be manufactured" promise.
 8. **Refusals**: unlisted HP, visible image layer, non-curated font, missing
@@ -757,5 +860,6 @@ because they are the two failures that scrap boards:
    never trigger a refusal.
 9. **Normalisation**: `normalizeRect` before extraction; never recompute the
    cached text pivot.
-10. **Oracles**: third-party parser in CI + raster round-trip diff in CI + one
-    human check in an independent viewer on an asymmetric design.
+10. **Oracles**: third-party parser in CI + two raster diffs (IR-vs-editor for
+    the extractor, plotted-Gerber-vs-editor for the writer) + one human check in
+    an independent viewer on an asymmetric design.
