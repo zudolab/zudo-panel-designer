@@ -101,23 +101,31 @@ suite is structured.
 
 Everything above is the JSON round trip. The **⬇ Gerber** button (see
 [Interface → Download trigger → Gerber export](../editor/interface.mdx#download-trigger-gerber-export))
-produces a second export artifact, and it does not share any of the
-guarantee this page documents: it has no importer, is never fed back
-through `parsePanelConfig()`, and is not fed back into the editor at all.
-Treat it as terminal output, not an interchange format.
+produces a second export artifact, and the guarantee this page documents
+does not extend to it. Treat it as terminal output, not an interchange
+format.
 
-A confirmed export downloads `zpd-panel-{hp}hp-gerber.zip`, containing
+A successful export downloads `zpd-panel-<hp>hp-gerber.zip`, containing
 exactly five entries:
 
-- `zpd-panel-{hp}hp.GTL` — top copper
-- `zpd-panel-{hp}hp.GTS` — top solder mask
-- `zpd-panel-{hp}hp.GTO` — top silkscreen
-- `zpd-panel-{hp}hp.GKO` — board outline profile
-- `README.txt` — restates the artwork-only limitation and adds: no
-  Excellon drill file, no bottom-side files, no paste layer
+- `zpd-panel-<hp>hp.GTL` — top copper
+- `zpd-panel-<hp>hp.GTS` — top solder mask
+- `zpd-panel-<hp>hp.GTO` — top silkscreen
+- `zpd-panel-<hp>hp.GKO` — board outline profile
+- `README.txt` — the panel spec line, a filename-to-role table for the four
+  Gerber files above, and the same artwork-only statement the confirm gate
+  shows, closing with: no Excellon drill file, no bottom-side files, no
+  paste layer
 
-There is no bottom-copper file, no bottom-silkscreen file, and no paste
-layer — the zip is artwork for an already-specified Takazudo blank panel,
-not a standalone orderable board (see
-[PCB material layers & sizing](../overview/finishes-and-sizing.mdx) for
-the material model this export writes from).
+Nothing reads that zip back in: the importer accepts panel config JSON and
+images/SVG only (see [Importing](#importing) above). The deeper reason is
+that Gerber sits *downstream* of the document model — by the time a file is
+written, layer structure, pattern parameters, and text strings have all been
+flattened into per-material, boolean-unioned regions, so the information a
+round trip would need is no longer in the file at all.
+
+The two artifacts have different jobs. The **JSON** is the one you save,
+reload, and order from; the **zip** is artwork handed to an already-specified
+Takazudo blank panel, not a board you can order on its own (see
+[PCB material layers & sizing](../overview/finishes-and-sizing.mdx) for the
+material model this export writes from).
