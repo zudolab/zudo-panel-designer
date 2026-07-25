@@ -157,6 +157,58 @@ export function runParity(
   };
 }
 
+/**
+ * The default sweep geometry, shared by `pattern-parity.test.ts`'s recorder
+ * sweeps and the end-to-end union sweep below — a single source so the two
+ * can never silently drift apart (`pattern-union-unreliable.generated.ts`,
+ * regenerated from this exact sweep, would otherwise stop meaning what
+ * `pattern-parity.test.ts` ratchets against).
+ */
+export const UNION_SWEEP_SET = { sizeMm: 24, pixels: 480 } as const; // 0.05 mm/px
+export const UNION_SWEEP_MAX_AREA_ERROR = 0.02;
+
+export interface UnionReliabilityEntry {
+  readonly name: string;
+  /** e.g. "168641px, 80.3%" or "threw: Cannot read properties of undefined (reading 'winding')". */
+  readonly detail: string;
+}
+
+/**
+ * Every registered generator whose END-TO-END result (record → kernel union
+ * → square clip) disagrees with the independent reference render at default
+ * parameters — the measurement `pattern-union-unreliable.generated.ts` is
+ * generated from (#218), and what `pattern-parity.test.ts` re-measures on
+ * every run to catch that file drifting from reality.
+ */
+export function measureUnionUnreliability(
+  engine: BooleanEngine,
+  generators: readonly PanelPatternGenerator[],
+): UnionReliabilityEntry[] {
+  const entries: UnionReliabilityEntry[] = [];
+  for (const gen of generators) {
+    const result = runParity(gen, engine, { ...UNION_SWEEP_SET, params: defaultParamsOf(gen) });
+    if (result.unionError) {
+      entries.push({ name: gen.name, detail: `threw: ${result.unionError}` });
+    } else if (result.deep > 0 || result.areaError > UNION_SWEEP_MAX_AREA_ERROR) {
+      entries.push({
+        name: gen.name,
+        detail: `${result.deep}px, ${(result.areaError * 100).toFixed(1)}%`,
+      });
+    }
+  }
+  return entries;
+}
+
+/** `measureUnionUnreliability`'s names alone, sorted — the exporter's shape. */
+export function measureUnionUnreliableNames(
+  engine: BooleanEngine,
+  generators: readonly PanelPatternGenerator[],
+): string[] {
+  return measureUnionUnreliability(engine, generators)
+    .map((entry) => entry.name)
+    .sort();
+}
+
 /** Minimum / maximum of every declared parameter — the extreme sweeps. */
 export function extremeParams(
   gen: PanelPatternGenerator,

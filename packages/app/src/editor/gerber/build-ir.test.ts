@@ -407,6 +407,49 @@ describe('refusals (Decision 8)', () => {
     expect(ok(result).layers[0].regions).toHaveLength(1);
   });
 
+  // #218/#215: path-bool corrupts the union for a measured set of pattern
+  // generators. 'seigaiha' is one of them (pattern-union-unreliable.generated.ts)
+  // — export must refuse rather than ship geometry already known to be wrong.
+  it('refuses a pattern layer whose generator is measured union-unreliable (#218), naming the layer and pattern id', async () => {
+    const unreliable: PatternLayer = {
+      id: 'pat-unreliable',
+      name: 'Waves',
+      type: 'pattern',
+      patternType: 'seigaiha',
+      params: {},
+      color: 1,
+      x: 0,
+      y: 0,
+      size: 20,
+    };
+    const result = await build(doc({ copper: [unreliable] }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.refusals).toHaveLength(1);
+    expect(result.refusals[0].code).toBe('pattern-union-unreliable');
+    expect(result.refusals[0].layers).toHaveLength(1);
+    expect(result.refusals[0].layers[0].id).toBe('pat-unreliable');
+    expect(result.refusals[0].layers[0].name).toContain('Waves');
+    expect(result.refusals[0].layers[0].name).toContain('seigaiha');
+  });
+
+  it('lets a HIDDEN pattern layer through even when its generator is union-unreliable', async () => {
+    const hidden: PatternLayer = {
+      id: 'pat-hidden-unreliable',
+      name: 'Waves',
+      hidden: true,
+      type: 'pattern',
+      patternType: 'seigaiha',
+      params: {},
+      color: 1,
+      x: 0,
+      y: 0,
+      size: 20,
+    };
+    const ir = ok(await build(doc({ copper: [hidden] })));
+    expect(ir.layers[0].regions).toEqual([]);
+  });
+
   it('refuses a complexity overrun rather than hanging the tab', async () => {
     const many = Array.from({ length: 6 }, (_, i) =>
       rect({ id: `r${i}`, x: i * 2, y: 0, width: 1, height: 1 }),

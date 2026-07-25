@@ -32,7 +32,7 @@ import {
   type PcbLayerStack,
 } from '@zpd/core';
 import { applyAlign, applyDistribute, canAlign, canDistribute, type Reference } from './align-ops';
-import { downloadPanelConfig } from './download';
+import { downloadPanelConfig, exportGerberZip } from './download';
 import { pickImportJsonFile } from './import';
 import { isMac } from './is-mac';
 import {
@@ -551,6 +551,15 @@ const STATIC_COMMANDS: CommandDef[] = [
     label: 'Download JSON',
     category: 'File',
     run: (ctx) => downloadPanelConfig(ctx.doc),
+    isEnabled: ALWAYS_ENABLED,
+  },
+  {
+    id: 'file-download-gerber',
+    label: 'Download Gerber (.zip)',
+    category: 'File',
+    run: (ctx) => {
+      void exportGerberZip(ctx.doc);
+    },
     isEnabled: ALWAYS_ENABLED,
   },
 

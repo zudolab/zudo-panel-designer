@@ -42,13 +42,26 @@
 import { PATTERN_GENERATORS } from '@zpd/patterns';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createBooleanEngine, type BooleanEngine } from '../geometry-kernel';
-import { defaultParamsOf, extremeParams, runParity, type ParityResult } from './pattern-parity';
+import {
+  defaultParamsOf,
+  extremeParams,
+  measureUnionUnreliability,
+  runParity,
+  UNION_SWEEP_MAX_AREA_ERROR,
+  UNION_SWEEP_SET,
+  type ParityResult,
+  type UnionReliabilityEntry,
+} from './pattern-parity';
+import { UNION_UNRELIABLE_PATTERN_IDS } from './pattern-union-unreliable.generated';
 
 // A 24 mm square is a legitimate pattern-layer size (the square is positioned
 // and resizable since #96) and keeps the boolean work proportionate to a test
 // suite while every generator still tiles several motifs across it. Generator
 // parameters are absolute millimetres, so the motifs are full size either way.
-const DEFAULT_SET = { sizeMm: 24, pixels: 480 }; // 0.05 mm per pixel
+// Shared with the end-to-end union sweep below via pattern-parity.ts, so the
+// generated pattern-union-unreliable.generated.ts constant and this file's
+// own ratchet can never silently measure two different things.
+const DEFAULT_SET: { sizeMm: number; pixels: number } = UNION_SWEEP_SET; // 0.05 mm per pixel
 const EXTREME_SET = { sizeMm: 16, pixels: 320 }; // 0.05 mm per pixel
 
 /**
@@ -58,7 +71,7 @@ const EXTREME_SET = { sizeMm: 16, pixels: 320 }; // 0.05 mm per pixel
  * area and says nothing about whether the shape is right. `deep === 0` is the
  * assertion carrying the weight in those cases.
  */
-const MAX_AREA_ERROR = { default: 0.02, extreme: 0.05 };
+const MAX_AREA_ERROR = { default: UNION_SWEEP_MAX_AREA_ERROR, extreme: 0.05 };
 
 /**
  * Generators whose RECORDED geometry still disagrees with the reference render.
@@ -184,20 +197,43 @@ for (const { label, set, tolerance, params } of SETS) {
  * membership on any kernel change. A floor catches a regression in either
  * direction of blame while staying honest about where the pipeline currently
  * stands, and the failing names are printed so nobody has to guess.
+ *
+ * The sweep runs ONCE in `beforeAll` and both `it`s below read its result —
+ * `measureUnionUnreliability` is the expensive half (a real kernel union per
+ * generator), and running it twice would double this suite's cost for no
+ * extra coverage.
  */
 describe('end-to-end parity through the kernel union', () => {
-  it('at least 35 of 62 generators survive the union intact at default parameters', () => {
-    const failures: string[] = [];
-    for (const gen of PATTERN_GENERATORS) {
-      const result = runParity(gen, engine, { ...DEFAULT_SET, params: defaultParamsOf(gen) });
-      if (result.unionError) failures.push(`${gen.name}(threw: ${result.unionError})`);
-      else if (result.deep > 0 || result.areaError > MAX_AREA_ERROR.default) {
-        failures.push(`${gen.name}(${result.deep}px, ${(result.areaError * 100).toFixed(1)}%)`);
-      }
-    }
-    const passing = PATTERN_GENERATORS.length - failures.length;
+  let entries: UnionReliabilityEntry[] = [];
+
+  beforeAll(() => {
+    entries = measureUnionUnreliability(engine, PATTERN_GENERATORS);
     // Printed, not swallowed: the list is the deliverable of this test.
-    console.log(`union-corrupted generators (${failures.length}/62): ${failures.join(' ')}`);
-    expect(passing, `union failures: ${failures.join(' ')}`).toBeGreaterThanOrEqual(35);
+    console.log(
+      `union-corrupted generators (${entries.length}/62): ` +
+        entries.map((e) => `${e.name}(${e.detail})`).join(' '),
+    );
   }, 900_000);
+
+  it('at least 35 of 62 generators survive the union intact at default parameters', () => {
+    const passing = PATTERN_GENERATORS.length - entries.length;
+    const failing = entries.map((e) => e.name).join(' ');
+    expect(passing, `union failures: ${failing}`).toBeGreaterThanOrEqual(35);
+  });
+
+  /**
+   * Drift guard for #215's export-time refusal (`GerberRefusalCode:
+   * 'pattern-union-unreliable'`, `build-ir.ts`). `UNION_UNRELIABLE_PATTERN_IDS`
+   * is a GENERATED constant, not hand-maintained — this test re-measures
+   * reality on every run and fails loudly the moment the two disagree, in
+   * either direction: a name this test newly measures as unreliable that the
+   * generated file doesn't have yet (the backend regressed further) or a name
+   * in the generated file this test no longer measures as unreliable (the
+   * generated file is stale — regenerate it). That is what lets the refusal
+   * disappear cleanly once #218 is fixed — regenerate, don't hand-edit.
+   */
+  it('matches the generated pattern-union-unreliable.generated.ts constant — regenerate (see that file\'s header) if this fails', () => {
+    const measured = entries.map((e) => e.name).sort();
+    expect(measured).toEqual([...UNION_UNRELIABLE_PATTERN_IDS].sort());
+  });
 });

@@ -16,7 +16,7 @@ import {
   type ShapeLayer,
   type TextLayer,
 } from '@zpd/core';
-import { downloadPanelConfig } from './download';
+import { downloadPanelConfig, exportGerberZip } from './download';
 import {
   allCommands,
   commandShortcutDisplay,
@@ -31,11 +31,14 @@ import {
 import { registerTool, unregisterTool } from './registry/tools';
 import type { ToolContext, ToolKeyEvent } from './types';
 
-// download.ts's downloadPanelConfig() drives Blob/anchor DOM APIs jsdom
-// doesn't implement (URL.createObjectURL) — download.test.ts already covers
-// its actual output via the pure panelConfigJson(); here we only prove the
-// command is wired to call it with ctx.doc.
-vi.mock('./download', () => ({ downloadPanelConfig: vi.fn() }));
+// download.ts's downloadPanelConfig()/exportGerberZip() drive Blob/anchor DOM
+// APIs jsdom doesn't implement (URL.createObjectURL) and, for the latter, a
+// confirm dialog + the async build-ir/zip pipeline — download.test.ts already
+// covers the pure panelConfigJson(); here we only prove each command is wired
+// to call the right export with ctx.doc. KNOWN TRIPWIRE: this mock is
+// wholesale, so any new download.tsx export a command starts calling must be
+// added here too, or the real (undefined-in-the-mock) function throws.
+vi.mock('./download', () => ({ downloadPanelConfig: vi.fn(), exportGerberZip: vi.fn() }));
 import { projectFlatLayers } from './flat-projection';
 import { canonicalDoc, type DocFixture } from './test-doc';
 
@@ -802,6 +805,15 @@ describe('chordless commands (zoom / align / file / text) have run() wired to a 
       .find((c) => c.id === 'file-download-json')!
       .run(ctx);
     expect(downloadPanelConfig).toHaveBeenCalledWith(ctx.doc);
+  });
+
+  it('file-download-gerber calls exportGerberZip with ctx.doc', () => {
+    const doc: DocFixture = { panelHp: 6, guides: [], layers: [] };
+    const ctx = stubCommandCtx({ doc });
+    allCommands()
+      .find((c) => c.id === 'file-download-gerber')!
+      .run(ctx);
+    expect(exportGerberZip).toHaveBeenCalledWith(ctx.doc);
   });
 });
 

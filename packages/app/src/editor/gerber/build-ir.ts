@@ -37,6 +37,7 @@ import type { BooleanEngine, KernelInput, KernelRing } from '../geometry-kernel'
 import { createBooleanEngine } from '../geometry-kernel';
 import { BUILTIN_GEOMETRY_SOURCES } from './extract';
 import { createPatternGeometrySource } from './pattern-source';
+import { UNION_UNRELIABLE_PATTERN_IDS } from './pattern-union-unreliable.generated';
 import type {
   GerberIr,
   GerberRefusal,
@@ -74,6 +75,15 @@ const FILE_POLARITY: Record<IrLayerRole, IrLayer['filePolarity']> = {
 /** Reasons that mean "another extractor owns this", not "this is an error". */
 const HANDOFF_REASONS: ReadonlySet<IrUnsupportedReason> = new Set(['pattern-layer', 'text-layer']);
 
+/**
+ * Pattern ids `path-bool` is measured to corrupt end-to-end (#218). GENERATED
+ * — see pattern-union-unreliable.generated.ts's header. Checked ahead of
+ * extraction (Decision 8: refuse, don't ship a plausible-looking wrong file),
+ * so a corrupted-by-measurement layer never spends time being recorded and
+ * unioned only to have its result discarded.
+ */
+const UNION_UNRELIABLE_PATTERN_ID_SET: ReadonlySet<string> = new Set(UNION_UNRELIABLE_PATTERN_IDS);
+
 const REFUSAL_CODE_FOR_REASON: Record<IrUnsupportedReason, GerberRefusalCode> = {
   'pattern-layer': 'unsupported-layer-type',
   'text-layer': 'unsupported-layer-type',
@@ -97,6 +107,8 @@ const REFUSAL_MESSAGE: Record<GerberRefusalCode, string> = {
     'This design is too dense to export: the boolean pipeline would have to process more geometry than the export can handle.',
   'unsupported-layer-type':
     'No geometry extractor is registered for this layer type, so its artwork cannot be exported.',
+  'pattern-union-unreliable':
+    'The boolean union this export depends on is measured to corrupt this pattern generator — a #206/path-bool backend defect tracked in #218, not a caller bug. Refusing rather than shipping fabrication data already known to be wrong.',
 };
 
 export interface BuildGerberIrOptions {
@@ -115,10 +127,13 @@ export type BuildGerberIrResult =
   | { readonly ok: true; readonly ir: GerberIr }
   | { readonly ok: false; readonly refusals: readonly GerberRefusal[] };
 
+/** What the collector needs to name an offending layer — any `Layer` qualifies. */
+type RefusalLayerRef = { readonly id: string; readonly name: string };
+
 class RefusalCollector {
   private readonly byCode = new Map<GerberRefusalCode, { id: string; name: string }[]>();
 
-  add(code: GerberRefusalCode, layer?: Layer): void {
+  add(code: GerberRefusalCode, layer?: RefusalLayerRef): void {
     const layers = this.byCode.get(code) ?? [];
     if (layer && !layers.some((l) => l.id === layer.id)) {
       layers.push({ id: layer.id, name: layer.name });
@@ -126,7 +141,7 @@ class RefusalCollector {
     this.byCode.set(code, layers);
   }
 
-  addMany(code: GerberRefusalCode, layers: readonly Layer[]): void {
+  addMany(code: GerberRefusalCode, layers: readonly RefusalLayerRef[]): void {
     for (const layer of layers) this.add(code, layer);
     if (layers.length === 0) this.add(code);
   }
@@ -286,6 +301,19 @@ export async function buildGerberIr(
       // Hidden layers never reach extraction and never trigger a refusal —
       // the identical guard every existing manufacturing pass uses.
       if (layer.hidden) continue;
+      // #218: path-bool corrupts the union for this pattern id, measured
+      // end-to-end (pattern-union-unreliable.generated.ts). Checked ahead of
+      // extraction, not folded into extractLayerCubics's hand-off machinery —
+      // this is a product-level "known wrong" refusal (Decision 8), not an
+      // unsupported layer type, and the layer's own extractor would otherwise
+      // happily record and union geometry only for it to be discarded here.
+      if (layer.type === 'pattern' && UNION_UNRELIABLE_PATTERN_ID_SET.has(layer.patternType)) {
+        refusals.add('pattern-union-unreliable', {
+          id: layer.id,
+          name: `${layer.name} (pattern "${layer.patternType}")`,
+        });
+        continue;
+      }
       const result = await extractLayerCubics(layer, sources, ctx);
       if (result.kind === 'unsupported') {
         refusals.add(REFUSAL_CODE_FOR_REASON[result.reason], layer);
