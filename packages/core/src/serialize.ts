@@ -1,13 +1,19 @@
-import { createDefaultDoc, DEFAULT_PANEL_HP } from './default-doc';
+import {
+  createDefaultDoc,
+  DEFAULT_PANEL_FORMAT,
+  DEFAULT_PANEL_HP,
+  DEFAULT_PCB_MATERIAL,
+} from './default-doc';
 import { isGroupNode, MAX_GROUP_DEPTH, normalizeLayerNodeMaterial } from './layer-nodes';
 import {
   createPcbLayerContainer,
   PALETTE,
-  PCB_LAYER_DEFINITIONS,
+  PCB_LAYER_CONTAINER_IDS,
   PCB_LAYER_ROLES,
   pcbLayerRoleForColor,
 } from './palette';
-import { MAX_PANEL_HP, PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
+import { panelHeightMm, type PanelFormat } from './panel-templates';
+import { MAX_PANEL_HP, panelWidthMm } from './panel-sizes';
 import { MAX_PATTERN_SIZE_MM, patternCoverGeometry } from './pattern-geometry';
 import type {
   ColorIndex,
@@ -21,20 +27,26 @@ import type {
   PathPoint,
   PatternLayer,
   PcbLayerRole,
+  PcbLayerSide,
   PcbLayerStack,
+  PcbMaterial,
   ShapeLayer,
   TextLayer,
 } from './types';
 
-// v5 replaces the free ordinary root with the canonical fixed PCB stack.
-export const PANEL_CONFIG_VERSION = 5;
+// v6 adds material, panel format, and the back-side layer stack — and is the
+// ONLY version this build reads. Pre-v6 support was deleted outright, not
+// migrated (epic #226 decision: no users yet, compat cut freely).
+export const PANEL_CONFIG_VERSION = 6;
 
 export interface PanelConfig {
-  version: 5;
+  version: 6;
   app: 'zpd';
-  panel: { hp: number; widthMm: number; heightMm: number };
+  panel: { hp: number; format: PanelFormat; widthMm: number; heightMm: number };
+  material: PcbMaterial;
   palette: string[];
   layers: PcbLayerStack;
+  backLayers: PcbLayerStack;
   guides: Guide[];
 }
 
@@ -44,11 +56,14 @@ export function serializePanelConfig(doc: DocState): PanelConfig {
     app: 'zpd',
     panel: {
       hp: doc.panelHp,
+      format: doc.format,
       widthMm: panelWidthMm(doc.panelHp),
-      heightMm: PANEL_HEIGHT_MM,
+      heightMm: panelHeightMm(doc.format),
     },
+    material: doc.material,
     palette: PALETTE.map((entry) => entry.name),
     layers: doc.layers,
+    backLayers: doc.backLayers,
     guides: doc.guides,
   };
 }
@@ -130,6 +145,14 @@ function parseHp(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
     ? Math.min(value, MAX_PANEL_HP)
     : DEFAULT_PANEL_HP;
+}
+
+function parseFormat(value: unknown): PanelFormat {
+  return value === '1U' || value === '3U' ? value : DEFAULT_PANEL_FORMAT;
+}
+
+function parseMaterial(value: unknown): PcbMaterial {
+  return value === 'fr4' || value === 'alumi' ? value : DEFAULT_PCB_MATERIAL;
 }
 
 function parsePatternGeometry(
@@ -242,9 +265,13 @@ class DeterministicIds {
   private readonly used: Set<string>;
   private readonly remainingOriginals = new Map<string, number>();
 
+  // The default reservation is ALL SIX structural container ids (front +
+  // back): one shared allocator instance covers a whole document, so ordinary
+  // ids can never collide with either stack's containers — or, when seeded
+  // with both stacks' original ids, with ordinary nodes on the other side.
   constructor(
     originalIds: readonly string[],
-    reservedIds: readonly string[] = PCB_LAYER_DEFINITIONS.map((definition) => definition.id),
+    reservedIds: readonly string[] = PCB_LAYER_CONTAINER_IDS,
   ) {
     this.used = new Set(reservedIds);
     for (const id of originalIds) {
@@ -256,15 +283,7 @@ class DeterministicIds {
     const remaining = (this.remainingOriginals.get(wanted) ?? 1) - 1;
     if (remaining > 0) this.remainingOriginals.set(wanted, remaining);
     else this.remainingOriginals.delete(wanted);
-    return this.allocate(wanted, false);
-  }
-
-  claimGenerated(wanted: string): string {
-    return this.allocate(wanted, true);
-  }
-
-  private allocate(wanted: string, protectOriginals: boolean): string {
-    if (!this.used.has(wanted) && (!protectOriginals || !this.remainingOriginals.has(wanted))) {
+    if (!this.used.has(wanted)) {
       this.used.add(wanted);
       return wanted;
     }
@@ -279,26 +298,6 @@ class DeterministicIds {
     this.used.add(allocated);
     return allocated;
   }
-}
-
-type Partitions = Partial<Record<PcbLayerRole, LayerNode>>;
-
-function partitionRoles(node: LayerNode, roles = new Set<PcbLayerRole>()): Set<PcbLayerRole> {
-  if (isGroupNode(node)) {
-    if (node.children.length === 0) roles.add('copper');
-    for (const child of node.children) partitionRoles(child, roles);
-  } else if (
-    node.type === 'image' ||
-    (node.type === 'path' && node.fill === null && node.stroke === null)
-  ) {
-    roles.add('copper');
-  } else if (node.type === 'path') {
-    if (node.fill !== null) roles.add(pcbLayerRoleForColor(node.fill));
-    if (node.stroke !== null) roles.add(pcbLayerRoleForColor(node.stroke));
-  } else {
-    roles.add(pcbLayerRoleForColor(node.color));
-  }
-  return roles;
 }
 
 function firstPaintedRole(node: LayerNode): PcbLayerRole | null {
@@ -318,76 +317,14 @@ function firstPaintedRole(node: LayerNode): PcbLayerRole | null {
   return pcbLayerRoleForColor(node.color);
 }
 
-function partitionLegacyNode(node: LayerNode, ids: DeterministicIds): Partitions {
-  if (!isGroupNode(node)) {
-    if (
-      node.type === 'image' ||
-      (node.type === 'path' && node.fill === null && node.stroke === null)
-    ) {
-      return { copper: { ...node, id: ids.claimOriginal(node.id) } };
-    }
-    if (node.type !== 'path') {
-      const role = pcbLayerRoleForColor(node.color);
-      return { [role]: { ...node, id: ids.claimOriginal(node.id) } };
-    }
-
-    const fillRole = node.fill === null ? null : pcbLayerRoleForColor(node.fill);
-    const strokeRole = node.stroke === null ? null : pcbLayerRoleForColor(node.stroke);
-    if (fillRole === strokeRole) {
-      const role = fillRole ?? 'copper';
-      return { [role]: { ...node, id: ids.claimOriginal(node.id) } };
-    }
-    const result: Partitions = {};
-    if (fillRole) {
-      result[fillRole] = {
-        ...node,
-        id: ids.claimOriginal(node.id),
-        stroke: null,
-      };
-    }
-    if (strokeRole) {
-      result[strokeRole] = {
-        ...node,
-        id: fillRole ? ids.claimGenerated(`${node.id}-${strokeRole}`) : ids.claimOriginal(node.id),
-        fill: null,
-      };
-    }
-    return result;
-  }
-
-  const roles = partitionRoles(node);
-  const keeper = firstPaintedRole(node) ?? 'copper';
-  const groupIds = new Map<PcbLayerRole, string>();
-  for (const role of [keeper, ...PCB_LAYER_ROLES.filter((entry) => entry !== keeper)]) {
-    if (roles.has(role)) {
-      groupIds.set(
-        role,
-        role === keeper ? ids.claimOriginal(node.id) : ids.claimGenerated(`${node.id}-${role}`),
-      );
-    }
-  }
-
-  const childrenByRole = new Map<PcbLayerRole, LayerNode[]>();
-  for (const child of node.children) {
-    const partitions = partitionLegacyNode(child, ids);
-    for (const role of PCB_LAYER_ROLES) {
-      const partition = partitions[role];
-      if (!partition) continue;
-      const children = childrenByRole.get(role) ?? [];
-      children.push(partition);
-      childrenByRole.set(role, children);
-    }
-  }
-
-  const result: Partitions = {};
-  for (const role of roles) {
-    const children = childrenByRole.get(role) ?? [];
-    // A role discovered from paint always has content. Colorless-only and
-    // empty groups intentionally retain their shell in Copper.
-    if (children.length === 0 && !(role === 'copper' && roles.size === 1)) continue;
-    result[role] = { ...node, id: groupIds.get(role)!, children };
-  }
-  return result;
+// Recovery routing for an ordinary node found OUTSIDE a valid role container
+// (an illegal top-level root, or a child of an unknown/malformed wrapper): the
+// whole node lands in ONE container — its first painted role, copper when
+// nothing paints — with materials then forced by membership. Deliberately no
+// per-color splitting: that was the v1–v4 migration partitioner, deleted with
+// the pre-v6 compat cut.
+function recoveryRole(node: LayerNode): PcbLayerRole {
+  return firstPaintedRole(node) ?? 'copper';
 }
 
 function forceNodeMaterial(node: LayerNode, role: PcbLayerRole, ids: DeterministicIds): LayerNode {
@@ -435,16 +372,6 @@ function parseGuides(value: unknown): Guide[] {
   return parsed.map((guide) => ({ ...guide, id: ids.claimOriginal(guide.id) }));
 }
 
-function appendPartitions(
-  buckets: Record<PcbLayerRole, LayerNode[]>,
-  partitions: Partitions,
-): void {
-  for (const role of PCB_LAYER_ROLES) {
-    const node = partitions[role];
-    if (node) buckets[role].push(node);
-  }
-}
-
 function collectOriginalIds(node: LayerNode, output: string[]): void {
   output.push(node.id);
   if (isGroupNode(node)) {
@@ -469,12 +396,16 @@ function recoverableOrdinaryRoots(rawLayers: unknown[], panel: PanelDimsMm): Lay
   return roots;
 }
 
-function parseStack(rawLayers: unknown[], version: number, panel: PanelDimsMm): PcbLayerStack {
-  const originalIds: string[] = [];
-  for (const root of recoverableOrdinaryRoots(rawLayers, panel)) {
-    collectOriginalIds(root, originalIds);
-  }
-  const ids = new DeterministicIds(originalIds);
+// Field-level recovery for ONE side's raw stack. The caller owns the shared
+// DeterministicIds instance — both sides claim from the SAME allocator, so
+// ordinary ids stay unique across the whole document and can never take any
+// of the six structural container ids.
+function parseStack(
+  side: PcbLayerSide,
+  rawLayers: unknown[],
+  panel: PanelDimsMm,
+  ids: DeterministicIds,
+): PcbLayerStack {
   const buckets: Record<PcbLayerRole, LayerNode[]> = {
     copper: [],
     'solder-mask': [],
@@ -482,55 +413,54 @@ function parseStack(rawLayers: unknown[], version: number, panel: PanelDimsMm): 
   };
   const hiddenByRole: Partial<Record<PcbLayerRole, boolean>> = {};
 
-  if (version < PANEL_CONFIG_VERSION) {
-    for (const raw of rawLayers) {
-      const node = parseLayerNode(raw, panel, 0);
-      if (node) appendPartitions(buckets, partitionLegacyNode(node, ids));
+  for (const raw of rawLayers) {
+    if (!isPlainObject(raw)) continue;
+    const ordinary = parseLayerNode(raw, panel, 0);
+    if (ordinary) {
+      const role = recoveryRole(ordinary);
+      buckets[role].push(forceNodeMaterial(ordinary, role, ids));
+      continue;
     }
-  } else {
-    for (const raw of rawLayers) {
-      if (!isPlainObject(raw)) continue;
-      const ordinary = parseLayerNode(raw, panel, 0);
-      if (ordinary) {
-        appendPartitions(buckets, partitionLegacyNode(ordinary, ids));
-        continue;
-      }
 
-      const childrenRaw = Array.isArray(raw.children) ? raw.children : null;
-      if (!childrenRaw) continue;
-      const validRole = PCB_LAYER_ROLES.includes(raw.role as PcbLayerRole)
-        ? (raw.role as PcbLayerRole)
-        : null;
-      if (validRole) {
-        if (hiddenByRole[validRole] === undefined) {
-          hiddenByRole[validRole] = optionalBool(raw.hidden);
-        } else if (raw.hidden === true) {
-          hiddenByRole[validRole] = true;
-        }
-        for (const childRaw of childrenRaw) {
-          const child = parseLayerNode(childRaw, panel, 0);
-          if (child) buckets[validRole].push(forceNodeMaterial(child, validRole, ids));
-        }
-      } else {
-        // Unknown or malformed wrapper: its recoverable ordinary children are
-        // legacy-partitioned rather than discarded.
-        for (const childRaw of childrenRaw) {
-          const child = parseLayerNode(childRaw, panel, 0);
-          if (child) appendPartitions(buckets, partitionLegacyNode(child, ids));
+    const childrenRaw = Array.isArray(raw.children) ? raw.children : null;
+    if (!childrenRaw) continue;
+    const validRole = PCB_LAYER_ROLES.includes(raw.role as PcbLayerRole)
+      ? (raw.role as PcbLayerRole)
+      : null;
+    if (validRole) {
+      if (hiddenByRole[validRole] === undefined) {
+        hiddenByRole[validRole] = optionalBool(raw.hidden);
+      } else if (raw.hidden === true) {
+        hiddenByRole[validRole] = true;
+      }
+      for (const childRaw of childrenRaw) {
+        const child = parseLayerNode(childRaw, panel, 0);
+        if (child) buckets[validRole].push(forceNodeMaterial(child, validRole, ids));
+      }
+    } else {
+      // Unknown or malformed wrapper: its recoverable ordinary children are
+      // rerouted by paint rather than discarded.
+      for (const childRaw of childrenRaw) {
+        const child = parseLayerNode(childRaw, panel, 0);
+        if (child) {
+          const role = recoveryRole(child);
+          buckets[role].push(forceNodeMaterial(child, role, ids));
         }
       }
     }
   }
 
   return PCB_LAYER_ROLES.map((role) =>
-    createPcbLayerContainer(role, buckets[role], hiddenByRole[role]),
+    createPcbLayerContainer(side, role, buckets[role], hiddenByRole[role]),
   ) as PcbLayerStack;
 }
 
 export function parseLayerNodeFragment(input: unknown, hp = DEFAULT_PANEL_HP): LayerNode[] {
   if (!Array.isArray(input)) return [];
   const sanitizedHp = parseHp(hp);
-  const panel = { widthMm: panelWidthMm(sanitizedHp), heightMm: PANEL_HEIGHT_MM };
+  // Fragments carry no format context; the default format's height only
+  // seeds fallback pattern geometry, so the approximation is harmless.
+  const panel = { widthMm: panelWidthMm(sanitizedHp), heightMm: panelHeightMm(DEFAULT_PANEL_FORMAT) };
   const parsed = input
     .map((entry) => parseLayerNode(entry, panel, 0))
     .filter((node): node is LayerNode => node !== null);
@@ -540,67 +470,59 @@ export function parseLayerNodeFragment(input: unknown, hp = DEFAULT_PANEL_HP): L
   return parsed.map((node) => assignOrdinaryIds(node, ids));
 }
 
+// The clipboard envelope's material-tagged ordinary root (see the app's
+// use-clipboard module — core only defines the shared shape).
 export interface MaterialLayerNode {
   material: PcbLayerRole;
   node: LayerNode;
 }
 
-export function parseLegacyLayerFragment(
-  input: unknown,
-  hp = DEFAULT_PANEL_HP,
-): MaterialLayerNode[] {
-  if (!Array.isArray(input)) return [];
-  const sanitizedHp = parseHp(hp);
-  const panel = { widthMm: panelWidthMm(sanitizedHp), heightMm: PANEL_HEIGHT_MM };
-  const parsed = input
-    .map((entry) => parseLayerNode(entry, panel, 0))
-    .filter((node): node is LayerNode => node !== null);
-  const originalIds: string[] = [];
-  for (const node of parsed) collectOriginalIds(node, originalIds);
-  const ids = new DeterministicIds(originalIds);
-  const output: MaterialLayerNode[] = [];
-  for (const node of parsed) {
-    const partitions = partitionLegacyNode(node, ids);
-    for (const material of PCB_LAYER_ROLES) {
-      const partition = partitions[material];
-      if (partition) output.push({ material, node: partition });
-    }
-  }
-  return output;
-}
-
-// Never throws. Invalid non-object input becomes a canonical default document;
-// malformed document fields are recovered independently.
+// Never throws. Anything that is not a v6 payload — a non-object, a pre-v6
+// document, a future version — becomes a canonical default document (the
+// compat cut: pre-v6 is unusable, never half-parsed). Within a v6 payload,
+// malformed fields are recovered independently.
 export function parsePanelConfig(input: unknown): DocState {
-  if (!isPlainObject(input)) return createDefaultDoc();
+  if (!isPlainObject(input) || input.version !== PANEL_CONFIG_VERSION) return createDefaultDoc();
   const panelValue = isPlainObject(input.panel) ? input.panel : undefined;
   const hp = parseHp(input.hp ?? panelValue?.hp);
-  const panel = { widthMm: panelWidthMm(hp), heightMm: PANEL_HEIGHT_MM };
-  const version =
-    typeof input.version === 'number' && Number.isInteger(input.version) ? input.version : 4;
+  const format = parseFormat(panelValue?.format);
+  const panel = { widthMm: panelWidthMm(hp), heightMm: panelHeightMm(format) };
   const rawLayers = Array.isArray(input.layers) ? input.layers : [];
+  const rawBackLayers = Array.isArray(input.backLayers) ? input.backLayers : [];
+
+  // ONE allocator for the whole document: seeded with the original ids of
+  // both stacks (front first), reserving all six structural ids, then handed
+  // to both parseStack calls in that same order — so repeated parses stay
+  // byte-identical and a duplicate id across sides de-duplicates exactly like
+  // a duplicate within one side.
+  const originalIds: string[] = [];
+  for (const raw of [rawLayers, rawBackLayers]) {
+    for (const root of recoverableOrdinaryRoots(raw, panel)) {
+      collectOriginalIds(root, originalIds);
+    }
+  }
+  const ids = new DeterministicIds(originalIds);
+
   return {
     panelHp: hp,
-    layers: parseStack(rawLayers, version, panel),
+    format,
+    material: parseMaterial(input.material),
+    layers: parseStack('front', rawLayers, panel, ids),
+    backLayers: parseStack('back', rawBackLayers, panel, ids),
     guides: parseGuides(input.guides),
   };
 }
 
 export type TryParsePanelConfigResult = { ok: true; doc: DocState } | { ok: false; reason: string };
 
-const MIN_PANEL_CONFIG_VERSION = 1;
-
 export function tryParsePanelConfig(input: unknown): TryParsePanelConfigResult {
   if (!isPlainObject(input)) return { ok: false, reason: 'not an object' };
   if (input.app !== 'zpd') return { ok: false, reason: 'not a zpd panel config (app mismatch)' };
-  const version = input.version;
-  if (
-    typeof version !== 'number' ||
-    !Number.isInteger(version) ||
-    version < MIN_PANEL_CONFIG_VERSION ||
-    version > PANEL_CONFIG_VERSION
-  ) {
-    return { ok: false, reason: 'unsupported or missing version' };
+  if (input.version !== PANEL_CONFIG_VERSION) {
+    return {
+      ok: false,
+      reason: `unsupported or missing version (this build reads only v${PANEL_CONFIG_VERSION})`,
+    };
   }
   if (!Array.isArray(input.layers)) return { ok: false, reason: 'missing layers array' };
   return { ok: true, doc: parsePanelConfig(input) };

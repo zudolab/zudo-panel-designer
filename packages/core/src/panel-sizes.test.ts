@@ -49,7 +49,7 @@ describe('PANEL_THICKNESS_MM', () => {
   it('remains derived product data outside the persisted document schema', () => {
     const config = serializePanelConfig(createDefaultDoc());
 
-    expect(Object.keys(config.panel).sort()).toEqual(['heightMm', 'hp', 'widthMm']);
+    expect(Object.keys(config.panel).sort()).toEqual(['format', 'heightMm', 'hp', 'widthMm']);
     expect(JSON.stringify(config)).not.toContain('thicknessMm');
   });
 });
