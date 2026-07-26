@@ -6,6 +6,7 @@
 // and replaceDoc has its own (replace-doc.test.ts).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   PANEL_CONFIG_VERSION,
   serializePanelConfig,
@@ -111,7 +112,12 @@ describe('importDroppedFile — dispatch by type', () => {
 
   it('routes a .json file into the JSON import path', async () => {
     const ctx = stubCtx();
-    const doc: DocState = { panelHp: 6, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 6,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     const file = jsonFile(serializePanelConfig(doc));
     vi.mocked(confirmDialog).mockResolvedValue(true);
 
@@ -123,7 +129,12 @@ describe('importDroppedFile — dispatch by type', () => {
 
   it('routes a .json file with an empty MIME type into the JSON import path, not the image path (codex-caught regression)', async () => {
     const ctx = stubCtx();
-    const doc: DocState = { panelHp: 6, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 6,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     const file = new File([JSON.stringify(serializePanelConfig(doc))], 'panel.json', { type: '' });
     vi.mocked(confirmDialog).mockResolvedValue(true);
 
@@ -149,7 +160,12 @@ describe('importDroppedFile — dispatch by type', () => {
 describe('importJsonFile — strict validation, confirm-gated replace', () => {
   it('imports a valid panel config after confirming, and shows a success toast', async () => {
     const ctx = stubCtx();
-    const doc: DocState = { panelHp: 6, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 6,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     vi.mocked(confirmDialog).mockResolvedValue(true);
 
     await importJsonFile(jsonFile(serializePanelConfig(doc)), ctx);
@@ -165,7 +181,12 @@ describe('importJsonFile — strict validation, confirm-gated replace', () => {
 
   it('does not replace the doc when the user cancels the confirm dialog', async () => {
     const ctx = stubCtx();
-    const doc: DocState = { panelHp: 6, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 6,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     vi.mocked(confirmDialog).mockResolvedValue(false);
 
     await importJsonFile(jsonFile(serializePanelConfig(doc)), ctx);

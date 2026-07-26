@@ -85,16 +85,20 @@ describe('v2 autosave envelope', () => {
 });
 
 describe('legacy autosave promotion', () => {
-  it('promotes a validated v1-v4 config to the new key and retains the old key', () => {
+  it('no longer promotes a v1-v4 legacy entry: pre-v6 is rejected cleanly, bytes retained (schema-v6 compat cut)', () => {
+    // Core's strict parse now rejects every pre-v6 config, so the legacy
+    // entry reads as unsupported: readDoc() returns null (boot falls back to
+    // a fresh doc) and the legacy bytes stay protected on their own key.
+    // doc-store's own v6 rework lands in #229; this pins the interim
+    // behavior.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const oldRaw = JSON.stringify({ version: 1, savedAt: 1, config: legacyConfig });
     window.localStorage.setItem(LEGACY_DOC_STORAGE_KEY, oldRaw);
-    const doc = readDoc();
 
-    expect(doc?.layers[0].children[0]).toMatchObject({ id: 'legacy-gold', color: 1 });
+    expect(readDoc()).toBeNull();
     expect(window.localStorage.getItem(LEGACY_DOC_STORAGE_KEY)).toBe(oldRaw);
-    const promoted = JSON.parse(window.localStorage.getItem(DOC_STORAGE_KEY)!);
-    expect(promoted.version).toBe(DOC_STORAGE_VERSION);
-    expect(promoted.config.version).toBe(PANEL_CONFIG_VERSION);
+    expect(window.localStorage.getItem(DOC_STORAGE_KEY)).toBeNull();
+    expect(warn).toHaveBeenCalled();
   });
 
   it('does not promote or expose legacy data when the new write fails', () => {

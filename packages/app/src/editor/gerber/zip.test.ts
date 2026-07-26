@@ -4,6 +4,7 @@
 // same spirit as writer.test.ts's byte-exact Gerber assertions.
 import { loadTestFontFile } from './test-font-loader';
 import {
+  createDefaultDoc,
   createPcbLayerContainer,
   type DocState,
   type PathLayer,
@@ -108,7 +109,7 @@ function fixtureDoc(): DocState {
     createPcbLayerContainer('solder-mask', []),
     createPcbLayerContainer('silkscreen', [shapeSilkscreen(), textSilkscreen()]),
   ];
-  return { panelHp: HP, layers, guides: [] };
+  return { ...createDefaultDoc(), panelHp: HP, layers, guides: [] };
 }
 
 const OPTIONS: GerberEmitOptions = {
@@ -145,7 +146,7 @@ describe('gerberZipBytes — a document with shape + path + text + pattern layer
 });
 
 describe('gerberZipFilename', () => {
-  it('matches download.ts\'s zpd-panel-<hp>hp.json pattern (Decision 2.2)', () => {
+  it("matches download.ts's zpd-panel-<hp>hp.json pattern (Decision 2.2)", () => {
     expect(gerberZipFilename(12)).toBe('zpd-panel-12hp-gerber.zip');
   });
 });
@@ -169,7 +170,7 @@ describe('gerberReadmeText (Decision 2.2 / 2.4)', () => {
     expect(text).toContain('No Excellon drill file');
   });
 
-  it('is LF-terminated, no CRLF (Decision 3.4\'s line-ending discipline; README.txt is free text, not a Gerber body, so Unicode punctuation like the statement\'s em dash is fine)', () => {
+  it("is LF-terminated, no CRLF (Decision 3.4's line-ending discipline; README.txt is free text, not a Gerber body, so Unicode punctuation like the statement's em dash is fine)", () => {
     const text = gerberReadmeText(ir);
     expect(text).not.toContain('\r');
     expect(text.endsWith('\n')).toBe(true);

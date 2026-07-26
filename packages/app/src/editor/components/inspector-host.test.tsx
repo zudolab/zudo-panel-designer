@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactElement } from 'react';
 import { cleanup, render, screen } from '@testing-library/react';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   type DocState,
   type GroupNode,
@@ -72,6 +73,7 @@ describe('InspectorHost onChange (#150)', () => {
     const rootSibling = shape('root-sibling');
     const innerSibling = shape('inner-sibling');
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({
@@ -100,6 +102,7 @@ describe('InspectorHost onChange (#150)', () => {
     registerInspector('shape', MockShapeInspector);
     const leaf = shape('deep');
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [group('g', [leaf])] }),
@@ -120,6 +123,7 @@ describe('InspectorHost onChange (#150)', () => {
     registerInspector('shape', MockShapeInspector);
     const staleLeaf = shape('moving');
     const staleDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [staleLeaf] }),

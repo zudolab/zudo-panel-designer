@@ -8,7 +8,7 @@
 // buildGerberIr/engine for its refusal-dialog test) because this file mocks
 // buildGerberIr itself to force the rejection deterministically.
 import { cleanup } from '@testing-library/react';
-import { createPcbLayerStack, type DocState } from '@zpd/core';
+import { createDefaultDoc, createPcbLayerStack, type DocState } from '@zpd/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CONFIRM_DIALOG_ID, type ConfirmDialogProps } from './components/confirm-dialog';
 import { closeDialog, getOpenDialog } from './registry/dialogs';
@@ -32,7 +32,12 @@ describe('exportGerberZip — an unexpected pipeline failure never becomes a sil
     const { exportGerberZip } = await import('./download');
     const { toastError } = await import('./registry/toasts');
 
-    const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     const flow = exportGerberZip(doc);
 
     // Confirm the artwork-only gate, same as a real "Export .zip" click.

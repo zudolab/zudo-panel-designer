@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
+  createDefaultDoc,
   commit as coreCommit,
   createHistory,
   createPcbLayerStack,
@@ -37,6 +38,7 @@ function rect(id: string, x: number, y: number, w = 10, h = 10): ShapeLayer {
 // why the epoch has to move at call time, not at React's flush).
 function makeHarness(layers: LayerNode[], selectedIds: readonly string[]) {
   let history: HistoryState<DocState> = createHistory({
+    ...createDefaultDoc(),
     panelHp: 12,
     guides: [],
     layers: createPcbLayerStack({ copper: layers }),
@@ -97,9 +99,7 @@ describe('PathfinderPanel — enable/disable per the min-input table (#208)', ()
     const { ctx } = makeHarness([], []);
     render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={[]} />);
     for (const op of PATHFINDER_OPS) {
-      expect(isDisabled(screen.getByRole('button', { name: PATHFINDER_OP_LABELS[op] }))).toBe(
-        true,
-      );
+      expect(isDisabled(screen.getByRole('button', { name: PATHFINDER_OP_LABELS[op] }))).toBe(true);
     }
   });
 
@@ -155,11 +155,13 @@ describe('PathfinderPanel — enable/disable per the min-input table (#208)', ()
   // instead (Editor's own committed-state React value, never ref-lagged).
   it("gates on the doc PROP, not ctx.doc — correct even while ctx.doc is stale (Editor's real lag pattern)", () => {
     const staleDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [] }),
     };
     const freshDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [rect('r1', 0, 0), rect('r2', 5, 5)] }),
@@ -194,18 +196,21 @@ describe('PathfinderPanel — enable/disable per the min-input table (#208)', ()
 });
 
 describe('PathfinderPanel — wired to the real runner (not a hand-rolled dispatch)', () => {
-  it.each(PATHFINDER_OPS)('clicking %s commits exactly once through createPathfinderRunner', async (op) => {
-    const { ctx, getHistory } = makeHarness([rect('a', 0, 0), rect('b', 5, 5)], ['a', 'b']);
-    render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={['a', 'b']} />);
+  it.each(PATHFINDER_OPS)(
+    'clicking %s commits exactly once through createPathfinderRunner',
+    async (op) => {
+      const { ctx, getHistory } = makeHarness([rect('a', 0, 0), rect('b', 5, 5)], ['a', 'b']);
+      render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={['a', 'b']} />);
 
-    fireEvent.click(screen.getByRole('button', { name: PATHFINDER_OP_LABELS[op] }));
+      fireEvent.click(screen.getByRole('button', { name: PATHFINDER_OP_LABELS[op] }));
 
-    // Real geometry is async (lazy `import('path-bool')`) — wait for the
-    // runner's single commit to land rather than asserting synchronously.
-    await waitFor(() => expect(getHistory().past).toHaveLength(1));
-    // One commit, not a click-per-commit accumulation from a re-render loop.
-    expect(getHistory().past).toHaveLength(1);
-  });
+      // Real geometry is async (lazy `import('path-bool')`) — wait for the
+      // runner's single commit to land rather than asserting synchronously.
+      await waitFor(() => expect(getHistory().past).toHaveLength(1));
+      // One commit, not a click-per-commit accumulation from a re-render loop.
+      expect(getHistory().past).toHaveLength(1);
+    },
+  );
 
   it('a disabled button does not dispatch (no commit) — under-minimum selection', async () => {
     const { ctx, getHistory } = makeHarness([rect('a', 0, 0)], ['a']);
@@ -222,10 +227,7 @@ describe('PathfinderPanel — wired to the real runner (not a hand-rolled dispat
 
   it('a click that produces an empty result (no-op) surfaces a toast instead of silently doing nothing', async () => {
     // Two disjoint rects, far apart — Intersect's true result is empty.
-    const { ctx, getHistory } = makeHarness(
-      [rect('a', 0, 0), rect('b', 1000, 1000)],
-      ['a', 'b'],
-    );
+    const { ctx, getHistory } = makeHarness([rect('a', 0, 0), rect('b', 1000, 1000)], ['a', 'b']);
     render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={['a', 'b']} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Intersect' }));

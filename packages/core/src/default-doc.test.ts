@@ -16,6 +16,18 @@ describe('createDefaultDoc', () => {
     expect(layer.color).toBe(1);
   });
 
+  it('defaults to FR4 in 3U format with an empty back stack', () => {
+    const doc = createDefaultDoc();
+    expect(doc.material).toBe('fr4');
+    expect(doc.format).toBe('3U');
+    expect(doc.backLayers.map((container) => container.id)).toEqual([
+      'pcb-layer-back-copper',
+      'pcb-layer-back-solder-mask',
+      'pcb-layer-back-silkscreen',
+    ]);
+    expect(doc.backLayers.every((container) => container.children.length === 0)).toBe(true);
+  });
+
   it('gives the default pattern layer explicit cover geometry via the shared helper (#96)', () => {
     const [layer] = createDefaultDoc().layers[0].children;
     if (!layer || 'kind' in layer || layer.type !== 'pattern') throw new Error('unreachable');

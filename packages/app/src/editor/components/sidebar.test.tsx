@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   projectPcbLayerStack as projectFlatLayers,
   type GroupNode,
@@ -137,6 +138,7 @@ describe('Sidebar — Layers section lifecycle', () => {
   it('renders the committed doc stack immediately even when the live ctx ref is one render behind', () => {
     const moved: ShapeLayer = { ...LAYER, id: 'moved', name: 'Moved to silk', color: 2 };
     const committedDoc = {
+      ...createDefaultDoc(),
       panelHp: 12,
       layers: createPcbLayerStack({ silkscreen: [moved] }),
       guides: GUIDES,

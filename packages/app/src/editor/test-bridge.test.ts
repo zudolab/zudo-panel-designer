@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
-import { createPcbLayerStack, type DocState, type HistoryState, type ShapeLayer } from '@zpd/core';
+import {
+  createDefaultDoc,
+  createPcbLayerStack,
+  type DocState,
+  type HistoryState,
+  type ShapeLayer,
+} from '@zpd/core';
 import { createPreviewDebugPublisher } from './preview/debug-state';
 import type { PreviewDebugSummary } from './preview/contracts';
 import { installTestBridge } from './test-bridge';
@@ -11,7 +17,12 @@ afterEach(() => {
 
 describe('preview test bridge', () => {
   it('exposes only frozen read-only preview observations and returns zero after close', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     const history = { past: [], present: doc, future: [] } as HistoryState<DocState>;
     const publisher = createPreviewDebugPublisher();
     const summary: PreviewDebugSummary = {
@@ -76,6 +87,7 @@ describe('layer tree bridge (#150)', () => {
 
   it('getLayers folds ancestor-hidden, getLayerTree keeps raw structure, getLayerCount counts leaves', () => {
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({

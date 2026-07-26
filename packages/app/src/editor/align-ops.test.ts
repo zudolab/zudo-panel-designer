@@ -5,6 +5,7 @@
 // silently re-hardcode 2/3 and drift from core's alignLayers/distributeLayers.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   MIN_ALIGN_SELECTION,
   MIN_DISTRIBUTE_SELECTION,
@@ -62,6 +63,7 @@ describe('rotated text uses canonical loaded bounds for alignment (#111)', () =>
       color: 1,
     };
     let doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 20,
       guides: [],
       layers: createPcbLayerStack({ copper: [text] }),

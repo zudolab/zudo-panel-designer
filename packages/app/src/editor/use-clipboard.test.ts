@@ -409,7 +409,7 @@ describe('useClipboard — Cmd/Ctrl+D duplicate', () => {
   });
 });
 
-describe('useClipboard — group-aware copy/cut/paste (v2 envelope, #156)', () => {
+describe('useClipboard — group-aware copy/cut/paste (#156)', () => {
   it('copy a group -> paste yields a group subtree with all-fresh unique ids and the cascade applied to every leaf', () => {
     const g = groupNode('G', [shapeLayer, textLayer]);
     const doc = baseDoc([]);
@@ -485,22 +485,23 @@ describe('useClipboard — group-aware copy/cut/paste (v2 envelope, #156)', () =
     expect(pasted.children).toHaveLength(2);
   });
 
-  it('a v1 (flat-leaves) envelope still pastes — a flat array is a valid LayerNode[]', () => {
-    const envelopeText = JSON.stringify({
-      app: 'zpd',
-      kind: 'layers',
-      version: 1,
-      layers: [shapeLayer],
-    });
-    const doc = baseDoc([]);
-    const ctx = createCtx(doc, []);
-    renderHook(() => useClipboard(ctx));
+  it('a retired pre-v3 envelope (v1/v2) is rejected — the legacy partitioner died with the schema-v6 compat cut', () => {
+    for (const version of [1, 2]) {
+      const envelopeText = JSON.stringify({
+        app: 'zpd',
+        kind: 'layers',
+        version,
+        layers: [shapeLayer],
+      });
+      const doc = baseDoc([]);
+      const ctx = createCtx(doc, []);
+      const { unmount } = renderHook(() => useClipboard(ctx));
 
-    act(() => dispatchPaste(window, { text: envelopeText }));
+      act(() => dispatchPaste(window, { text: envelopeText }));
 
-    expect(ctx.commit).toHaveBeenCalledTimes(1);
-    const pasted = projectFlatLayers(ctx.doc.layers).find((l) => l.type !== 'pattern');
-    expect(pasted).toMatchObject({ type: 'shape', x: shapeLayer.x + 2, y: shapeLayer.y + 2 });
+      expect(ctx.commit).not.toHaveBeenCalled();
+      unmount();
+    }
   });
 
   it('an over-deep envelope (past MAX_GROUP_DEPTH) is defended at the parse boundary — pastes the pruned survivor, never crashes', () => {
@@ -508,7 +509,7 @@ describe('useClipboard — group-aware copy/cut/paste (v2 envelope, #156)', () =
     // MAX_GROUP_DEPTH + 2 nested groups so the innermost leaf sits one level
     // past the cap. parseEnvelope reuses parsePanelConfig's node parser
     // unchanged, so this is the same defense proven there — exercised here
-    // through the clipboard paste path specifically, since a v2 envelope now
+    // through the clipboard paste path specifically, since a v3 envelope
     // carries real group structure that could otherwise slip a too-deep
     // subtree straight into the doc.
     let innermost: LayerNode = {
@@ -528,8 +529,8 @@ describe('useClipboard — group-aware copy/cut/paste (v2 envelope, #156)', () =
     const envelopeText = JSON.stringify({
       app: 'zpd',
       kind: 'layers',
-      version: 2,
-      layers: [innermost],
+      version: 3,
+      layers: [{ material: 'copper', node: innermost }],
     });
     const doc = baseDoc([]);
     const ctx = createCtx(doc, []);
@@ -553,12 +554,12 @@ describe('useClipboard — group-aware copy/cut/paste (v2 envelope, #156)', () =
     expect(cursor).toBeUndefined(); // the one-past-cap group (and its leaf) was dropped
   });
 
-  it('a foreign/future envelope version (3) is rejected — returns null, never crashes', () => {
+  it('a foreign/future envelope version (4) is rejected — returns null, never crashes', () => {
     const envelopeText = JSON.stringify({
       app: 'zpd',
       kind: 'layers',
-      version: 3,
-      layers: [shapeLayer],
+      version: 4,
+      layers: [{ material: 'copper', node: shapeLayer }],
     });
     const doc = baseDoc([]);
     const ctx = createCtx(doc, []);
@@ -568,15 +569,15 @@ describe('useClipboard — group-aware copy/cut/paste (v2 envelope, #156)', () =
     expect(ctx.commit).not.toHaveBeenCalled();
   });
 
-  // codex review finding: a fractional version (e.g. 1.5) sat inside the
-  // numeric 1..2 range check but is neither supported schema — it must be
-  // rejected like any other unrecognized version, not silently accepted.
+  // codex review finding (pre-v3-only): a fractional version once sat inside
+  // a numeric range check. Strict equality rejects it by construction now —
+  // kept as a regression guard should the check ever loosen again.
   it('a non-integer envelope version (1.5) is rejected — returns null, never crashes', () => {
     const envelopeText = JSON.stringify({
       app: 'zpd',
       kind: 'layers',
       version: 1.5,
-      layers: [shapeLayer],
+      layers: [{ material: 'copper', node: shapeLayer }],
     });
     const doc = baseDoc([]);
     const ctx = createCtx(doc, []);
@@ -739,8 +740,8 @@ describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
       const staleEnvelope = JSON.stringify({
         app: 'zpd',
         kind: 'layers',
-        version: 1,
-        layers: [textLayer],
+        version: 3,
+        layers: [{ material: 'silkscreen', node: textLayer }],
       });
       act(() => dispatchPaste(window, { text: staleEnvelope }));
 
@@ -785,8 +786,8 @@ describe('useClipboard — handleCopy writes the versioned OS envelope', () => {
       const envelopeA = JSON.stringify({
         app: 'zpd',
         kind: 'layers',
-        version: 1,
-        layers: [shapeLayer],
+        version: 3,
+        layers: [{ material: 'copper', node: shapeLayer }],
       });
       act(() => dispatchPaste(window, { text: envelopeA }));
 
@@ -833,8 +834,8 @@ describe('useClipboard — paste priority: image > envelope > internal', () => {
     const envelopeText = JSON.stringify({
       app: 'zpd',
       kind: 'layers',
-      version: 1,
-      layers: [shapeLayer],
+      version: 3,
+      layers: [{ material: 'copper', node: shapeLayer }],
     });
 
     const doc = baseDoc([textLayer]);
@@ -1007,8 +1008,8 @@ describe('useClipboard — pattern layers in envelopes (#97)', () => {
     const envelopeText = JSON.stringify({
       app: 'zpd',
       kind: 'layers',
-      version: 1,
-      layers: [patternLayer],
+      version: 3,
+      layers: [{ material: 'copper', node: patternLayer }],
     });
 
     const doc = baseDoc([]);
@@ -1040,8 +1041,8 @@ describe('useClipboard — envelope layer validation', () => {
     const envelopeText = JSON.stringify({
       app: 'zpd',
       kind: 'layers',
-      version: 1,
-      layers: [{ id: 'p', type: 'path' }],
+      version: 3,
+      layers: [{ material: 'copper', node: { id: 'p', type: 'path' } }],
     });
 
     expect(() => act(() => dispatchPaste(window, { text: envelopeText }))).not.toThrow();

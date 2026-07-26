@@ -65,7 +65,12 @@ const text = getTool('text')!;
 
 describe('text tool — click to place', () => {
   it('inserts a TextLayer at the click point, commits once, then selects it and switches to select', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     const ctx = stubCtx(doc);
 
     text.onPointerDown?.(ptr({ x: 12, y: 34 }), ctx);
@@ -101,6 +106,7 @@ describe('text tool — click to place', () => {
       color: 2,
     };
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ silkscreen: [existing] }),
@@ -140,6 +146,7 @@ describe('text tool — selection-relative placement (#191)', () => {
       color: 1,
     };
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [anchor] }),

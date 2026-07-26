@@ -4,7 +4,7 @@
 // never fires Image onload/onerror for a data: URL — so the natural-size
 // probe is stubbed here to drive the async decode deterministically.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPcbLayerStack } from '@zpd/core';
+import { createDefaultDoc, createPcbLayerStack } from '@zpd/core';
 import type { Pt } from '@zpd/core';
 import { importImageFile } from './import-image';
 import { projectFlatLayers } from './flat-projection';
@@ -116,7 +116,12 @@ describe('importImageFile', () => {
       color: 1 as const,
     };
     const ctx = stubCtx({
-      doc: { panelHp: 12, guides: [], layers: createPcbLayerStack({ copper: [existing] }) },
+      doc: {
+        ...createDefaultDoc(),
+        panelHp: 12,
+        guides: [],
+        layers: createPcbLayerStack({ copper: [existing] }),
+      },
     });
     const file = new File(['bytes'], 'a.png', { type: 'image/png' });
 
@@ -170,6 +175,7 @@ describe('importImageFile — selection-relative placement (#191)', () => {
     };
     const ctx = stubCtx({
       doc: {
+        ...createDefaultDoc(),
         panelHp: 12,
         guides: [],
         layers: createPcbLayerStack({ 'solder-mask': [anchor] }),

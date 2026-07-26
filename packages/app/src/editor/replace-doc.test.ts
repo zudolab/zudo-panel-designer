@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   type DocState,
   type ImageLayer,
@@ -61,6 +62,7 @@ describe('replaceDoc', () => {
   it('resets history with the next doc instead of committing (does not push an undo entry)', () => {
     const ctx = stubCtx();
     const nextDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 6,
       guides: [],
       layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }),
@@ -76,13 +78,17 @@ describe('replaceDoc', () => {
 
   it('clears the selection', () => {
     const ctx = stubCtx({ selectedIds: ['stale-1'] });
-    replaceDoc({ panelHp: 6, guides: [], layers: createPcbLayerStack() }, ctx);
+    replaceDoc(
+      { ...createDefaultDoc(), panelHp: 6, guides: [], layers: createPcbLayerStack() },
+      ctx,
+    );
     expect(ctx.selectIds).toHaveBeenCalledWith([]);
   });
 
   it('reconciles the image cache against the next doc layers', () => {
     const ctx = stubCtx();
     const nextDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 6,
       guides: [],
       layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }),
@@ -118,6 +124,7 @@ describe('replaceDoc', () => {
 
     const nextLayer = { ...oldLayer, name: 'New' };
     const nextDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 6,
       guides: [],
       layers: createPcbLayerStack({ copper: [nextLayer] }),

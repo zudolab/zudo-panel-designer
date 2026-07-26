@@ -1,4 +1,5 @@
 import {
+  createDefaultDoc,
   createPcbLayerContainer,
   PANEL_HEIGHT_MM,
   panelWidthMm,
@@ -41,7 +42,7 @@ function doc(
     createPcbLayerContainer('solder-mask', children['solder-mask'] ?? [], options.maskHidden),
     createPcbLayerContainer('silkscreen', children.silkscreen ?? []),
   ];
-  return { panelHp: options.panelHp ?? HP, layers, guides: [] };
+  return { ...createDefaultDoc(), panelHp: options.panelHp ?? HP, layers, guides: [] };
 }
 
 function rect(over: Partial<ShapeLayer> & { id: string }): ShapeLayer {

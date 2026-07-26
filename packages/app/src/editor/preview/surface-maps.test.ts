@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   PALETTE,
   PANEL_HEIGHT_MM,
@@ -1012,6 +1013,7 @@ describe('flat projection parity (#150)', () => {
     });
     const leaves = [rect('s1', 4), rect('s2', 20), rect('s3', 36)];
     const flatDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ silkscreen: [...leaves] }),
@@ -1026,6 +1028,7 @@ describe('flat projection parity (#150)', () => {
       },
     ];
     const groupedDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ silkscreen: groupedLayers }),
