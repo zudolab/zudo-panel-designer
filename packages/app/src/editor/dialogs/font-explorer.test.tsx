@@ -5,7 +5,7 @@
 // pagination sentinel by hand. Card fonts therefore stay in their fallback
 // face — we assert wiring (filtering, paging, apply, favorites), not glyphs.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPcbLayerStack } from '@zpd/core';
+import { createDefaultDoc, createPcbLayerStack } from '@zpd/core';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { DocState, Pt, TextLayer } from '@zpd/core';
 import type { GoogleFontEntry } from '../data/google-fonts-types';
@@ -143,6 +143,7 @@ const textLayer: TextLayer = {
 
 function renderDialog(overrides: Partial<ToolContext> = {}, close = vi.fn()) {
   const doc: DocState = {
+    ...createDefaultDoc(),
     panelHp: 12,
     guides: [],
     layers: createPcbLayerStack({ silkscreen: [textLayer] }),
@@ -322,6 +323,7 @@ describe('font-explorer dialog', () => {
     'is a no-op (no commit) when the already-applied family is clicked, but still closes',
     () => {
       const doc: DocState = {
+        ...createDefaultDoc(),
         panelHp: 12,
         guides: [],
         layers: createPcbLayerStack({ silkscreen: [{ ...textLayer, fontFamily: 'ABeeZee' }] }),
@@ -346,6 +348,7 @@ describe('font-explorer dialog', () => {
       // ABeeZee is the first catalog entry; make it the layer's font so its card
       // is on the first page and flagged active.
       const doc: DocState = {
+        ...createDefaultDoc(),
         panelHp: 12,
         guides: [],
         layers: createPcbLayerStack({ silkscreen: [{ ...textLayer, fontFamily: 'ABeeZee' }] }),

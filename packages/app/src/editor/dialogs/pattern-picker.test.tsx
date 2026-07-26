@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   patternCoverGeometry,
   type DocState,
@@ -108,6 +109,7 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
       size: 30,
     };
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [existing] }),
@@ -154,6 +156,7 @@ describe('pattern-picker dialog — swap (opened with layerId)', () => {
       size: 20,
     };
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [target1], silkscreen: [other] }),
@@ -183,6 +186,7 @@ describe('pattern-picker dialog — add (opened without layerId)', () => {
       size: 128.5,
     };
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [existing] }),
@@ -231,6 +235,7 @@ describe('pattern-picker dialog — add, selection-relative placement (#191)', (
       color: 0 as const,
     };
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ 'solder-mask': [anchor] }),

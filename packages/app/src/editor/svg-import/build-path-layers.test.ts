@@ -1,6 +1,7 @@
 // Pure math -- runs in the default node test environment (no jsdom needed).
 import { describe, expect, it } from 'vitest';
 import {
+  createDefaultDoc,
   DEFAULT_PANEL_HP,
   createPcbLayerStack,
   panelWidthMm,
@@ -519,6 +520,7 @@ describe('buildPathLayers -- serialize round trip', () => {
     if (!result.ok) return;
 
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: DEFAULT_PANEL_HP,
       layers: createPcbLayerStack({
         copper: result.layers.filter((layer) => layer.fill === GOLD || layer.stroke === GOLD),

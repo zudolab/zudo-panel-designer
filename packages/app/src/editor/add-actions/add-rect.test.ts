@@ -5,7 +5,13 @@
 // directly above the selected object, following that object's own container.
 import { describe, expect, it, vi } from 'vitest';
 import './add-rect'; // registers 'add-rect' as a side effect
-import { createPcbLayerStack, type DocState, type Pt, type ShapeLayer } from '@zpd/core';
+import {
+  createDefaultDoc,
+  createPcbLayerStack,
+  type DocState,
+  type Pt,
+  type ShapeLayer,
+} from '@zpd/core';
 import { allAddActions } from '../registry/add-actions';
 import { projectFlatLayers } from '../flat-projection';
 import type { ToolContext } from '../types';
@@ -54,7 +60,12 @@ describe('add-rect action — nothing selected (#191 default routing)', () => {
       color: 1,
     };
     const ctx = stubCtx({
-      doc: { panelHp: 12, guides: [], layers: createPcbLayerStack({ copper: [existing] }) },
+      doc: {
+        ...createDefaultDoc(),
+        panelHp: 12,
+        guides: [],
+        layers: createPcbLayerStack({ copper: [existing] }),
+      },
     });
 
     getAddRectAction().run(ctx);
@@ -84,6 +95,7 @@ describe('add-rect action — selection-relative placement (#191)', () => {
     };
     const ctx = stubCtx({
       doc: {
+        ...createDefaultDoc(),
         panelHp: 12,
         guides: [],
         layers: createPcbLayerStack({ 'solder-mask': [anchor] }),
@@ -129,6 +141,7 @@ describe('add-rect action — selection-relative placement (#191)', () => {
     };
     const ctx = stubCtx({
       doc: {
+        ...createDefaultDoc(),
         panelHp: 12,
         guides: [],
         layers: createPcbLayerStack({ copper: [copperAnchor], silkscreen: [silkscreenAnchor] }),

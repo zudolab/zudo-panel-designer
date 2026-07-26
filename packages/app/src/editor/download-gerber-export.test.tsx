@@ -10,7 +10,7 @@
 // buildGerberIr, real confirm-dialog.tsx props shape) without needing a
 // forbidden headless-browser pass.
 import { cleanup, render, screen } from '@testing-library/react';
-import { createPcbLayerStack, type DocState } from '@zpd/core';
+import { createDefaultDoc, createPcbLayerStack, type DocState } from '@zpd/core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CONFIRM_DIALOG_ID, type ConfirmDialogProps } from './components/confirm-dialog';
 import { closeDialog, getOpenDialog } from './registry/dialogs';
@@ -30,7 +30,12 @@ function confirmGateProps(): ConfirmDialogProps {
 
 describe('exportGerberZip — the artwork-only statement (Decision 2.4)', () => {
   it('is shown, word for word, BEFORE downloadGerberZip/buildGerberIr ever runs', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     // Not awaited: confirmDialog()'s openDialog() call is synchronous, and
     // nothing past it (buildGerberIr, the engine) has started yet — this
     // assertion needs none of that machinery.
@@ -43,7 +48,12 @@ describe('exportGerberZip — the artwork-only statement (Decision 2.4)', () => 
   });
 
   it('a Cancel click aborts before any export happens (no refusal/success dialog follows)', async () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     const flow = exportGerberZip(doc);
     // Cancel/Escape/backdrop all resolve confirmDialog() to false via the
     // SAME mechanism (registry/dialogs.ts identity check) — closeDialog()
@@ -58,7 +68,12 @@ describe('exportGerberZip — refusals are a loud dialog naming the offending la
   it('names the unlisted-panel-hp refusal once the export is confirmed', async () => {
     // panelHp 7 has no PANEL_SIZES entry (Decision 8) — an empty layer stack
     // keeps buildGerberIr's own work (beyond engine construction) minimal.
-    const doc: DocState = { panelHp: 7, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 7,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     const flow = exportGerberZip(doc);
 
     // Confirm the artwork-only gate exactly as a real "Export .zip" click

@@ -5,7 +5,7 @@
 // commands.test.ts.
 import '../registry';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPcbLayerStack } from '@zpd/core';
+import { createDefaultDoc, createPcbLayerStack } from '@zpd/core';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Pt } from '@zpd/core';
 import { type CommandContext, type CommandDef } from '../commands';
@@ -298,6 +298,7 @@ describe('command-palette dialog', () => {
   it('clicking "Group" with 2 selected leaves groups them and closes', () => {
     const ctx = stubCommandCtx({
       doc: {
+        ...createDefaultDoc(),
         panelHp: 12,
         guides: [],
         layers: createPcbLayerStack({
@@ -344,7 +345,7 @@ describe('command-palette dialog', () => {
 
   it('"Ungroup" is listed disabled (aria-disabled) when nothing selected is a group', () => {
     const ctx = stubCommandCtx({
-      doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() },
+      doc: { ...createDefaultDoc(), panelHp: 12, guides: [], layers: createPcbLayerStack() },
       selectedIds: [],
     });
     const CommandPaletteDialog = getCommandPaletteDialog();

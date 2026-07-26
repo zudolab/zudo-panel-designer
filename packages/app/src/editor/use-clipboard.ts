@@ -12,18 +12,16 @@
 // 'layers', version:3, layers:[{material,node}, ...]} — written on copy/cut via
 // navigator.clipboard.writeText and read back on paste from the
 // ClipboardEvent's clipboardData, so copy/paste round-trips across zpd tabs
-// (and a payload from an unrelated app, or a future envelope version, is
+// (and a payload from an unrelated app, or any other envelope version, is
 // simply ignored rather than crashing the paste).
 //
 // v3 (#167, fixed PCB stack): `layers` material-tags each ordinary maximal
-// root, never serializing the fixed containers themselves. v2 (#156) had
-// `LayerNode[]` — a copy/cut
+// root, never serializing the fixed containers themselves. A copy/cut
 // captures the selection's MAXIMAL roots (leaves and/or groups) straight
 // from the TREE, so a copied group round-trips as a group, not a bag of
-// loose leaves. A v1 envelope (this app's own pre-#156 output, or a
-// hand-edited one) is still accepted on paste: a flat Layer[] is already a
-// valid LayerNode[] (every Layer is a leaf node), so no separate v1 code path
-// is needed — see parseEnvelope below.
+// loose leaves. Pre-v3 envelopes are no longer accepted: their parser rode
+// the core v1-v4 color partitioner, which was deleted with the schema-v6
+// compat cut (epic #226 — no users yet).
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   cloneNodeWithFreshIds,
@@ -32,7 +30,6 @@ import {
   insertPcbNode,
   isGroupNode,
   parseLayerNodeFragment,
-  parseLegacyLayerFragment,
   translatePathLayer,
   type MaterialLayerNode,
   type LayerNode,
@@ -44,10 +41,8 @@ import type { ToolContext } from './types';
 
 const ENVELOPE_APP = 'zpd';
 const ENVELOPE_KIND = 'layers';
+// The one and only accepted envelope version — see the compat-cut note above.
 const ENVELOPE_VERSION = 3;
-// Oldest envelope version this app still accepts on paste — a v1 (pre-#156,
-// flat-leaves-only) envelope from an older build or another still-open tab.
-const MIN_SUPPORTED_ENVELOPE_VERSION = 1;
 
 // Cascade offset applied to every clone (paste AND duplicate share this one
 // clone technique) so a repeated paste/duplicate never lands exactly on top
@@ -114,9 +109,9 @@ function maximalPcbSelectedRoots(
 
 // Parses OS clipboard text as a zpd layers envelope. Returns null for
 // anything else — a plain sentence, a URL, JSON from an unrelated app, a
-// version below what this app has ever emitted, or a future/foreign envelope
-// version — so the caller can leave non-envelope text completely untouched
-// rather than guessing at a mismatched shape.
+// retired pre-v3 envelope, or a future/foreign envelope version — so the
+// caller can leave non-envelope text completely untouched rather than
+// guessing at a mismatched shape.
 function isPcbLayerRole(value: unknown): value is PcbLayerRole {
   return value === 'copper' || value === 'solder-mask' || value === 'silkscreen';
 }
@@ -133,10 +128,7 @@ function parseEnvelope(text: string, panelHp: number): MaterialLayerNode[] | nul
   if (
     candidate.app !== ENVELOPE_APP ||
     candidate.kind !== ENVELOPE_KIND ||
-    typeof candidate.version !== 'number' ||
-    !Number.isInteger(candidate.version) ||
-    candidate.version < MIN_SUPPORTED_ENVELOPE_VERSION ||
-    candidate.version > ENVELOPE_VERSION ||
+    candidate.version !== ENVELOPE_VERSION ||
     !Array.isArray(candidate.layers)
   ) {
     return null;
@@ -148,26 +140,19 @@ function parseEnvelope(text: string, panelHp: number): MaterialLayerNode[] | nul
   // same-version envelope from an older/hand-edited/malicious source can't
   // slip in a structurally incomplete layer (e.g. a 'path' with no `points`)
   // or an over-deep group that would later throw or misbehave once inserted.
-  // Deliberately NOT flattened: the whole point of v2/v3 is that a copied group
+  // Deliberately NOT flattened: the whole point of v3 is that a copied group
   // round-trips as a group — flattening here would defeat that while doing
-  // nothing extra for defense (a v1 flat envelope has no groups to flatten,
-  // and the fragment parser already rejects anything a group node's shape
-  // doesn't satisfy). Untrusted input is defended by validating structure,
-  // not by discarding it.
-  if (candidate.version === ENVELOPE_VERSION) {
-    const nodes: MaterialLayerNode[] = [];
-    for (const entry of candidate.layers) {
-      if (typeof entry !== 'object' || entry === null) continue;
-      const tagged = entry as Record<string, unknown>;
-      if (!isPcbLayerRole(tagged.material)) continue;
-      const parsed = parseLayerNodeFragment([tagged.node], panelHp);
-      if (parsed.length === 1) nodes.push({ material: tagged.material, node: parsed[0] });
-    }
-    return nodes.length > 0 ? nodes : null;
+  // nothing extra for defense (the fragment parser already rejects anything
+  // a group node's shape doesn't satisfy). Untrusted input is defended by
+  // validating structure, not by discarding it.
+  const nodes: MaterialLayerNode[] = [];
+  for (const entry of candidate.layers) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const tagged = entry as Record<string, unknown>;
+    if (!isPcbLayerRole(tagged.material)) continue;
+    const parsed = parseLayerNodeFragment([tagged.node], panelHp);
+    if (parsed.length === 1) nodes.push({ material: tagged.material, node: parsed[0] });
   }
-  // v1/v2 were untagged ordinary roots. The core migration partitioner is
-  // deliberately shared here so mixed legacy groups split deterministically.
-  const nodes = parseLegacyLayerFragment(candidate.layers, panelHp);
   return nodes.length > 0 ? nodes : null;
 }
 

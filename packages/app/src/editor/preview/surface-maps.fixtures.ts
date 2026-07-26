@@ -1,10 +1,11 @@
-import { createPcbLayerStack, type DocState } from '@zpd/core';
+import { createDefaultDoc, createPcbLayerStack, type DocState } from '@zpd/core';
 
 // Compact manufacturing corpus: every entry exercises a surface-map rule,
 // while the first three rectangles form stable interior sampling points away
 // from antialiased edges (masked gold, opening-over-gold, white-over-mask).
 export function representativeSurfaceMapDoc(): DocState {
   return {
+    ...createDefaultDoc(),
     panelHp: 8,
     guides: [{ id: 'guide-design-only', orientation: 'horizontal', position: 64 }],
     layers: createPcbLayerStack({

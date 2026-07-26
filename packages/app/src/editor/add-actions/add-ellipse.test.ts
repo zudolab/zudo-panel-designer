@@ -4,7 +4,13 @@
 // insertNewNodeRelativeToSelection wiring, just the other shape kind.
 import { describe, expect, it, vi } from 'vitest';
 import './add-ellipse'; // registers 'add-ellipse' as a side effect
-import { createPcbLayerStack, type DocState, type Pt, type ShapeLayer } from '@zpd/core';
+import {
+  createDefaultDoc,
+  createPcbLayerStack,
+  type DocState,
+  type Pt,
+  type ShapeLayer,
+} from '@zpd/core';
 import { allAddActions } from '../registry/add-actions';
 import { projectFlatLayers } from '../flat-projection';
 import type { ToolContext } from '../types';
@@ -53,7 +59,12 @@ describe('add-ellipse action — nothing selected (#191 default routing)', () =>
       color: 1,
     };
     const ctx = stubCtx({
-      doc: { panelHp: 12, guides: [], layers: createPcbLayerStack({ copper: [existing] }) },
+      doc: {
+        ...createDefaultDoc(),
+        panelHp: 12,
+        guides: [],
+        layers: createPcbLayerStack({ copper: [existing] }),
+      },
     });
 
     getAddEllipseAction().run(ctx);
@@ -82,6 +93,7 @@ describe('add-ellipse action — selection-relative placement (#191)', () => {
     };
     const ctx = stubCtx({
       doc: {
+        ...createDefaultDoc(),
         panelHp: 12,
         guides: [],
         layers: createPcbLayerStack({ silkscreen: [anchor] }),

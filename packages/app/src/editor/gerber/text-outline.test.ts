@@ -19,6 +19,7 @@
 import { readFile } from 'node:fs/promises';
 import { loadTestFontFile } from './test-font-loader';
 import {
+  createDefaultDoc,
   createPcbLayerContainer,
   PANEL_HEIGHT_MM,
   panelWidthMm,
@@ -630,7 +631,7 @@ describe('buildGerberIr integration', () => {
       createPcbLayerContainer('solder-mask', []),
       createPcbLayerContainer('silkscreen', [...children]),
     ];
-    return { panelHp: HP, layers, guides: [] };
+    return { ...createDefaultDoc(), panelHp: HP, layers, guides: [] };
   }
 
   it('exports a curated text layer as silkscreen regions', async () => {
