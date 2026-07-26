@@ -58,6 +58,15 @@ export {
   panelWidthMm,
 } from './panel-sizes';
 
+export type { PanelFormat, PanelHole, PanelTemplateProvenance } from './panel-templates';
+export {
+  PANEL_FORMAT_HEIGHTS,
+  panelHeightMm,
+  panelHoles,
+  panelTemplateProvenance,
+  supportedHps,
+} from './panel-templates';
+
 export type { MaterialLayerNode, PanelConfig, TryParsePanelConfigResult } from './serialize';
 export {
   PANEL_CONFIG_VERSION,
