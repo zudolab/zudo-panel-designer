@@ -114,6 +114,12 @@ function makeHarness(initialFixture: DocFixture) {
     },
     setCamera: () => {},
     setActiveTool: () => {},
+    activeSide: 'front',
+    get activeStack() {
+      return history.present.layers;
+    },
+    setActiveSide: () => {},
+    clearToolDraft: () => {},
     requestRepaint: () => {},
     evictImageCache: () => {},
     openDialog: () => {},

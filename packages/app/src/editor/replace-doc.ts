@@ -16,6 +16,14 @@ export function replaceDoc(nextDoc: DocState, ctx: ToolContext): void {
   resetTextGeometryNamespace();
   ctx.reset(nextDoc);
   ctx.selectIds([]);
+  // Side-context reset (#230): a fresh document always starts on the front
+  // face, and any in-progress tool draft belonged to the OLD document.
+  // clearToolDraft first — when already on front, setActiveSide is a strict
+  // no-op and would not discard the draft on its own. (Replacing while on
+  // the back cycles the tool twice; the deactivate/activate pair is
+  // idempotent, so the double cycle is harmless.)
+  ctx.clearToolDraft();
+  ctx.setActiveSide('front');
   // projectFlatLayers (not ctx.flatLayers): ctx.doc still reads the OLD doc
   // until React re-renders after reset(); the eviction must see the INCOMING
   // doc's leaves. Also warms the projection cache for nextDoc's tree.

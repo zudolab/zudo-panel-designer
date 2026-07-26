@@ -39,6 +39,8 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     selectIds: vi.fn(),
     setCamera: vi.fn(),
     setActiveTool: vi.fn(),
+    setActiveSide: vi.fn(),
+    clearToolDraft: vi.fn(),
     requestRepaint: vi.fn(),
     evictImageCache: vi.fn(),
     openDialog: vi.fn(),
@@ -83,6 +85,18 @@ describe('replaceDoc', () => {
       ctx,
     );
     expect(ctx.selectIds).toHaveBeenCalledWith([]);
+  });
+
+  it('resets the active side to front and discards the in-progress tool draft (#230)', () => {
+    const ctx = stubCtx();
+    replaceDoc(
+      { ...createDefaultDoc(), panelHp: 6, guides: [], layers: createPcbLayerStack() },
+      ctx,
+    );
+    // clearToolDraft is unconditional — setActiveSide('front') alone would
+    // no-op (and skip the draft discard) when the editor is already on front.
+    expect(ctx.clearToolDraft).toHaveBeenCalledTimes(1);
+    expect(ctx.setActiveSide).toHaveBeenCalledWith('front');
   });
 
   it('reconciles the image cache against the next doc layers', () => {
