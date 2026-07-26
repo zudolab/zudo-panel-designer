@@ -12,6 +12,7 @@ export type {
   Layer,
   LayerBase,
   LayerNode,
+  PanelSide,
   PathLayer,
   PathPoint,
   PatternLayer,
@@ -25,6 +26,8 @@ export type {
   TextLayer,
 } from './types';
 export { mintId } from './types';
+
+export { stackForSide, withStackForSide } from './panel-side';
 
 export type { PcbLayerSlices } from './layer-nodes';
 export {
