@@ -132,9 +132,17 @@ interface PanelTemplateEntry {
 // 2hp, oval 3.2x10.3 at >=3hp.
 const ONE_U_OPENING_WIDTH_MM = 3.6;
 
+// Standard 1U slot at hp 3-10 (2hp uses its own one-off 8.0 oval).
+const ONE_U_STANDARD_SLOT_LENGTH_MM = 10.3;
+const ONE_U_STANDARD_OPENING_LENGTH_MM = 10.7; // 10.3 + 0.4
+
 // 3U opening: ordered-gerber drills, +0.4mm/side mask clearance (opening =
 // drill/slotLength + 0.8). Oval 3.2x5.2 at 2hp, oval 3.2x10.28 at >=3hp.
 const THREE_U_OPENING_WIDTH_MM = 4.0;
+
+// Standard 3U slot at hp 3-20 (2hp uses its own one-off 5.2 oval).
+const THREE_U_STANDARD_SLOT_LENGTH_MM = 10.28;
+const THREE_U_STANDARD_OPENING_LENGTH_MM = 11.08; // 10.28 + 0.8
 
 const PANEL_TEMPLATE_CATALOG: Record<PanelFormat, Record<number, PanelTemplateEntry>> = {
   '1U': {
@@ -155,8 +163,20 @@ const PANEL_TEMPLATE_CATALOG: Record<PanelFormat, Record<number, PanelTemplateEn
     3: {
       provenance: 'kicad-source',
       holes: [
-        slotHole(6.04, TOP_CY_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
-        slotHole(8.85, BOTTOM_CY_1U_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
+        slotHole(
+          6.04,
+          TOP_CY_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          8.85,
+          BOTTOM_CY_1U_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     // NOTE: bottom cx is 8.8 in the kicad source, NOT width - 11.05 (= 8.95)
@@ -164,36 +184,96 @@ const PANEL_TEMPLATE_CATALOG: Record<PanelFormat, Record<number, PanelTemplateEn
     4: {
       provenance: 'kicad-source',
       holes: [
-        slotHole(11.05, TOP_CY_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
-        slotHole(8.8, BOTTOM_CY_1U_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
+        slotHole(
+          11.05,
+          TOP_CY_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          8.8,
+          BOTTOM_CY_1U_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     5: {
       provenance: 'kicad-source',
       holes: [
-        slotHole(11.05, TOP_CY_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
-        slotHole(13.95, BOTTOM_CY_1U_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
+        slotHole(
+          11.05,
+          TOP_CY_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          13.95,
+          BOTTOM_CY_1U_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     6: {
       provenance: 'kicad-source',
       holes: [
-        slotHole(11.05, TOP_CY_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
-        slotHole(18.95, BOTTOM_CY_1U_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
+        slotHole(
+          11.05,
+          TOP_CY_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          18.95,
+          BOTTOM_CY_1U_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     8: {
       provenance: 'kicad-source',
       holes: [
-        slotHole(11.05, TOP_CY_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
-        slotHole(29.25, BOTTOM_CY_1U_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
+        slotHole(
+          11.05,
+          TOP_CY_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          29.25,
+          BOTTOM_CY_1U_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     10: {
       provenance: 'kicad-source',
       holes: [
-        slotHole(11.05, TOP_CY_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
-        slotHole(39.45, BOTTOM_CY_1U_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
+        slotHole(
+          11.05,
+          TOP_CY_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          39.45,
+          BOTTOM_CY_1U_MM,
+          ONE_U_STANDARD_SLOT_LENGTH_MM,
+          ONE_U_OPENING_WIDTH_MM,
+          ONE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
   },
@@ -215,15 +295,39 @@ const PANEL_TEMPLATE_CATALOG: Record<PanelFormat, Record<number, PanelTemplateEn
     3: {
       provenance: 'ordered-gerber',
       holes: [
-        slotHole(6.045, TOP_CY_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
-        slotHole(8.855, BOTTOM_CY_3U_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
+        slotHole(
+          6.045,
+          TOP_CY_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          8.855,
+          BOTTOM_CY_3U_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     4: {
       provenance: 'ordered-gerber',
       holes: [
-        slotHole(6.045, TOP_CY_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
-        slotHole(13.955, BOTTOM_CY_3U_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
+        slotHole(
+          6.045,
+          TOP_CY_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          13.955,
+          BOTTOM_CY_3U_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     // NOTE: bottom cx is 14.838 in the ordered gerber, NOT width - 10.16
@@ -232,29 +336,77 @@ const PANEL_TEMPLATE_CATALOG: Record<PanelFormat, Record<number, PanelTemplateEn
     5: {
       provenance: 'ordered-gerber',
       holes: [
-        slotHole(10.16, TOP_CY_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
-        slotHole(14.838, BOTTOM_CY_3U_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
+        slotHole(
+          10.16,
+          TOP_CY_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          14.838,
+          BOTTOM_CY_3U_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     6: {
       provenance: 'ordered-gerber',
       holes: [
-        slotHole(10.16, TOP_CY_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
-        slotHole(19.84, BOTTOM_CY_3U_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
+        slotHole(
+          10.16,
+          TOP_CY_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          19.84,
+          BOTTOM_CY_3U_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     8: {
       provenance: 'ordered-gerber',
       holes: [
-        slotHole(10.16, TOP_CY_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
-        slotHole(30.14, BOTTOM_CY_3U_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
+        slotHole(
+          10.16,
+          TOP_CY_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          30.14,
+          BOTTOM_CY_3U_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     10: {
       provenance: 'ordered-gerber',
       holes: [
-        slotHole(10.16, TOP_CY_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
-        slotHole(40.34, BOTTOM_CY_3U_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
+        slotHole(
+          10.16,
+          TOP_CY_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
+        slotHole(
+          40.34,
+          BOTTOM_CY_3U_MM,
+          THREE_U_STANDARD_SLOT_LENGTH_MM,
+          THREE_U_OPENING_WIDTH_MM,
+          THREE_U_STANDARD_OPENING_LENGTH_MM,
+        ),
       ],
     },
     12: {
@@ -264,9 +416,9 @@ const PANEL_TEMPLATE_CATALOG: Record<PanelFormat, Record<number, PanelTemplateEn
         50.44,
         TOP_CY_MM,
         BOTTOM_CY_3U_MM,
-        10.28,
+        THREE_U_STANDARD_SLOT_LENGTH_MM,
         THREE_U_OPENING_WIDTH_MM,
-        11.08,
+        THREE_U_STANDARD_OPENING_LENGTH_MM,
       ),
     },
     14: {
@@ -276,9 +428,9 @@ const PANEL_TEMPLATE_CATALOG: Record<PanelFormat, Record<number, PanelTemplateEn
         60.64,
         TOP_CY_MM,
         BOTTOM_CY_3U_MM,
-        10.28,
+        THREE_U_STANDARD_SLOT_LENGTH_MM,
         THREE_U_OPENING_WIDTH_MM,
-        11.08,
+        THREE_U_STANDARD_OPENING_LENGTH_MM,
       ),
     },
     16: {
@@ -288,9 +440,9 @@ const PANEL_TEMPLATE_CATALOG: Record<PanelFormat, Record<number, PanelTemplateEn
         70.74,
         TOP_CY_MM,
         BOTTOM_CY_3U_MM,
-        10.28,
+        THREE_U_STANDARD_SLOT_LENGTH_MM,
         THREE_U_OPENING_WIDTH_MM,
-        11.08,
+        THREE_U_STANDARD_OPENING_LENGTH_MM,
       ),
     },
     // 20hp has no ordered/kicad reference board — holes follow the
@@ -303,9 +455,9 @@ const PANEL_TEMPLATE_CATALOG: Record<PanelFormat, Record<number, PanelTemplateEn
         91.14,
         TOP_CY_MM,
         BOTTOM_CY_3U_MM,
-        10.28,
+        THREE_U_STANDARD_SLOT_LENGTH_MM,
         THREE_U_OPENING_WIDTH_MM,
-        11.08,
+        THREE_U_STANDARD_OPENING_LENGTH_MM,
       ),
     },
   },
@@ -330,13 +482,19 @@ function deriveHoles(format: PanelFormat, hp: number): readonly PanelHole[] {
 
   if (format === '1U') {
     return [
-      slotHole(ONE_U_DERIVED_SLOT_CX_MM, TOP_CY_MM, 10.3, ONE_U_OPENING_WIDTH_MM, 10.7),
+      slotHole(
+        ONE_U_DERIVED_SLOT_CX_MM,
+        TOP_CY_MM,
+        ONE_U_STANDARD_SLOT_LENGTH_MM,
+        ONE_U_OPENING_WIDTH_MM,
+        ONE_U_STANDARD_OPENING_LENGTH_MM,
+      ),
       slotHole(
         width - ONE_U_DERIVED_SLOT_CX_MM,
         BOTTOM_CY_1U_MM,
-        10.3,
+        ONE_U_STANDARD_SLOT_LENGTH_MM,
         ONE_U_OPENING_WIDTH_MM,
-        10.7,
+        ONE_U_STANDARD_OPENING_LENGTH_MM,
       ),
     ];
   }
@@ -347,21 +505,27 @@ function deriveHoles(format: PanelFormat, hp: number): readonly PanelHole[] {
       width - THREE_U_DERIVED_SLOT_CX_MM,
       TOP_CY_MM,
       BOTTOM_CY_3U_MM,
-      10.28,
+      THREE_U_STANDARD_SLOT_LENGTH_MM,
       THREE_U_OPENING_WIDTH_MM,
-      11.08,
+      THREE_U_STANDARD_OPENING_LENGTH_MM,
     );
   }
 
   if (hp >= 5) {
     return [
-      slotHole(THREE_U_DERIVED_SLOT_CX_MM, TOP_CY_MM, 10.28, THREE_U_OPENING_WIDTH_MM, 11.08),
+      slotHole(
+        THREE_U_DERIVED_SLOT_CX_MM,
+        TOP_CY_MM,
+        THREE_U_STANDARD_SLOT_LENGTH_MM,
+        THREE_U_OPENING_WIDTH_MM,
+        THREE_U_STANDARD_OPENING_LENGTH_MM,
+      ),
       slotHole(
         width - THREE_U_DERIVED_SLOT_CX_MM,
         BOTTOM_CY_3U_MM,
-        10.28,
+        THREE_U_STANDARD_SLOT_LENGTH_MM,
         THREE_U_OPENING_WIDTH_MM,
-        11.08,
+        THREE_U_STANDARD_OPENING_LENGTH_MM,
       ),
     ];
   }
