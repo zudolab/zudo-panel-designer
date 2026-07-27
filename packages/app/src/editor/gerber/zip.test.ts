@@ -175,7 +175,10 @@ describe('gerberZipBytes — a document with shape + path + text + pattern layer
     );
   });
 
-  it('emits both drill files header-only while the #235 stub is in place, byte-modelled on the ordered reference sets', () => {
+  // The hand-authored fixture carries EMPTY_DRILL, so both sides are the
+  // header-only form here; a real export fills exactly one side (#235,
+  // Decision 11) and the other still ships these bytes.
+  it('emits an empty drill side header-only, byte-modelled on the ordered reference sets', () => {
     const unzipped = unzipSync(gerberZipBytes(fixtureIr(), OPTIONS));
     expect(strFromU8(unzipped['zpd-panel-12hp-PTH.drl'])).toBe(
       [

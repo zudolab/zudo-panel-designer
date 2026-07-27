@@ -1,16 +1,31 @@
 // The screw-hole fabrication seam (#231 contract, #235 implementation).
 //
-// #235 fills THIS file — deriving the template holes from
-// `panelHoles(panel.format, panel.hp)`, classifying them PTH (fr4) / NPTH
-// (alumi) per Decision 11, building the mask-opening and FR-4 copper-ring
-// injection regions, and emitting the tool table / hits / slots into the drill
-// bodies below. The SIGNATURES here are final: build-ir.ts and zip.ts are
-// already wired to them, so #235 never edits either of those shared files.
-import type { PcbMaterial } from '@zpd/core';
-import type { DrillFileIr, DrillIr, DrillPlating, IrLayerRole, IrPanel, IrRegion } from './ir';
+// Template holes come from `panelHoles(panel.format, panel.hp)` (#227) —
+// canonical fabrication coordinates: front view, doc space, never mirrored or
+// flipped here (Decisions 11/13). This module classifies them PTH (fr4) /
+// NPTH (alumi) per Decision 11, builds the mask-opening and FR-4 copper
+// stadium injection regions, and fills the drill IR whose bytes excellon.ts
+// emits. The SIGNATURES here are final: build-ir.ts and zip.ts are already
+// wired to them, so #235 never edits either of those shared files.
+import { panelHoles, type PanelHole, type PcbMaterial } from '@zpd/core';
+import type { KernelCubic, KernelPoint, KernelRing } from '../geometry-kernel';
+import { ellipseToRing, ellipticalArcToCubics } from './arc';
+import { excellonFileText } from './excellon';
+import { flattenRingAdaptive } from './flatten';
+import type {
+  DrillFileIr,
+  DrillHit,
+  DrillIr,
+  DrillPlating,
+  DrillSlot,
+  DrillTool,
+  IrLayerRole,
+  IrPanel,
+  IrRegion,
+} from './ir';
+import { degenerateCubic } from './primitives';
 import type { IrTolerance } from './tolerance';
 import type { GerberEmitOptions } from './writer';
-import { GERBER_SOFTWARE_APPLICATION, GERBER_SOFTWARE_VENDOR } from './writer';
 
 export interface HoleFabricationContext {
   readonly material: PcbMaterial;
@@ -23,8 +38,13 @@ export interface HoleFabricationContext {
 export interface HoleFabrication {
   /**
    * Regions build-ir APPENDS to the named role's layer after the artwork
-   * union+clip: mask openings on 'solder-mask'/'b-solder-mask' (both
-   * materials), copper rings on 'copper'/'b-copper' (FR-4 only, Decision 11).
+   * union+clip — FRONT roles only: mask openings on 'solder-mask' (both
+   * materials), copper rings on 'copper' (FR-4 only, Decision 11). The back
+   * roles ('b-solder-mask'/'b-copper') are NOT injected here — #236's
+   * `back-extract.ts` owns them and derives the same holes from the canonical
+   * `panelHoles()` coordinates itself; injecting them from both seams would
+   * double every back hole. (An earlier #231-era draft of this comment named
+   * the back roles here — that wording predated the #235/#236 split.)
    * Appended regions follow Decision 0's ring rules (flattened, positive
    * outers) and paint AFTER the artwork regions — for a ring region whose
    * hole is the drill barrel, the `%LPC*%` clearing artwork beneath it clears
@@ -42,12 +62,141 @@ export function emptyDrillIr(): DrillIr {
 }
 
 /**
- * #235's seam. Stub: no injections, both drill files empty — the zip already
- * ships the full per-material file set with this stub content.
+ * Replace an arc chain's first start / last end with the exact tangent points
+ * it targets: `ellipticalArcToCubics` computes its endpoints through cos/sin,
+ * so a semicircle starting at φ = −π/2 lands ~1e-16 mm off the stadium's flat
+ * edge. Snapping keeps the ring exactly closed instead of tolerance-closed.
+ */
+function snapArcEndpoints(
+  arc: readonly KernelCubic[],
+  start: KernelPoint,
+  end: KernelPoint,
+): KernelCubic[] {
+  if (arc.length === 0) return [];
+  const snapped = [...arc];
+  snapped[0] = { ...snapped[0], p0: start };
+  snapped[snapped.length - 1] = { ...snapped[snapped.length - 1], p3: end };
+  return snapped;
+}
+
+/**
+ * A stadium (round-ended slot, long axis horizontal) as a closed cubic ring:
+ * top edge, right semicircular cap, bottom edge, left cap. The traversal
+ * follows arc.ts's increasing-φ direction throughout, so the shoelace signed
+ * area is POSITIVE in doc space — an outer ring per Decision 0.2.
+ */
+function stadiumCubicRing(
+  cx: number,
+  cy: number,
+  r: number,
+  halfFlat: number,
+  arcToleranceMm: number,
+): KernelRing {
+  const topLeft = { x: cx - halfFlat, y: cy - r };
+  const topRight = { x: cx + halfFlat, y: cy - r };
+  const bottomRight = { x: cx + halfFlat, y: cy + r };
+  const bottomLeft = { x: cx - halfFlat, y: cy + r };
+  const rightCap = snapArcEndpoints(
+    ellipticalArcToCubics(cx + halfFlat, cy, r, r, -Math.PI / 2, Math.PI, arcToleranceMm),
+    topRight,
+    bottomRight,
+  );
+  const leftCap = snapArcEndpoints(
+    ellipticalArcToCubics(cx - halfFlat, cy, r, r, Math.PI / 2, Math.PI, arcToleranceMm),
+    bottomLeft,
+    topLeft,
+  );
+  return [
+    degenerateCubic(topLeft, topRight),
+    ...rightCap,
+    degenerateCubic(bottomRight, bottomLeft),
+    ...leftCap,
+  ];
+}
+
+/**
+ * A hole's `opening` stadium as a flattened region (Decision 6 budget: arcs
+ * within `arcMm`, then flattened within `flattenMm`). A round hole's opening
+ * has width === length and degenerates to a circle.
+ */
+function openingStadiumRegion(hole: PanelHole, tolerance: IrTolerance): IrRegion {
+  const r = hole.opening.width / 2;
+  const halfFlat = (hole.opening.length - hole.opening.width) / 2;
+  const ring =
+    halfFlat > 0
+      ? stadiumCubicRing(hole.cx, hole.cy, r, halfFlat, tolerance.arcMm)
+      : ellipseToRing(hole.cx, hole.cy, hole.opening.length / 2, r, tolerance.arcMm);
+  return {
+    outer: flattenRingAdaptive(ring, tolerance.flattenMm, tolerance.minSegmentMm),
+    holes: [],
+  };
+}
+
+/**
+ * The template holes as drill-file content, in catalog order (top row before
+ * bottom row). Tool codes are 1-based over the distinct diameters, ascending —
+ * one 3.2 mm tool for every catalog entry today, but grouped generically. A
+ * slot's routed span runs between endpoint CENTRES: `slotLength −
+ * drillDiameter` long (ir.ts); a slot no longer than its drill is already
+ * covered by a single hit, so it degenerates to one.
+ */
+function drillContent(holes: readonly PanelHole[]): Omit<DrillFileIr, 'plating'> {
+  const diameters = [...new Set(holes.map((hole) => hole.drillDiameter))].sort((a, b) => a - b);
+  const tools: DrillTool[] = diameters.map((diameterMm, i) => ({ code: i + 1, diameterMm }));
+  const codeByDiameter = new Map(tools.map((tool) => [tool.diameterMm, tool.code]));
+  const hits: DrillHit[] = [];
+  const slots: DrillSlot[] = [];
+  for (const hole of holes) {
+    const tool = codeByDiameter.get(hole.drillDiameter)!;
+    const span = hole.shape === 'slot' ? (hole.slotLength ?? 0) - hole.drillDiameter : 0;
+    if (span > 0) {
+      slots.push({
+        tool,
+        start: { x: hole.cx - span / 2, y: hole.cy },
+        end: { x: hole.cx + span / 2, y: hole.cy },
+      });
+    } else {
+      hits.push({ tool, x: hole.cx, y: hole.cy });
+    }
+  }
+  return { tools, hits, slots };
+}
+
+/**
+ * #235's seam, filled: the screw-hole drill pair plus the FRONT injection
+ * regions. Back-side hole artwork is #236's (`back-extract.ts`), which
+ * derives it from the same canonical `panelHoles()` coordinates — never
+ * injected from here, or the merge would double every back hole.
+ *
+ * - Mask openings go to the front solder-mask role for both materials, the
+ *   template coordinates used as-is (Decision 13: injections never mirror).
+ * - FR-4 only: a copper stadium of the SAME shape as the opening on the
+ *   front copper role. The drill void pierces its centre and the plated
+ *   barrel takes the HASL finish — the "gold around the hole" result. Alumi
+ *   holes are non-plated bare metal: no copper ring.
+ * - Plating is a per-FILE split (Decision 11): FR-4 content in `pth`, alumi
+ *   in `npth`; the other side stays empty and ships header-only.
  */
 export function injectHoleFabrication(ctx: HoleFabricationContext): HoleFabrication {
-  void ctx;
-  return { injections: {}, drill: emptyDrillIr() };
+  const holes = panelHoles(ctx.panel.format, ctx.panel.hp);
+  if (holes.length === 0) return { injections: {}, drill: emptyDrillIr() };
+
+  const openings: readonly IrRegion[] = holes.map((hole) =>
+    openingStadiumRegion(hole, ctx.tolerance),
+  );
+  const injections: Partial<Record<IrLayerRole, readonly IrRegion[]>> =
+    ctx.material === 'fr4'
+      ? { copper: openings, 'solder-mask': openings }
+      : { 'solder-mask': openings };
+
+  const content = drillContent(holes);
+  const empty = emptyDrillIr();
+  const drill: DrillIr =
+    ctx.material === 'fr4'
+      ? { pth: { plating: 'pth', ...content }, npth: empty.npth }
+      : { pth: empty.pth, npth: { plating: 'npth', ...content } };
+
+  return { injections, drill };
 }
 
 // ─── Excellon emission ──────────────────────────────────────────────────────
@@ -64,48 +213,13 @@ export function drillFilename(plating: DrillPlating, hp: number): string {
   return `zpd-panel-${hp}hp-${plating === 'pth' ? 'PTH' : 'NPTH'}.drl`;
 }
 
-/** `TF.FileFunction` payloads per the ordered reference sets (KiCad X2 form). */
-const DRILL_FILE_FUNCTION: Record<DrillPlating, string> = {
-  pth: 'Plated,1,2,PTH',
-  npth: 'NonPlated,1,2,NPTH',
-};
-
-/**
- * One Excellon file. The header below is byte-modelled on the ordered
- * reference sets (M48, `; #@! TF.*` X2 comment-attributes, FMAT,2, METRIC,
- * `%`, G90, G05 … M30) and is FINAL for the empty case. Body emission — tool
- * table, `X…Y…` hits, G00/M15/G01/M16 slot routing, the Y flip through
- * `coordinate-frame.ts` — is #235's, which extends this function in place.
- * Until then a non-empty DrillFileIr refuses loudly: silently emitting a
- * header-only file for real holes is exactly the plausible-looking-wrong-file
- * Decision 8 exists to prevent.
- */
-function drillFileText(file: DrillFileIr, options: GerberEmitOptions): string {
-  if (file.tools.length > 0 || file.hits.length > 0 || file.slots.length > 0) {
-    throw new Error(
-      'Excellon body emission is not implemented yet (#235 fills drillFileText); refusing to drop drill content silently',
-    );
-  }
-  const lines = [
-    'M48',
-    `; #@! TF.CreationDate,${options.creationDate}`,
-    `; #@! TF.GenerationSoftware,${GERBER_SOFTWARE_VENDOR},${GERBER_SOFTWARE_APPLICATION},${options.softwareVersion}`,
-    `; #@! TF.FileFunction,${DRILL_FILE_FUNCTION[file.plating]}`,
-    'FMAT,2',
-    'METRIC',
-    '%',
-    'G90',
-    'G05',
-    'M30',
-  ];
-  return `${lines.join('\n')}\n`;
-}
-
 /**
  * Both drill files, always, PTH first — an absent drill file is another
  * ambiguity a fab has to guess at (same rule as the Gerber file set), and the
- * empty side stays header-only exactly like the ordered reference sets. Pure:
- * same IR and options, same bytes.
+ * empty side stays header-only exactly like the ordered reference sets. Text
+ * emission — header, tool table, hits, routed slots, the Y flip through
+ * `coordinate-frame.ts` — is excellon.ts's. Pure: same IR and options, same
+ * bytes.
  */
 export function drillFileSet(
   drill: DrillIr,
@@ -116,12 +230,12 @@ export function drillFileSet(
     {
       plating: 'pth',
       filename: drillFilename('pth', panel.hp),
-      text: drillFileText(drill.pth, options),
+      text: excellonFileText(drill.pth, panel, options),
     },
     {
       plating: 'npth',
       filename: drillFilename('npth', panel.hp),
-      text: drillFileText(drill.npth, options),
+      text: excellonFileText(drill.npth, panel, options),
     },
   ];
 }
