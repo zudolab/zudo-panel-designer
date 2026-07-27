@@ -24,6 +24,7 @@ import {
   canRotate,
   CORNER_HANDLE_IDS,
   cornerHandleRects,
+  holeDisplayCx,
   layerBbox,
   layerRotation,
   formatRotateDeltaBadge,
@@ -1700,5 +1701,20 @@ describe('pattern square (#96)', () => {
       });
       expect(calls.some((c) => c.method === 'rect' && c.args[2] === 40)).toBe(false);
     });
+  });
+});
+
+// #233: template-hole DISPLAY x mirroring for the back view — a VIEW
+// transform only (hole data and layer content are never mirrored). The
+// Wave-5 hole composer consumes this alongside RenderExtras.side.
+describe('holeDisplayCx (#233)', () => {
+  it('is identity on the front view', () => {
+    expect(holeDisplayCx(2.5, 'front', 40.3)).toBe(2.5);
+  });
+
+  it('mirrors x (width - cx) on the back view', () => {
+    expect(holeDisplayCx(2.5, 'back', 40.3)).toBeCloseTo(37.8, 10);
+    // A centered hole stays centered when the panel flips.
+    expect(holeDisplayCx(20.15, 'back', 40.3)).toBeCloseTo(20.15, 10);
   });
 });
