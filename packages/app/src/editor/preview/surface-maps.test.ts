@@ -6,6 +6,9 @@ import {
   PANEL_HEIGHT_MM,
   PANEL_THICKNESS_MM,
   PCB_SUBSTRATE,
+  PCB_SUBSTRATE_ALUMI,
+  panelHeightMm,
+  panelHoles,
   panelWidthMm,
   type DocState,
   type LayerNode,
@@ -19,7 +22,11 @@ import {
   type FontInitialResult,
   type FontLoadAttempt,
 } from '../fonts';
-import { resetTextGeometryForTests, setTextMeasureForTests } from '../text-geometry';
+import {
+  peekTextGeometry,
+  resetTextGeometryForTests,
+  setTextMeasureForTests,
+} from '../text-geometry';
 import {
   openPreviewGenerationSession,
   type PreviewCanvasSource,
@@ -29,6 +36,7 @@ import { representativeSurfaceMapDoc } from './surface-maps.fixtures';
 import { projectFlatLayers } from '../flat-projection';
 import {
   PCB_SUBSTRATE_SURFACE_MATERIAL,
+  PCB_SUBSTRATE_SURFACE_MATERIALS,
   PCB_SURFACE_MATERIALS,
   PREVIEW_HEIGHT_COPPER_COLOR,
   PREVIEW_HEIGHT_MASK_COLOR,
@@ -36,6 +44,7 @@ import {
   surfaceMapColorForPalette,
   surfaceMapSubstrateColor,
   type PreviewCanvasFactory,
+  type PreviewSurfaceGenerationInput,
 } from './surface-maps';
 
 vi.mock('../fonts', () => ({
@@ -212,6 +221,19 @@ function ticket(
   signal = new AbortController().signal,
 ): PreviewGenerationTicket {
   return { surfaceRevision, signal };
+}
+
+function docPick(
+  overrides: Partial<PreviewSurfaceGenerationInput['doc']> = {},
+): PreviewSurfaceGenerationInput['doc'] {
+  return {
+    panelHp: 4,
+    format: '3U',
+    material: 'fr4',
+    layers: createPcbLayerStack(),
+    backLayers: createPcbLayerStack('back'),
+    ...overrides,
+  };
 }
 
 function normalizedCalls(canvas: RecordingCanvas): unknown[] {
@@ -424,9 +446,30 @@ describe('PCB surface material classification', () => {
       roughness: 0.55,
     });
     expect(Object.isFrozen(PCB_SUBSTRATE_SURFACE_MATERIAL)).toBe(true);
-    expect(surfaceMapSubstrateColor('baseColor')).toBe(PCB_SUBSTRATE.hex);
-    expect(surfaceMapSubstrateColor('metalness')).toBe('#000000');
-    expect(surfaceMapSubstrateColor('roughness')).toBe('#8c8c8c');
+    // FR-4 regression pin (#232): the fr4 entry IS the pre-material-aware
+    // constant, so existing documents cannot drift.
+    expect(PCB_SUBSTRATE_SURFACE_MATERIALS.fr4).toBe(PCB_SUBSTRATE_SURFACE_MATERIAL);
+    expect(surfaceMapSubstrateColor('baseColor', 'fr4')).toBe(PCB_SUBSTRATE.hex);
+    expect(surfaceMapSubstrateColor('metalness', 'fr4')).toBe('#000000');
+    expect(surfaceMapSubstrateColor('roughness', 'fr4')).toBe('#8c8c8c');
+  });
+
+  it('gives alumi a shining-gray substrate fed from the shared core constant', () => {
+    expect(PCB_SUBSTRATE_SURFACE_MATERIALS.alumi).toMatchObject({
+      baseColor: PCB_SUBSTRATE_ALUMI.hex,
+      metalness: 1,
+    });
+    // "Shining gray": full metalness, clearly lower roughness than every
+    // non-metal surface in the palette so the aluminum reads polished.
+    expect(PCB_SUBSTRATE_SURFACE_MATERIALS.alumi.roughness).toBeLessThanOrEqual(0.25);
+    expect(PCB_SUBSTRATE_SURFACE_MATERIALS.alumi.roughness).toBeLessThan(
+      PCB_SUBSTRATE_SURFACE_MATERIAL.roughness,
+    );
+    expect(Object.isFrozen(PCB_SUBSTRATE_SURFACE_MATERIALS)).toBe(true);
+    expect(Object.isFrozen(PCB_SUBSTRATE_SURFACE_MATERIALS.alumi)).toBe(true);
+    expect(surfaceMapSubstrateColor('baseColor', 'alumi')).toBe(PCB_SUBSTRATE_ALUMI.hex);
+    expect(surfaceMapSubstrateColor('metalness', 'alumi')).toBe('#ffffff');
+    expect(surfaceMapSubstrateColor('roughness', 'alumi')).toBe('#333333');
   });
 });
 
@@ -505,7 +548,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
     const recording = recordingCanvasFactory();
     const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
     const snapshot = generator.generate({
-      doc: { panelHp: 8, layers: stack },
+      doc: docPick({ panelHp: 8, layers: stack }),
       ticket: ticket(21),
       preferredPixelsPerMm: 1,
       maximumTextureSizePx: 512,
@@ -529,7 +572,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
       material: 0 | 1 | 2 | 'substrate',
     ) =>
       material === 'substrate'
-        ? surfaceMapSubstrateColor(mapName)
+        ? surfaceMapSubstrateColor(mapName, 'fr4')
         : surfaceMapColorForPalette(mapName, material);
 
     const visible = generate();
@@ -625,8 +668,14 @@ describe('createPreviewSurfaceMapGenerator', () => {
       2,
     );
     expect(snapshot.orientation.documentTopLeftUv).toEqual({ u: 0, v: 1 });
-    // Four maps plus the one shared mask sheet, all at the chosen raster.
-    expect(recording.canvases).toHaveLength(5);
+    expect(snapshot.backOrientation.documentTopLeftUv).toEqual({ u: 1, v: 1 });
+    expect(snapshot.material).toBe('fr4');
+    // The golden screw-hole catalog rides along for the hole-cutting
+    // consumer (#234), derived from (format, hp), never stored.
+    expect(snapshot.holes).toEqual(panelHoles(doc.format, doc.panelHp));
+    expect(snapshot.backMaps).not.toBeNull();
+    // Two four-map faces plus the one shared mask sheet, all at the raster.
+    expect(recording.canvases).toHaveLength(9);
     expect(recording.canvases.every((canvas) => canvas.width === snapshot.rasterSize.widthPx)).toBe(
       true,
     );
@@ -634,6 +683,163 @@ describe('createPreviewSurfaceMapGenerator', () => {
       recording.canvases.every((canvas) => canvas.height === snapshot.rasterSize.heightPx),
     ).toBe(true);
     expect(JSON.stringify(doc)).toBe(before);
+    generator.close();
+  });
+
+  it('derives the panel height from the document format', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: docPick({ format: '1U' }),
+      ticket: ticket(2),
+      maximumTextureSizePx: 256,
+    });
+
+    expect(panelHeightMm('1U')).toBe(39.65);
+    expect(snapshot.physicalDimensions.heightMm).toBe(panelHeightMm('1U'));
+    expect(snapshot.holes).toEqual(panelHoles('1U', 4));
+    generator.close();
+  });
+
+  it('paints the back map set from the back stack in canonical coordinates', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: docPick({
+        panelHp: 8,
+        backLayers: createPcbLayerStack('back', {
+          copper: [
+            {
+              id: 'back-copper',
+              name: 'Back copper',
+              type: 'shape',
+              shape: 'rect',
+              x: 2,
+              y: 2,
+              width: 20,
+              height: 20,
+              color: 1,
+            },
+          ],
+          'solder-mask': [
+            {
+              id: 'back-opening',
+              name: 'Back opening',
+              type: 'shape',
+              shape: 'rect',
+              x: 8,
+              y: 8,
+              width: 8,
+              height: 8,
+              color: 0,
+            },
+          ],
+        }),
+      }),
+      ticket: ticket(3),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+
+    for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
+      const frontCanvas = snapshot.maps[mapName].source as unknown as RecordingCanvas;
+      const backCanvas = snapshot.backMaps![mapName].source as unknown as RecordingCanvas;
+      expect(backCanvas).not.toBe(frontCanvas);
+      // The back opening reveals the back copper at its CANONICAL x — the
+      // canvases stay in canonical front-view coords; the display-side x
+      // mirror lives in the sampling contract, never in the paint.
+      expect(topMaterialAt(backCanvas.calls, 10, 10)).toBe(surfaceMapColorForPalette(mapName, 1));
+      // Outside the opening the back stack's mask sheet still covers.
+      expect(topMaterialAt(backCanvas.calls, 4, 4)).toBe(surfaceMapColorForPalette(mapName, 0));
+      // The front face has no artwork at all in this doc: fully covered by
+      // its own sheet at both sample points.
+      expect(topMaterialAt(frontCanvas.calls, 10, 10)).toBe(surfaceMapColorForPalette(mapName, 0));
+    }
+    // Inside the back opening the mask is punched away: copper height only.
+    const backHeight = snapshot.backMaps!.height.source as unknown as RecordingCanvas;
+    expect(heightLevelAt(backHeight.calls, 10, 10)).toBeCloseTo(
+      grayLevel(PREVIEW_HEIGHT_COPPER_COLOR),
+      10,
+    );
+    // Outside it the back copper raises the field under the draping mask.
+    expect(heightLevelAt(backHeight.calls, 4, 4)).toBeCloseTo(
+      grayLevel(PREVIEW_HEIGHT_COPPER_COLOR) + grayLevel(PREVIEW_HEIGHT_MASK_COLOR),
+      10,
+    );
+    const frontHeight = snapshot.maps.height.source as unknown as RecordingCanvas;
+    expect(heightLevelAt(frontHeight.calls, 10, 10)).toBeCloseTo(
+      grayLevel(PREVIEW_HEIGHT_MASK_COLOR),
+      10,
+    );
+    generator.close();
+  });
+
+  it('reconciles both faces as one text-geometry snapshot so pivots survive regeneration', () => {
+    const rotated = (id: string, y: number): TextLayer => ({
+      id,
+      name: id,
+      type: 'text',
+      content: id,
+      fontFamily: 'Fixture Sans',
+      sizeMm: 5,
+      x: 4,
+      y,
+      rotation: 30,
+      color: 2,
+    });
+    const doc = docPick({
+      layers: createPcbLayerStack({ silkscreen: [rotated('front-rotated', 10)] }),
+      backLayers: createPcbLayerStack('back', { silkscreen: [rotated('back-rotated', 20)] }),
+    });
+    const generator = createPreviewSurfaceMapGenerator({
+      canvasFactory: recordingCanvasFactory().factory,
+    });
+
+    generator.generate({ doc, ticket: ticket(1), maximumTextureSizePx: 128 });
+    const front = peekTextGeometry('front-rotated');
+    const back = peekTextGeometry('back-rotated');
+    expect(front).not.toBeNull();
+    expect(back).not.toBeNull();
+
+    // A same-document regeneration (e.g. font readiness) must reuse BOTH
+    // faces' captured rotation pivots: reconciling the faces as separate
+    // single-document snapshots would evict each other's entries and remint
+    // the metrics every pass.
+    generator.generate({ doc, ticket: ticket(2), maximumTextureSizePx: 128 });
+    expect(peekTextGeometry('front-rotated')?.metricRevision).toBe(front!.metricRevision);
+    expect(peekTextGeometry('back-rotated')?.metricRevision).toBe(back!.metricRevision);
+    generator.close();
+  });
+
+  it('skips the back map set entirely for alumi and bakes its shining substrate into the front', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: docPick({ material: 'alumi' }),
+      ticket: ticket(4),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+
+    expect(snapshot.material).toBe('alumi');
+    expect(snapshot.backMaps).toBeNull();
+    // One four-map face plus the shared mask sheet — no back canvases.
+    expect(recording.canvases).toHaveLength(5);
+
+    // Hide the mask to expose bare substrate everywhere: the alumi
+    // coefficients (metalness 1, low roughness) reach the maps.
+    const hiddenMaskStack = createPcbLayerStack();
+    hiddenMaskStack[1] = { ...hiddenMaskStack[1], hidden: true };
+    const exposed = generator.generate({
+      doc: docPick({ material: 'alumi', layers: hiddenMaskStack }),
+      ticket: ticket(5),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+    for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
+      const canvas = exposed.maps[mapName].source as unknown as RecordingCanvas;
+      expect(topMaterialAt(canvas.calls, 10, 10)).toBe(surfaceMapSubstrateColor(mapName, 'alumi'));
+    }
     generator.close();
   });
 
@@ -755,11 +961,18 @@ describe('createPreviewSurfaceMapGenerator', () => {
       ),
     ).toBe(true);
     const sheetBackgroundFills = maskSheet.calls.filter((call) => call.method === 'fillRect');
-    expect(sheetBackgroundFills.map((call) => call.fillStyle)).toEqual(sheetFillStyles);
+    // The same shared sheet is re-filled for the back face's four maps too:
+    // the fixture's empty-but-visible back mask container still composites a
+    // full covering sheet per map (#232).
+    expect(sheetBackgroundFills.map((call) => call.fillStyle)).toEqual([
+      ...sheetFillStyles,
+      ...sheetFillStyles,
+    ]);
     expect(
       sheetBackgroundFills.every((call) => call.globalCompositeOperation === 'source-over'),
     ).toBe(true);
     const sheetStrokes = maskSheet.calls.filter((call) => call.method === 'stroke');
+    // Punch strokes stay front-only: the back stack has no stroked mask leaf.
     expect(sheetStrokes.map((call) => call.strokeStyle)).toEqual(sheetFillStyles);
     expect(sheetStrokes.every((call) => call.globalCompositeOperation === 'destination-out')).toBe(
       true,
@@ -820,7 +1033,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
     const session = openPreviewGenerationSession(1);
     const first = session.initialGeneration;
     const snapshot = generator.generate({
-      doc: { panelHp: 4, layers: createPcbLayerStack() },
+      doc: docPick(),
       ticket: first,
       maximumTextureSizePx: 128,
     });
@@ -851,12 +1064,11 @@ describe('createPreviewSurfaceMapGenerator', () => {
       y: id === 'first' ? 2 : 12,
       color: 1,
     });
-    const doc: Pick<DocState, 'panelHp' | 'layers'> = {
-      panelHp: 4,
+    const doc = docPick({
       layers: createPcbLayerStack({
         silkscreen: [text('first', 'First Font'), text('second', 'Second Font')],
       }),
-    };
+    });
     const onFontReadyRevision = vi.fn();
     const recording = recordingCanvasFactory();
     const generator = createPreviewSurfaceMapGenerator({
@@ -903,12 +1115,12 @@ describe('createPreviewSurfaceMapGenerator', () => {
     };
 
     generator.generate({
-      doc: { panelHp: 4, layers: createPcbLayerStack({ silkscreen: [layer] }) },
+      doc: docPick({ layers: createPcbLayerStack({ silkscreen: [layer] }) }),
       ticket: ticket(4),
       maximumTextureSizePx: 128,
     });
     generator.generate({
-      doc: { panelHp: 4, layers: createPcbLayerStack() },
+      doc: docPick(),
       ticket: ticket(5),
       maximumTextureSizePx: 128,
     });
@@ -943,12 +1155,11 @@ describe('createPreviewSurfaceMapGenerator', () => {
       onFontReadyRevision,
     });
     generator.generate({
-      doc: {
-        panelHp: 4,
+      doc: docPick({
         layers: createPcbLayerStack({
           silkscreen: [layer('late', 'Late Font', 2), layer('closed', 'Closed Font', 12)],
         }),
-      },
+      }),
       ticket: ticket(6),
       maximumTextureSizePx: 128,
     });
@@ -975,7 +1186,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
 
     expect(() =>
       generator.generate({
-        doc: { panelHp: 4, layers: createPcbLayerStack() },
+        doc: docPick(),
         ticket: ticket(8),
         maximumTextureSizePx: 128,
       }),

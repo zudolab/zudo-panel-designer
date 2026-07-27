@@ -1,14 +1,17 @@
 import {
   PALETTE,
-  PANEL_HEIGHT_MM,
   PANEL_THICKNESS_MM,
   PCB_SUBSTRATE,
+  panelHeightMm,
+  panelHoles,
   panelWidthMm,
   projectPcbLayerSlices,
+  substrateForMaterial,
   type ColorIndex,
   type DocState,
   type Layer,
   type PcbLayerSlices,
+  type PcbMaterial,
 } from '@zpd/core';
 import { ensureFontAttempt, type FontInitialResult, type FontLoadAttempt } from '../fonts';
 import { acquireMaskSheet, paintMaskPunches, type MaskSheetFactory } from '../mask-sheet';
@@ -49,6 +52,21 @@ export const PCB_SUBSTRATE_SURFACE_MATERIAL: PcbSurfaceMaterial = Object.freeze(
   metalness: 0,
   roughness: 0.55,
 });
+
+// Per-material bare-substrate coefficients (#232). The alumi entry is the
+// epic's "shining gray": full metalness with low roughness so exposed
+// aluminum reads as polished panel metal next to the warm gold/HASL copper.
+// Both hexes come from core's substrateForMaterial so 2D and 3D substrate
+// can never drift apart.
+export const PCB_SUBSTRATE_SURFACE_MATERIALS: Readonly<Record<PcbMaterial, PcbSurfaceMaterial>> =
+  Object.freeze({
+    fr4: PCB_SUBSTRATE_SURFACE_MATERIAL,
+    alumi: Object.freeze({
+      baseColor: substrateForMaterial('alumi').hex,
+      metalness: 1,
+      roughness: 0.2,
+    }),
+  });
 
 type PreviewSurfaceMapName = keyof PreviewSurfaceMaps;
 
@@ -99,8 +117,11 @@ export function surfaceMapColorForPalette(
   return surfaceMapMaterialValue(mapName, PCB_SURFACE_MATERIALS[color]);
 }
 
-export function surfaceMapSubstrateColor(mapName: MaterialSurfaceMapName): string {
-  return surfaceMapMaterialValue(mapName, PCB_SUBSTRATE_SURFACE_MATERIAL);
+export function surfaceMapSubstrateColor(
+  mapName: MaterialSurfaceMapName,
+  material: PcbMaterial,
+): string {
+  return surfaceMapMaterialValue(mapName, PCB_SUBSTRATE_SURFACE_MATERIALS[material]);
 }
 
 export type PreviewCanvasFactory = (widthPx: number, heightPx: number) => PreviewCanvasSource;
@@ -111,7 +132,7 @@ export interface PreviewSurfaceMapGeneratorOptions {
 }
 
 export interface PreviewSurfaceGenerationInput {
-  readonly doc: Pick<DocState, 'panelHp' | 'layers'>;
+  readonly doc: Pick<DocState, 'panelHp' | 'format' | 'material' | 'layers' | 'backLayers'>;
   readonly ticket: PreviewGenerationTicket;
   readonly maximumTextureSizePx: number;
   readonly preferredPixelsPerMm?: number;
@@ -190,6 +211,7 @@ interface SurfaceMapPaintTarget {
   readonly canvas: PreviewCanvasSource;
   readonly widthMm: number;
   readonly heightMm: number;
+  readonly material: PcbMaterial;
   readonly slices: PcbLayerSlices;
   readonly maskSheetFactory: MaskSheetFactory;
   readonly signal: AbortSignal;
@@ -241,14 +263,14 @@ function paintSurfaceMap(
   paintTarget: SurfaceMapPaintTarget,
   mapName: MaterialSurfaceMapName,
 ): void {
-  const { canvas, widthMm, heightMm, slices, signal } = paintTarget;
+  const { canvas, widthMm, heightMm, material, slices, signal } = paintTarget;
   const ctx = canvas2dContext(canvas);
   throwIfAborted(signal);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = surfaceMapSubstrateColor(mapName);
+  ctx.fillStyle = surfaceMapSubstrateColor(mapName, material);
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   enterPanelSpace(ctx, canvas, widthMm, heightMm);
@@ -327,6 +349,24 @@ export function createPreviewSurfaceMapGenerator(
   // one stable closure per generator gives it its own reusable scratch sheet.
   const maskSheetFactory: MaskSheetFactory = (widthPx, heightPx) =>
     canvasFactory(widthPx, heightPx);
+  // reconcileTextGeometry is a single-document reconciler: it evicts every
+  // cached entry absent from the given array, so reconciling the two faces
+  // as separate calls would evict the other face's pivots — including the
+  // editor's live-face state — on every generation. Both faces therefore
+  // reconcile as ONE combined snapshot, memoized by the pair of face
+  // identities so a same-document regeneration (e.g. font readiness) reuses
+  // the same array and never bumps the identity-keyed document incarnation.
+  let combinedFaceCache: {
+    readonly front: readonly Layer[];
+    readonly back: readonly Layer[];
+    readonly combined: readonly Layer[];
+  } | null = null;
+  const combineFaceLayers = (front: readonly Layer[], back: readonly Layer[]): readonly Layer[] => {
+    if (combinedFaceCache?.front !== front || combinedFaceCache.back !== back) {
+      combinedFaceCache = { front, back, combined: [...front, ...back] };
+    }
+    return combinedFaceCache.combined;
+  };
   const watchedAttempts = new WeakSet<FontLoadAttempt>();
   const latestRevisionByAttempt = new WeakMap<FontLoadAttempt, number>();
   const lateReadyUnsubscribers = new Set<() => void>();
@@ -375,7 +415,7 @@ export function createPreviewSurfaceMapGenerator(
       throwIfAborted(input.ticket.signal);
 
       const widthMm = panelWidthMm(input.doc.panelHp);
-      const heightMm = PANEL_HEIGHT_MM;
+      const heightMm = panelHeightMm(input.doc.format);
       const rasterSize = choosePreviewRasterSize({
         widthMm,
         heightMm,
@@ -386,14 +426,19 @@ export function createPreviewSurfaceMapGenerator(
       // Reconcile the canonical text geometry without replacing the editor's
       // repaint callback. Preview readiness is observed independently below.
       // The role-aware slices share `flat` with the shared projection (#150),
-      // not an ad-hoc flatten: for the editor's live doc this is the SAME
-      // array the canvas paints, so the reconcile here never bumps text
-      // geometry's array-identity-keyed document incarnation.
+      // not an ad-hoc flatten. A single reconcile covers BOTH faces via the
+      // memoized combined array (see combineFaceLayers); for an alumi doc it
+      // is the SAME array the editor canvas paints.
       const slices = projectPcbLayerSlices(input.doc.layers);
+      // Alumi ignores the back stack entirely (schema v6): its back face is
+      // untextured bare metal, so no back map set is painted at all.
+      const backSlices =
+        input.doc.material === 'alumi' ? null : projectPcbLayerSlices(input.doc.backLayers);
       const layers = slices.flat;
-      reconcileTextGeometry(layers);
+      const fontLayers = backSlices ? combineFaceLayers(layers, backSlices.flat) : layers;
+      reconcileTextGeometry(fontLayers);
       const generationFontAttempts = new Set<FontLoadAttempt>();
-      for (const layer of layers) {
+      for (const layer of fontLayers) {
         if (
           layer.hidden ||
           layer.type !== 'text' ||
@@ -407,34 +452,49 @@ export function createPreviewSurfaceMapGenerator(
         watchFontAttempt(attempt);
       }
 
-      const canvases = {} as Record<PreviewSurfaceMapName, PreviewCanvasSource>;
-      for (const mapName of PREVIEW_SURFACE_MAP_NAMES) {
-        throwIfAborted(input.ticket.signal);
-        const canvas = canvasFactory(rasterSize.widthPx, rasterSize.heightPx);
-        if (canvas.width !== rasterSize.widthPx || canvas.height !== rasterSize.heightPx) {
-          throw new Error('Preview canvas factory returned an incorrectly sized canvas');
+      const paintFaceMaps = (
+        faceSlices: PcbLayerSlices,
+      ): Record<PreviewSurfaceMapName, PreviewCanvasSource> => {
+        const canvases = {} as Record<PreviewSurfaceMapName, PreviewCanvasSource>;
+        for (const mapName of PREVIEW_SURFACE_MAP_NAMES) {
+          throwIfAborted(input.ticket.signal);
+          const canvas = canvasFactory(rasterSize.widthPx, rasterSize.heightPx);
+          if (canvas.width !== rasterSize.widthPx || canvas.height !== rasterSize.heightPx) {
+            throw new Error('Preview canvas factory returned an incorrectly sized canvas');
+          }
+          const paintTarget: SurfaceMapPaintTarget = {
+            canvas,
+            widthMm,
+            heightMm,
+            material: input.doc.material,
+            slices: faceSlices,
+            maskSheetFactory,
+            signal: input.ticket.signal,
+          };
+          if (mapName === 'height') paintHeightMap(paintTarget);
+          else paintSurfaceMap(paintTarget, mapName);
+          canvases[mapName] = canvas;
         }
-        const paintTarget: SurfaceMapPaintTarget = {
-          canvas,
-          widthMm,
-          heightMm,
-          slices,
-          maskSheetFactory,
-          signal: input.ticket.signal,
-        };
-        if (mapName === 'height') paintHeightMap(paintTarget);
-        else paintSurfaceMap(paintTarget, mapName);
-        canvases[mapName] = canvas;
-      }
+        return canvases;
+      };
+
+      // Both faces paint in canonical fabrication coordinates; the back
+      // face's display-side x mirror lives in the texture sampling contract
+      // (contracts.PREVIEW_BACK_FACE_ORIENTATION), never in the canvases.
+      const canvases = paintFaceMaps(slices);
+      const backCanvases = backSlices ? paintFaceMaps(backSlices) : null;
 
       throwIfAborted(input.ticket.signal);
       const snapshot = createPreviewSurfaceSnapshot({
         surfaceRevision: input.ticket.surfaceRevision,
+        material: input.doc.material,
         widthMm,
         heightMm,
         thicknessMm: PANEL_THICKNESS_MM,
+        holes: panelHoles(input.doc.format, input.doc.panelHp),
         rasterSize,
         canvases,
+        backCanvases,
       });
       for (const attempt of generationFontAttempts) {
         latestRevisionByAttempt.set(attempt, input.ticket.surfaceRevision);

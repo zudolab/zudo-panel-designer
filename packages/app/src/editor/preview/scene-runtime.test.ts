@@ -435,13 +435,16 @@ function snapshot(
   const source = { width: 121, height: 257 } as PreviewCanvasSource;
   return createPreviewSurfaceSnapshot({
     surfaceRevision,
+    material: 'fr4',
     ...dimensions,
+    holes: [],
     rasterSize: {
       widthPx: 121,
       heightPx: 257,
       effectivePixelsPerMm: Math.min(121 / dimensions.widthMm, 257 / dimensions.heightMm),
     },
     canvases: { baseColor: source, metalness: source, roughness: source, height: source },
+    backCanvases: { baseColor: source, metalness: source, roughness: source, height: source },
   });
 }
 
