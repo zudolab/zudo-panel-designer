@@ -183,11 +183,18 @@ describe('reference export — alumi 1U-4hp (#227 catalog, kicad-source: top 11.
     const ir = ok(await build(docFor('1U', 4, 'alumi')));
     const mask = ir.layers.find((l) => l.role === 'solder-mask')!;
     expect(mask.regions).toHaveLength(2);
-    expectBoundsClose(bounds(mask.regions[0].outer), [11.05 - 5.35, 3.0 - 1.8, 11.05 + 5.35, 3.0 + 1.8]);
-    expectBoundsClose(
-      bounds(mask.regions[1].outer),
-      [8.8 - 5.35, 36.65 - 1.8, 8.8 + 5.35, 36.65 + 1.8],
-    );
+    expectBoundsClose(bounds(mask.regions[0].outer), [
+      11.05 - 5.35,
+      3.0 - 1.8,
+      11.05 + 5.35,
+      3.0 + 1.8,
+    ]);
+    expectBoundsClose(bounds(mask.regions[1].outer), [
+      8.8 - 5.35,
+      36.65 - 1.8,
+      8.8 + 5.35,
+      36.65 + 1.8,
+    ]);
   });
 
   it('zip: B.Mask-openings-only (no .GBL/.GBO), panel height is 1U-derived (39.65), not the 3U default', async () => {
@@ -255,7 +262,9 @@ describe('reference export — FR-4 3U-12hp with front+back artwork', () => {
   });
 
   it('zip: .GBL/.GBS/.GBO are all present, and the back artwork is X-mirrored exactly once', async () => {
-    const entries = await zipEntries(docFor('3U', 12, 'fr4', { copper: [front], backCopper: [back] }));
+    const entries = await zipEntries(
+      docFor('3U', 12, 'fr4', { copper: [front], backCopper: [back] }),
+    );
     for (const ext of ['GTL', 'GTS', 'GTO', 'GBL', 'GBS', 'GBO', 'GKO']) {
       expect(entries.has(`zpd-panel-12hp.${ext}`)).toBe(true);
     }
