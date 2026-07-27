@@ -408,11 +408,7 @@ function FontCard({
             isFavorite ? 'text-amber-300' : 'text-neutral-500 hover:text-neutral-300'
           }`}
         >
-          {isFavorite ? (
-            <Star className="h-3.5 w-3.5" />
-          ) : (
-            <StarOutline className="h-3.5 w-3.5" />
-          )}
+          {isFavorite ? <Star className="h-3.5 w-3.5" /> : <StarOutline className="h-3.5 w-3.5" />}
         </button>
       </Tooltip>
     </div>

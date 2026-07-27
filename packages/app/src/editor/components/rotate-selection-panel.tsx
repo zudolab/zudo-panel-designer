@@ -23,7 +23,11 @@
 import { useMemo, useState } from 'react';
 import { stackForSide, withStackForSide, type DocState, type PanelSide } from '@zpd/core';
 import { projectFlatLayers } from '../flat-projection';
-import { bakeMultiRotate, captureMultiRotateSession, type MultiRotateSession } from '../multi-rotate';
+import {
+  bakeMultiRotate,
+  captureMultiRotateSession,
+  type MultiRotateSession,
+} from '../multi-rotate';
 import { resolveSelectionLeaves, resolveSelectionOverlayMode } from '../selection-resolve';
 import type { ToolContext } from '../types';
 import { Field } from './inspector-ui';

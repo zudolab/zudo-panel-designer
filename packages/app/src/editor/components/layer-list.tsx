@@ -887,11 +887,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
                 toggle(group.id);
               }}
             >
-              {group.hidden ? (
-                <EyeOff className="h-3.5 w-3.5" />
-              ) : (
-                <Eye className="h-3.5 w-3.5" />
-              )}
+              {group.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
             </button>
             <button
               title="Ungroup"

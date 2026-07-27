@@ -845,7 +845,9 @@ describe('side-switch commands (#233) — palette-only Front/Back with material 
     expect(back.isEnabled(stubCommandCtx({ doc: fr4Doc }))).toBe(true);
     expect(back.isEnabled(stubCommandCtx({ doc: fr4Doc, activeSide: 'back' }))).toBe(false);
     expect(
-      back.isEnabled(stubCommandCtx({ doc: { panelHp: 12, guides: [], layers: [], material: 'alumi' } })),
+      back.isEnabled(
+        stubCommandCtx({ doc: { panelHp: 12, guides: [], layers: [], material: 'alumi' } }),
+      ),
     ).toBe(false);
   });
 

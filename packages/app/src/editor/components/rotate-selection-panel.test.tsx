@@ -91,7 +91,14 @@ function makeHarness(initialFixture: DocFixture) {
   function Host({ selectedIds }: { selectedIds: readonly string[] }) {
     const [, setTick] = useState(0);
     notify = () => setTick((t) => t + 1);
-    return <RotateSelectionPanel ctx={ctx} doc={history.present} activeSide="front" selectedIds={selectedIds} />;
+    return (
+      <RotateSelectionPanel
+        ctx={ctx}
+        doc={history.present}
+        activeSide="front"
+        selectedIds={selectedIds}
+      />
+    );
   }
   return {
     ctx,
