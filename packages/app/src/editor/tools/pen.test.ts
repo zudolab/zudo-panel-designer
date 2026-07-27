@@ -45,6 +45,7 @@ import {
   abortGesture as coreAbortGesture,
   beginGesture as coreBeginGesture,
   commit as coreCommit,
+  createDefaultDoc,
   createHistory,
   createPcbLayerStack,
   redo as coreRedo,
@@ -66,6 +67,7 @@ const PANEL: PanelDims = { widthMm: 100, heightMm: 128.5 };
 
 function makeHarness(onActiveToolChange?: (id: string) => void) {
   let history: HistoryState<DocState> = createHistory({
+    ...createDefaultDoc(),
     panelHp: 12,
     guides: [],
     layers: createPcbLayerStack(),
@@ -142,6 +144,12 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
       activeToolId = id;
       onActiveToolChange?.(id);
     },
+    activeSide: 'front',
+    get activeStack() {
+      return history.present.layers;
+    },
+    setActiveSide: () => {},
+    clearToolDraft: () => {},
     requestRepaint: () => {
       repaintCalls += 1;
     },

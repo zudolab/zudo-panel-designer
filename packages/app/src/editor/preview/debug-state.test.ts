@@ -81,11 +81,14 @@ describe('preview debug state', () => {
     } as unknown as PreviewCanvasSource;
     const snapshot = createPreviewSurfaceSnapshot({
       surfaceRevision: 9,
+      material: 'fr4',
       widthMm: 4,
       heightMm: 2,
       thicknessMm: 2.5,
+      holes: [],
       rasterSize: { widthPx: 4, heightPx: 2, effectivePixelsPerMm: 1 },
       canvases: { baseColor: source, metalness: source, roughness: source, height: source },
+      backCanvases: { baseColor: source, metalness: source, roughness: source, height: source },
     });
     const publisher = createPreviewDebugPublisher();
     publisher.publish(summary(9), snapshot);
@@ -111,11 +114,14 @@ describe('preview debug state', () => {
     } as unknown as PreviewCanvasSource;
     const snapshot = createPreviewSurfaceSnapshot({
       surfaceRevision: 12,
+      material: 'fr4',
       widthMm: 2,
       heightMm: 1,
       thicknessMm: 2.5,
+      holes: [],
       rasterSize: { widthPx: 2, heightPx: 1, effectivePixelsPerMm: 1 },
       canvases: { baseColor: source, metalness: source, roughness: source, height: source },
+      backCanvases: { baseColor: source, metalness: source, roughness: source, height: source },
     });
     const publisher = createPreviewDebugPublisher();
     publisher.publish(summary(12), snapshot);

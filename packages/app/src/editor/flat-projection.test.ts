@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   serializePanelConfig,
   type DocState,
@@ -127,6 +128,7 @@ describe('projectFlatLayers', () => {
   // the document — a group-free doc serializes byte-identically after reads.
   it('does not mutate the doc: serialization is byte-identical after projecting', () => {
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [shape('a'), group('g', [shape('b')])] }),

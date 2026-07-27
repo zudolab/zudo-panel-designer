@@ -17,8 +17,8 @@ export function createDemoDoc(hp = 12): DocState {
   const base = createDefaultDoc(hp);
   const [copper, solderMask, silkscreen] = base.layers;
   return {
+    ...base,
     panelHp: hp,
-    guides: base.guides,
     layers: [
       {
         ...copper,

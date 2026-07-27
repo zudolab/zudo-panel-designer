@@ -1,14 +1,18 @@
 import {
   PALETTE,
-  PANEL_HEIGHT_MM,
   PANEL_THICKNESS_MM,
   PCB_SUBSTRATE,
+  panelHeightMm,
+  panelHoles,
   panelWidthMm,
   projectPcbLayerSlices,
+  substrateForMaterial,
   type ColorIndex,
   type DocState,
   type Layer,
+  type PanelHole,
   type PcbLayerSlices,
+  type PcbMaterial,
 } from '@zpd/core';
 import { ensureFontAttempt, type FontInitialResult, type FontLoadAttempt } from '../fonts';
 import { acquireMaskSheet, paintMaskPunches, type MaskSheetFactory } from '../mask-sheet';
@@ -49,6 +53,21 @@ export const PCB_SUBSTRATE_SURFACE_MATERIAL: PcbSurfaceMaterial = Object.freeze(
   metalness: 0,
   roughness: 0.55,
 });
+
+// Per-material bare-substrate coefficients (#232). The alumi entry is the
+// epic's "shining gray": full metalness with low roughness so exposed
+// aluminum reads as polished panel metal next to the warm gold/HASL copper.
+// Both hexes come from core's substrateForMaterial so 2D and 3D substrate
+// can never drift apart.
+export const PCB_SUBSTRATE_SURFACE_MATERIALS: Readonly<Record<PcbMaterial, PcbSurfaceMaterial>> =
+  Object.freeze({
+    fr4: PCB_SUBSTRATE_SURFACE_MATERIAL,
+    alumi: Object.freeze({
+      baseColor: substrateForMaterial('alumi').hex,
+      metalness: 1,
+      roughness: 0.2,
+    }),
+  });
 
 type PreviewSurfaceMapName = keyof PreviewSurfaceMaps;
 
@@ -99,8 +118,11 @@ export function surfaceMapColorForPalette(
   return surfaceMapMaterialValue(mapName, PCB_SURFACE_MATERIALS[color]);
 }
 
-export function surfaceMapSubstrateColor(mapName: MaterialSurfaceMapName): string {
-  return surfaceMapMaterialValue(mapName, PCB_SUBSTRATE_SURFACE_MATERIAL);
+export function surfaceMapSubstrateColor(
+  mapName: MaterialSurfaceMapName,
+  material: PcbMaterial,
+): string {
+  return surfaceMapMaterialValue(mapName, PCB_SUBSTRATE_SURFACE_MATERIALS[material]);
 }
 
 export type PreviewCanvasFactory = (widthPx: number, heightPx: number) => PreviewCanvasSource;
@@ -111,7 +133,7 @@ export interface PreviewSurfaceMapGeneratorOptions {
 }
 
 export interface PreviewSurfaceGenerationInput {
-  readonly doc: Pick<DocState, 'panelHp' | 'layers'>;
+  readonly doc: Pick<DocState, 'panelHp' | 'format' | 'material' | 'layers' | 'backLayers'>;
   readonly ticket: PreviewGenerationTicket;
   readonly maximumTextureSizePx: number;
   readonly preferredPixelsPerMm?: number;
@@ -190,9 +212,55 @@ interface SurfaceMapPaintTarget {
   readonly canvas: PreviewCanvasSource;
   readonly widthMm: number;
   readonly heightMm: number;
+  readonly material: PcbMaterial;
   readonly slices: PcbLayerSlices;
+  readonly holes: readonly PanelHole[];
   readonly maskSheetFactory: MaskSheetFactory;
+  // True only for the BACK face: its layer stack is authored in back-view doc
+  // space and must cross into the canvas's canonical space (see
+  // withArtworkSpace). Holes are canonical already and never take this path.
+  readonly artworkIsBackView: boolean;
   readonly signal: AbortSignal;
+}
+
+// Screw-hole fabrication injected into every face's map set (#234, epic #226
+// decisions 11/12): each catalog hole opens the solder mask with its
+// `opening` stadium on both materials, and FR-4 additionally lays a copper
+// stadium of the same shape under the punch so the exposed annular ring
+// reads as the plated (PTH) gold barrel's ring; alumi's NPTH openings expose
+// the shining substrate instead. Canonical catalog coordinates serve both
+// faces unchanged — the back face's x mirror lives in the sampling contract
+// (contracts.PREVIEW_BACK_FACE_ORIENTATION), never in the paint.
+function fillHoleOpeningStadiums(ctx: CanvasRenderingContext2D, holes: readonly PanelHole[]): void {
+  for (const hole of holes) {
+    const radius = hole.opening.width / 2;
+    // A round hole's square opening (width === length) collapses the flat
+    // span to zero and the stadium degrades to a pure circle.
+    const halfSpan = Math.max(0, (hole.opening.length - hole.opening.width) / 2);
+    ctx.beginPath();
+    ctx.arc(hole.cx + halfSpan, hole.cy, radius, -Math.PI / 2, Math.PI / 2, false);
+    ctx.arc(hole.cx - halfSpan, hole.cy, radius, Math.PI / 2, (3 * Math.PI) / 2, false);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function paintHoleRingCopper(
+  ctx: CanvasRenderingContext2D,
+  holes: readonly PanelHole[],
+  color: string,
+): void {
+  ctx.fillStyle = color;
+  fillHoleOpeningStadiums(ctx, holes);
+}
+
+function punchHoleOpenings(ctx: CanvasRenderingContext2D, holes: readonly PanelHole[]): void {
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  // Alpha is what punches (mask-sheet contract); the hue never lands.
+  ctx.fillStyle = '#000000';
+  fillHoleOpeningStadiums(ctx, holes);
+  ctx.restore();
 }
 
 function enterPanelSpace(
@@ -208,6 +276,43 @@ function enterPanelSpace(
   target.clip();
 }
 
+// Runs `paint` in the coordinate space the given face's LAYER STACK is
+// authored in, leaving the canvas canonical.
+//
+// `doc.backLayers` is authored directly in BACK-VIEW doc space (#233: layer
+// content is never mirrored for display, only template holes are), while
+// these canvases are canonical fabrication space by contract
+// (contracts.PREVIEW_BACK_FACE_ORIENTATION) — the two differ by exactly the
+// `x → widthMm − x` reflection. Crossing it here is the paint-side twin of
+// gerber/back-extract.ts's `mirrorInput`, which mirrors the same stack once at
+// the export boundary; without it the preview's back artwork would land
+// mirrored against both the composer's Back view and the exported `.GBL`.
+//
+// The reflection is applied to the whole artwork pass rather than to layer
+// data, so shapes, paths, patterns, and glyph runs all cross identically —
+// and back silkscreen text is mirrored in canonical space exactly as it is on
+// a real board, reading correctly again once the back face is viewed from
+// behind. Screw holes never come through here: `panelHoles()` is already
+// canonical for both faces.
+function withArtworkSpace(
+  ctx: CanvasRenderingContext2D,
+  target: SurfaceMapPaintTarget,
+  paint: () => void,
+): void {
+  if (!target.artworkIsBackView) {
+    paint();
+    return;
+  }
+  ctx.save();
+  ctx.translate(target.widthMm, 0);
+  ctx.scale(-1, 1);
+  try {
+    paint();
+  } finally {
+    ctx.restore();
+  }
+}
+
 // Fills the shared scratch sheet with `fillStyle` and punches every visible
 // mask leaf out of it. `punchColorFor` only needs opacity — alpha is what
 // punches (see mask-sheet.ts).
@@ -216,7 +321,7 @@ function punchedMaskSheet(
   fillStyle: string,
   punchColorFor: (color: ColorIndex) => string,
 ): PreviewCanvasSource {
-  const { canvas, widthMm, heightMm, slices, maskSheetFactory } = paintTarget;
+  const { canvas, widthMm, heightMm, slices, holes, maskSheetFactory } = paintTarget;
   const sheet = acquireMaskSheet(maskSheetFactory, canvas.width, canvas.height);
   const sheetCtx = sheet.ctx;
   sheetCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -228,7 +333,12 @@ function punchedMaskSheet(
   sheetCtx.fillRect(0, 0, canvas.width, canvas.height);
   sheetCtx.save();
   sheetCtx.setTransform(canvas.width / widthMm, 0, 0, canvas.height / heightMm, 0, 0);
-  paintMaskPunches(sheetCtx, slices.solderMask, { colorFor: punchColorFor });
+  withArtworkSpace(sheetCtx, paintTarget, () => {
+    paintMaskPunches(sheetCtx, slices.solderMask, { colorFor: punchColorFor });
+  });
+  // The screw-hole openings are fabrication data, not artwork: they punch on
+  // both faces and both materials, independent of what the user drew.
+  punchHoleOpenings(sheetCtx, holes);
   sheetCtx.restore();
   return sheet.canvas;
 }
@@ -241,21 +351,29 @@ function paintSurfaceMap(
   paintTarget: SurfaceMapPaintTarget,
   mapName: MaterialSurfaceMapName,
 ): void {
-  const { canvas, widthMm, heightMm, slices, signal } = paintTarget;
+  const { canvas, widthMm, heightMm, material, slices, holes, signal } = paintTarget;
   const ctx = canvas2dContext(canvas);
   throwIfAborted(signal);
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
-  ctx.fillStyle = surfaceMapSubstrateColor(mapName);
+  ctx.fillStyle = surfaceMapSubstrateColor(mapName, material);
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   enterPanelSpace(ctx, canvas, widthMm, heightMm);
-  paintCopperCoverage(ctx, slices.copper, {
-    color: surfaceMapColorForPalette(mapName, 1),
-    signal,
+  withArtworkSpace(ctx, paintTarget, () => {
+    paintCopperCoverage(ctx, slices.copper, {
+      color: surfaceMapColorForPalette(mapName, 1),
+      signal,
+    });
   });
+  // FR-4 screw holes are PTH (epic decision 11): the copper ring under the
+  // mask opening is what makes the exposed ring read gold. Alumi is NPTH —
+  // no ring, its opening exposes bare substrate.
+  if (material === 'fr4') {
+    paintHoleRingCopper(ctx, holes, surfaceMapColorForPalette(mapName, 1));
+  }
   ctx.restore();
 
   // Hidden mask container means NO sheet at all — bare copper on substrate —
@@ -269,15 +387,17 @@ function paintSurfaceMap(
   }
 
   enterPanelSpace(ctx, canvas, widthMm, heightMm);
-  paintSliceLayers(
-    ctx,
-    slices.silkscreen,
-    {
-      colorFor: (color) => surfaceMapColorForPalette(mapName, color),
-      loadingTextAlpha: 1,
-    },
-    signal,
-  );
+  withArtworkSpace(ctx, paintTarget, () => {
+    paintSliceLayers(
+      ctx,
+      slices.silkscreen,
+      {
+        colorFor: (color) => surfaceMapColorForPalette(mapName, color),
+        loadingTextAlpha: 1,
+      },
+      signal,
+    );
+  });
   ctx.restore();
 }
 
@@ -286,7 +406,7 @@ function paintSurfaceMap(
 // draping over copper stacks both thicknesses (epic #176). Silkscreen never
 // paints here — its ink adds no meaningful height.
 function paintHeightMap(paintTarget: SurfaceMapPaintTarget): void {
-  const { canvas, widthMm, heightMm, slices, signal } = paintTarget;
+  const { canvas, widthMm, heightMm, material, slices, holes, signal } = paintTarget;
   const ctx = canvas2dContext(canvas);
   throwIfAborted(signal);
 
@@ -297,7 +417,13 @@ function paintHeightMap(paintTarget: SurfaceMapPaintTarget): void {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   enterPanelSpace(ctx, canvas, widthMm, heightMm);
-  paintCopperCoverage(ctx, slices.copper, { color: PREVIEW_HEIGHT_COPPER_COLOR, signal });
+  withArtworkSpace(ctx, paintTarget, () => {
+    paintCopperCoverage(ctx, slices.copper, { color: PREVIEW_HEIGHT_COPPER_COLOR, signal });
+  });
+  // The FR-4 ring is real copper, so it raises the surface exactly like
+  // artwork copper does (source-over: overlap with artwork stays one copper
+  // thickness, never additive).
+  if (material === 'fr4') paintHoleRingCopper(ctx, holes, PREVIEW_HEIGHT_COPPER_COLOR);
   ctx.restore();
 
   // Hidden mask container adds no mask thickness anywhere; an empty visible
@@ -327,6 +453,24 @@ export function createPreviewSurfaceMapGenerator(
   // one stable closure per generator gives it its own reusable scratch sheet.
   const maskSheetFactory: MaskSheetFactory = (widthPx, heightPx) =>
     canvasFactory(widthPx, heightPx);
+  // reconcileTextGeometry is a single-document reconciler: it evicts every
+  // cached entry absent from the given array, so reconciling the two faces
+  // as separate calls would evict the other face's pivots — including the
+  // editor's live-face state — on every generation. Both faces therefore
+  // reconcile as ONE combined snapshot, memoized by the pair of face
+  // identities so a same-document regeneration (e.g. font readiness) reuses
+  // the same array and never bumps the identity-keyed document incarnation.
+  let combinedFaceCache: {
+    readonly front: readonly Layer[];
+    readonly back: readonly Layer[];
+    readonly combined: readonly Layer[];
+  } | null = null;
+  const combineFaceLayers = (front: readonly Layer[], back: readonly Layer[]): readonly Layer[] => {
+    if (combinedFaceCache?.front !== front || combinedFaceCache.back !== back) {
+      combinedFaceCache = { front, back, combined: [...front, ...back] };
+    }
+    return combinedFaceCache.combined;
+  };
   const watchedAttempts = new WeakSet<FontLoadAttempt>();
   const latestRevisionByAttempt = new WeakMap<FontLoadAttempt, number>();
   const lateReadyUnsubscribers = new Set<() => void>();
@@ -375,7 +519,11 @@ export function createPreviewSurfaceMapGenerator(
       throwIfAborted(input.ticket.signal);
 
       const widthMm = panelWidthMm(input.doc.panelHp);
-      const heightMm = PANEL_HEIGHT_MM;
+      const heightMm = panelHeightMm(input.doc.format);
+      // The golden screw-hole catalog, derived from (format, hp) — painted
+      // into every face's maps below and carried on the snapshot for the
+      // geometry cut.
+      const holes = panelHoles(input.doc.format, input.doc.panelHp);
       const rasterSize = choosePreviewRasterSize({
         widthMm,
         heightMm,
@@ -386,14 +534,19 @@ export function createPreviewSurfaceMapGenerator(
       // Reconcile the canonical text geometry without replacing the editor's
       // repaint callback. Preview readiness is observed independently below.
       // The role-aware slices share `flat` with the shared projection (#150),
-      // not an ad-hoc flatten: for the editor's live doc this is the SAME
-      // array the canvas paints, so the reconcile here never bumps text
-      // geometry's array-identity-keyed document incarnation.
+      // not an ad-hoc flatten. A single reconcile covers BOTH faces via the
+      // memoized combined array (see combineFaceLayers); for an alumi doc it
+      // is the SAME array the editor canvas paints.
       const slices = projectPcbLayerSlices(input.doc.layers);
+      // Alumi ignores the back stack entirely (schema v6): its back face is
+      // untextured bare metal, so no back map set is painted at all.
+      const backSlices =
+        input.doc.material === 'alumi' ? null : projectPcbLayerSlices(input.doc.backLayers);
       const layers = slices.flat;
-      reconcileTextGeometry(layers);
+      const fontLayers = backSlices ? combineFaceLayers(layers, backSlices.flat) : layers;
+      reconcileTextGeometry(fontLayers);
       const generationFontAttempts = new Set<FontLoadAttempt>();
-      for (const layer of layers) {
+      for (const layer of fontLayers) {
         if (
           layer.hidden ||
           layer.type !== 'text' ||
@@ -407,34 +560,55 @@ export function createPreviewSurfaceMapGenerator(
         watchFontAttempt(attempt);
       }
 
-      const canvases = {} as Record<PreviewSurfaceMapName, PreviewCanvasSource>;
-      for (const mapName of PREVIEW_SURFACE_MAP_NAMES) {
-        throwIfAborted(input.ticket.signal);
-        const canvas = canvasFactory(rasterSize.widthPx, rasterSize.heightPx);
-        if (canvas.width !== rasterSize.widthPx || canvas.height !== rasterSize.heightPx) {
-          throw new Error('Preview canvas factory returned an incorrectly sized canvas');
+      const paintFaceMaps = (
+        faceSlices: PcbLayerSlices,
+        artworkIsBackView: boolean,
+      ): Record<PreviewSurfaceMapName, PreviewCanvasSource> => {
+        const canvases = {} as Record<PreviewSurfaceMapName, PreviewCanvasSource>;
+        for (const mapName of PREVIEW_SURFACE_MAP_NAMES) {
+          throwIfAborted(input.ticket.signal);
+          const canvas = canvasFactory(rasterSize.widthPx, rasterSize.heightPx);
+          if (canvas.width !== rasterSize.widthPx || canvas.height !== rasterSize.heightPx) {
+            throw new Error('Preview canvas factory returned an incorrectly sized canvas');
+          }
+          const paintTarget: SurfaceMapPaintTarget = {
+            canvas,
+            widthMm,
+            heightMm,
+            material: input.doc.material,
+            slices: faceSlices,
+            holes,
+            maskSheetFactory,
+            artworkIsBackView,
+            signal: input.ticket.signal,
+          };
+          if (mapName === 'height') paintHeightMap(paintTarget);
+          else paintSurfaceMap(paintTarget, mapName);
+          canvases[mapName] = canvas;
         }
-        const paintTarget: SurfaceMapPaintTarget = {
-          canvas,
-          widthMm,
-          heightMm,
-          slices,
-          maskSheetFactory,
-          signal: input.ticket.signal,
-        };
-        if (mapName === 'height') paintHeightMap(paintTarget);
-        else paintSurfaceMap(paintTarget, mapName);
-        canvases[mapName] = canvas;
-      }
+        return canvases;
+      };
+
+      // Both faces paint in canonical fabrication coordinates; the back
+      // face's display-side x mirror lives in the texture sampling contract
+      // (contracts.PREVIEW_BACK_FACE_ORIENTATION), never in the canvases.
+      // Reaching canonical costs the back face one reflection of its own
+      // artwork, because `doc.backLayers` is authored in back-view doc space
+      // (see withArtworkSpace); its holes are canonical already.
+      const canvases = paintFaceMaps(slices, false);
+      const backCanvases = backSlices ? paintFaceMaps(backSlices, true) : null;
 
       throwIfAborted(input.ticket.signal);
       const snapshot = createPreviewSurfaceSnapshot({
         surfaceRevision: input.ticket.surfaceRevision,
+        material: input.doc.material,
         widthMm,
         heightMm,
         thicknessMm: PANEL_THICKNESS_MM,
+        holes,
         rasterSize,
         canvases,
+        backCanvases,
       });
       for (const attempt of generationFontAttempts) {
         latestRevisionByAttempt.set(attempt, input.ticket.surfaceRevision);

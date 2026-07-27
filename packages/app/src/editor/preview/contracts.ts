@@ -1,3 +1,5 @@
+import type { PanelHole, PcbMaterial } from '@zpd/core';
+
 export type PreviewSurfaceRevision = number;
 export type PreviewCanvasSource = HTMLCanvasElement | OffscreenCanvas;
 export type PreviewMapColorSpace = 'srgb' | 'linear-scalar';
@@ -50,21 +52,51 @@ export const PREVIEW_FRONT_FACE_ORIENTATION = Object.freeze({
   documentTopLeftUv: Object.freeze({ u: 0, v: 1 }),
 } as const);
 
+// The back (−z) face displays the SAME canonical fabrication space as the
+// front — front view, origin panel top-left (panel-templates.ts contract) —
+// mirrored in x, exactly like every 2D back-side consumer (`width − x` for
+// display only). Back canvases are therefore painted in canonical coords and
+// sampled with u mirrored (document top-left lands at u = 1), which also
+// places the artwork at its true physical x so it registers with the
+// canonically positioned panel holes.
+export const PREVIEW_BACK_FACE_ORIENTATION = Object.freeze({
+  documentOrigin: 'top-left',
+  documentXAxis: 'right',
+  documentYAxis: 'down',
+  modelOrigin: 'board-center',
+  modelXAxis: 'right',
+  modelYAxis: 'up',
+  outwardNormal: '-z',
+  canvasOrigin: 'top-left',
+  documentTopLeftUv: Object.freeze({ u: 1, v: 1 }),
+} as const);
+
 export interface PreviewSurfaceSnapshot {
   readonly surfaceRevision: PreviewSurfaceRevision;
+  readonly material: PcbMaterial;
   readonly physicalDimensions: PreviewPhysicalDimensions;
+  // Canonical fabrication-coordinate screw holes derived from (format, hp);
+  // carried through the snapshot for the hole-cutting consumer (#234).
+  readonly holes: readonly PanelHole[];
   readonly rasterSize: PreviewRasterSize;
   readonly orientation: typeof PREVIEW_FRONT_FACE_ORIENTATION;
+  readonly backOrientation: typeof PREVIEW_BACK_FACE_ORIENTATION;
   readonly maps: PreviewSurfaceMaps;
+  // Back-face map set painted from the BACK layer stack in canonical coords.
+  // null means an untextured back: alumi renders bare polished metal there.
+  readonly backMaps: PreviewSurfaceMaps | null;
 }
 
 export interface PreviewSurfaceSnapshotInput {
   readonly surfaceRevision: PreviewSurfaceRevision;
+  readonly material: PcbMaterial;
   readonly widthMm: number;
   readonly heightMm: number;
   readonly thicknessMm: number;
+  readonly holes: readonly PanelHole[];
   readonly rasterSize: PreviewRasterSize;
   readonly canvases: Readonly<Record<keyof PreviewSurfaceMaps, PreviewCanvasSource>>;
+  readonly backCanvases: Readonly<Record<keyof PreviewSurfaceMaps, PreviewCanvasSource>> | null;
 }
 
 export interface PreviewFrontFacePoint {
@@ -130,6 +162,29 @@ export function mapDocumentPointToPreviewFront(
   });
 }
 
+function freezePreviewSurfaceMaps(
+  canvases: Readonly<Record<keyof PreviewSurfaceMaps, PreviewCanvasSource>>,
+): PreviewSurfaceMaps {
+  return Object.freeze({
+    baseColor: Object.freeze({
+      source: canvases.baseColor,
+      colorSpace: PREVIEW_MAP_COLOR_SPACES.baseColor,
+    }),
+    metalness: Object.freeze({
+      source: canvases.metalness,
+      colorSpace: PREVIEW_MAP_COLOR_SPACES.metalness,
+    }),
+    roughness: Object.freeze({
+      source: canvases.roughness,
+      colorSpace: PREVIEW_MAP_COLOR_SPACES.roughness,
+    }),
+    height: Object.freeze({
+      source: canvases.height,
+      colorSpace: PREVIEW_MAP_COLOR_SPACES.height,
+    }),
+  });
+}
+
 export function createPreviewSurfaceSnapshot(
   input: PreviewSurfaceSnapshotInput,
 ): PreviewSurfaceSnapshot {
@@ -155,7 +210,21 @@ export function createPreviewSurfaceSnapshot(
     throw new RangeError('effectivePixelsPerMm must match the physical and raster dimensions');
   }
 
-  for (const source of Object.values(input.canvases)) {
+  // Textured-back coupling is a contract, not a convention: FR-4 always
+  // carries a back map set, while alumi's back stays untextured bare metal.
+  if (input.material === 'alumi' && input.backCanvases !== null) {
+    throw new Error(
+      'an alumi preview keeps an untextured bare-metal back; backCanvases must be null',
+    );
+  }
+  if (input.material !== 'alumi' && input.backCanvases === null) {
+    throw new Error('an fr4 preview textures the back face; backCanvases are required');
+  }
+
+  const faceCanvasSets = input.backCanvases
+    ? [input.canvases, input.backCanvases]
+    : [input.canvases];
+  for (const source of faceCanvasSets.flatMap((set) => Object.values(set))) {
     if (source.width !== input.rasterSize.widthPx || source.height !== input.rasterSize.heightPx) {
       throw new RangeError('every preview canvas must match the selected raster size');
     }
@@ -167,31 +236,17 @@ export function createPreviewSurfaceSnapshot(
     thicknessMm: input.thicknessMm,
   });
   const rasterSize = Object.freeze({ ...input.rasterSize });
-  const maps = Object.freeze({
-    baseColor: Object.freeze({
-      source: input.canvases.baseColor,
-      colorSpace: PREVIEW_MAP_COLOR_SPACES.baseColor,
-    }),
-    metalness: Object.freeze({
-      source: input.canvases.metalness,
-      colorSpace: PREVIEW_MAP_COLOR_SPACES.metalness,
-    }),
-    roughness: Object.freeze({
-      source: input.canvases.roughness,
-      colorSpace: PREVIEW_MAP_COLOR_SPACES.roughness,
-    }),
-    height: Object.freeze({
-      source: input.canvases.height,
-      colorSpace: PREVIEW_MAP_COLOR_SPACES.height,
-    }),
-  });
 
   return Object.freeze({
     surfaceRevision: input.surfaceRevision,
+    material: input.material,
     physicalDimensions,
+    holes: Object.freeze([...input.holes]),
     rasterSize,
     orientation: PREVIEW_FRONT_FACE_ORIENTATION,
-    maps,
+    backOrientation: PREVIEW_BACK_FACE_ORIENTATION,
+    maps: freezePreviewSurfaceMaps(input.canvases),
+    backMaps: input.backCanvases ? freezePreviewSurfaceMaps(input.backCanvases) : null,
   });
 }
 
@@ -373,10 +428,15 @@ export interface PreviewAccessibilityCopy {
 
 export function createPreviewAccessibilityCopy(
   dimensions: PreviewPhysicalDimensions,
+  material: PcbMaterial,
 ): PreviewAccessibilityCopy {
+  const size = `${dimensions.widthMm} mm wide by ${dimensions.heightMm} mm high by ${dimensions.thicknessMm} mm thick`;
   return Object.freeze({
     stageInstructions:
       'Drag to rotate. Use Pan to move the board, use the wheel, pinch, or plus and minus to zoom, and use Reset to restore the view.',
-    panelSummary: `PCB preview: ${dimensions.widthMm} mm wide by ${dimensions.heightMm} mm high by ${dimensions.thicknessMm} mm thick. Black soldermask covers the board except where drawn openings expose it; exposed copper with the gold/HASL finish is metallic and reads slightly raised, with the mask draping over covered copper as a subtle emboss. White silkscreen is matte.`,
+    panelSummary:
+      material === 'alumi'
+        ? `Aluminum PCB preview: ${size}. Polished aluminum shines through drawn mask openings and across the bare edges and back. Black soldermask covers the rest of the front; exposed copper with the gold/HASL finish is metallic. White silkscreen is matte.`
+        : `PCB preview: ${size}. Black soldermask covers the board except where drawn openings expose it; exposed copper with the gold/HASL finish is metallic and reads slightly raised, with the mask draping over covered copper as a subtle emboss. White silkscreen is matte.`,
   });
 }

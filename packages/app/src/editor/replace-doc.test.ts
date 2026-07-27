@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   type DocState,
   type ImageLayer,
@@ -38,6 +39,8 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     selectIds: vi.fn(),
     setCamera: vi.fn(),
     setActiveTool: vi.fn(),
+    setActiveSide: vi.fn(),
+    clearToolDraft: vi.fn(),
     requestRepaint: vi.fn(),
     evictImageCache: vi.fn(),
     openDialog: vi.fn(),
@@ -61,6 +64,7 @@ describe('replaceDoc', () => {
   it('resets history with the next doc instead of committing (does not push an undo entry)', () => {
     const ctx = stubCtx();
     const nextDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 6,
       guides: [],
       layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }),
@@ -76,13 +80,29 @@ describe('replaceDoc', () => {
 
   it('clears the selection', () => {
     const ctx = stubCtx({ selectedIds: ['stale-1'] });
-    replaceDoc({ panelHp: 6, guides: [], layers: createPcbLayerStack() }, ctx);
+    replaceDoc(
+      { ...createDefaultDoc(), panelHp: 6, guides: [], layers: createPcbLayerStack() },
+      ctx,
+    );
     expect(ctx.selectIds).toHaveBeenCalledWith([]);
+  });
+
+  it('resets the active side to front and discards the in-progress tool draft (#230)', () => {
+    const ctx = stubCtx();
+    replaceDoc(
+      { ...createDefaultDoc(), panelHp: 6, guides: [], layers: createPcbLayerStack() },
+      ctx,
+    );
+    // clearToolDraft is unconditional — setActiveSide('front') alone would
+    // no-op (and skip the draft discard) when the editor is already on front.
+    expect(ctx.clearToolDraft).toHaveBeenCalledTimes(1);
+    expect(ctx.setActiveSide).toHaveBeenCalledWith('front');
   });
 
   it('reconciles the image cache against the next doc layers', () => {
     const ctx = stubCtx();
     const nextDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 6,
       guides: [],
       layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }),
@@ -118,6 +138,7 @@ describe('replaceDoc', () => {
 
     const nextLayer = { ...oldLayer, name: 'New' };
     const nextDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 6,
       guides: [],
       layers: createPcbLayerStack({ copper: [nextLayer] }),

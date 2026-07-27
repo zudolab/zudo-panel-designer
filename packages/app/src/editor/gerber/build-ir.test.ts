@@ -1,10 +1,12 @@
 import {
+  createDefaultDoc,
   createPcbLayerContainer,
-  PANEL_HEIGHT_MM,
+  panelHeightMm,
   panelWidthMm,
   type DocState,
   type ImageLayer,
   type LayerNode,
+  type PanelFormat,
   type PathLayer,
   type PatternLayer,
   type PcbLayerStack,
@@ -22,6 +24,7 @@ import { setCuratedFontFileLoaderForTests } from './text-fonts';
 
 const HP = 16;
 const WIDTH = panelWidthMm(HP); // 80.9
+const HEIGHT = panelHeightMm('3U'); // 128.5 — createDefaultDoc()'s format
 
 let engine: BooleanEngine;
 beforeAll(async () => {
@@ -34,14 +37,24 @@ beforeAll(async () => {
 
 function doc(
   children: Partial<Record<'copper' | 'solder-mask' | 'silkscreen', LayerNode[]>> = {},
-  options: { readonly maskHidden?: boolean; readonly panelHp?: number } = {},
+  options: {
+    readonly maskHidden?: boolean;
+    readonly panelHp?: number;
+    readonly format?: PanelFormat;
+  } = {},
 ): DocState {
   const layers: PcbLayerStack = [
     createPcbLayerContainer('copper', children.copper ?? []),
     createPcbLayerContainer('solder-mask', children['solder-mask'] ?? [], options.maskHidden),
     createPcbLayerContainer('silkscreen', children.silkscreen ?? []),
   ];
-  return { panelHp: options.panelHp ?? HP, layers, guides: [] };
+  return {
+    ...createDefaultDoc(),
+    panelHp: options.panelHp ?? HP,
+    format: options.format ?? '3U',
+    layers,
+    guides: [],
+  };
 }
 
 function rect(over: Partial<ShapeLayer> & { id: string }): ShapeLayer {
@@ -78,16 +91,22 @@ function bounds(ring: IrRing): [number, number, number, number] {
 }
 
 describe('GerberIr contract (Decision 0)', () => {
-  it('emits exactly four layers, in order, with the pinned polarity and render mode', async () => {
+  it('emits the FR-4 role list in MATERIAL_LAYER_ROLES order with the pinned polarity and render mode', async () => {
     const ir = ok(await build(doc()));
-    expect(ir.layers).toHaveLength(4);
+    expect(ir.material).toBe('fr4');
     expect(ir.layers.map((l) => l.role)).toEqual([
       'copper',
       'solder-mask',
       'silkscreen',
+      'b-copper',
+      'b-solder-mask',
+      'b-silkscreen',
       'outline',
     ]);
     expect(ir.layers.map((l) => l.filePolarity)).toEqual([
+      'positive',
+      'negative',
+      'positive',
       'positive',
       'negative',
       'positive',
@@ -97,14 +116,96 @@ describe('GerberIr contract (Decision 0)', () => {
       'filled-region',
       'filled-region',
       'filled-region',
+      'filled-region',
+      'filled-region',
+      'filled-region',
       'stroked-contour',
+    ]);
+  });
+
+  it('emits the alumi role list — a B.Mask back only (Decision 12)', async () => {
+    const ir = ok(await build({ ...doc(), material: 'alumi' }));
+    expect(ir.material).toBe('alumi');
+    expect(ir.layers.map((l) => l.role)).toEqual([
+      'copper',
+      'solder-mask',
+      'silkscreen',
+      'b-solder-mask',
+      'outline',
     ]);
   });
 
   it('carries the panel from the spec table, not the hp × 5.08 fallback', async () => {
     const ir = ok(await build(doc()));
-    expect(ir.panel).toEqual({ hp: HP, widthMm: 80.9, heightMm: PANEL_HEIGHT_MM });
+    expect(ir.panel).toEqual({ format: '3U', hp: HP, widthMm: 80.9, heightMm: HEIGHT });
     expect(ir.panel.heightMm).toBe(128.5);
+  });
+
+  it('derives the panel height from the document format, not a fixed 3U constant (#229)', async () => {
+    const ir = ok(await build(doc({}, { panelHp: 8, format: '1U' })));
+    expect(ir.panel.heightMm).toBe(panelHeightMm('1U'));
+    expect(ir.panel.heightMm).toBe(39.65);
+  });
+
+  it('fills the drill pair from the template catalog — FR-4 holes PTH, the other side empty (#235, Decision 11)', async () => {
+    const ir = ok(await build(doc()));
+    expect(ir.drill.npth).toEqual({ plating: 'npth', tools: [], hits: [], slots: [] });
+    expect(ir.drill.pth.tools).toEqual([{ code: 1, diameterMm: 3.2 }]);
+    expect(ir.drill.pth.hits).toEqual([]);
+    // hp16 catalog: four slots, cx 10.16 / 70.74 on rows cy 3 / 125.5, routed
+    // span 10.28 − 3.2 = 7.08 between endpoint centres, still in DOC space.
+    expect(ir.drill.pth.slots).toHaveLength(4);
+    expect(ir.drill.pth.slots[0].start.x).toBeCloseTo(10.16 - 3.54, 9);
+    expect(ir.drill.pth.slots[0].end.x).toBeCloseTo(10.16 + 3.54, 9);
+    expect(ir.drill.pth.slots[0].start.y).toBe(3);
+    expect(ir.drill.pth.slots[3].start.y).toBe(125.5);
+  });
+
+  it('classifies alumi holes NPTH, leaving PTH empty (#235, Decision 11)', async () => {
+    const ir = ok(await build({ ...doc(), material: 'alumi' }));
+    expect(ir.drill.pth).toEqual({ plating: 'pth', tools: [], hits: [], slots: [] });
+    expect(ir.drill.npth.slots).toHaveLength(4);
+  });
+
+  // #235's branch also carried a 'back layers stay empty on this branch' test.
+  // It was true only in isolation — #236 populates those roles — so it was
+  // dropped at the merge rather than kept and weakened. Its intent (prove the
+  // two seams don't BOTH inject and double every back hole) is covered more
+  // strictly by the region counts below: if #235's front-only injections
+  // regressed to include back roles, these would read 8, not 4.
+  it('projects doc.backLayers through the #236 seam — mirrored artwork plus hole fabrication', async () => {
+    const state: DocState = {
+      ...doc(),
+      backLayers: [
+        createPcbLayerContainer('back', 'copper', []),
+        createPcbLayerContainer('back', 'solder-mask', []),
+        createPcbLayerContainer('back', 'silkscreen', [
+          rect({ id: 'bs', x: 5, y: 10, width: 10, height: 5, color: 2 }),
+        ]),
+      ],
+    };
+    const ir = ok(await build(state));
+    const byRole = new Map(ir.layers.map((l) => [l.role, l]));
+    // Back artwork lands X-mirrored into front-view doc space (Decision 13):
+    // authored back-view x ∈ [5, 15] reads as [WIDTH − 15, WIDTH − 5].
+    const silk = byRole.get('b-silkscreen')!;
+    expect(silk.regions).toHaveLength(1);
+    expect(bounds(silk.regions[0].outer)).toEqual([WIDTH - 15, 10, WIDTH - 5, 15]);
+    // Screw-hole fabrication from the canonical template coordinates
+    // (Decisions 11/12): opening stadiums on the back mask, copper stadiums on
+    // the FR-4 back copper. 3U-16hp carries four slots.
+    expect(byRole.get('b-solder-mask')!.regions).toHaveLength(4);
+    expect(byRole.get('b-copper')!.regions).toHaveLength(4);
+  });
+
+  it('fills the alumi B.Mask with the screw-hole openings only (Decision 12)', async () => {
+    const ir = ok(await build({ ...doc(), material: 'alumi' }));
+    const mask = ir.layers.find((l) => l.role === 'b-solder-mask')!;
+    expect(mask.regions).toHaveLength(4);
+    for (const region of mask.regions) {
+      expect(polygonSignedArea(region.outer)).toBeGreaterThan(0);
+      expect(region.holes).toEqual([]);
+    }
   });
 
   it('keeps geometry in DOCUMENT space, +y down, un-flipped', async () => {
@@ -118,9 +219,9 @@ describe('GerberIr contract (Decision 0)', () => {
 
   it('carries the panel rectangle on the outline layer, positively wound', async () => {
     const ir = ok(await build(doc()));
-    const outline = ir.layers[3];
+    const outline = ir.layers.find((l) => l.role === 'outline')!;
     expect(outline.regions).toHaveLength(1);
-    expect(bounds(outline.regions[0].outer)).toEqual([0, 0, WIDTH, PANEL_HEIGHT_MM]);
+    expect(bounds(outline.regions[0].outer)).toEqual([0, 0, WIDTH, HEIGHT]);
     expect(polygonSignedArea(outline.regions[0].outer)).toBeGreaterThan(0);
     expect(outline.regions[0].holes).toEqual([]);
   });
@@ -151,7 +252,9 @@ describe('layer partition and hidden state', () => {
       children: [rect({ id: 'inside', x: 50, y: 50, width: 5, height: 5 })],
     };
     const ir = ok(await build(doc({ copper: [rect({ id: 'hidden', hidden: true }), group] })));
-    expect(ir.layers[0].regions).toEqual([]);
+    // Hidden artwork extracts nothing; only the four injected screw-hole
+    // stadiums (#235) remain on FR-4 copper.
+    expect(ir.layers[0].regions).toHaveLength(4);
   });
 
   it('unions overlapping same-material regions, preserving source-over semantics', async () => {
@@ -165,7 +268,8 @@ describe('layer partition and hidden state', () => {
         }),
       ),
     );
-    expect(ir.layers[0].regions).toHaveLength(1);
+    // 1 united artwork region + 4 injected screw-hole stadiums (#235).
+    expect(ir.layers[0].regions).toHaveLength(5);
     expect(bounds(ir.layers[0].regions[0].outer)).toEqual([10, 10, 40, 30]);
     expect(area(ir.layers[0].regions[0])).toBeCloseTo(30 * 20, 6);
   });
@@ -178,7 +282,8 @@ describe('profile clipping (Decision 7)', () => {
         doc({ copper: [rect({ id: 'straddle', x: WIDTH - 5, y: 20, width: 20, height: 10 })] }),
       ),
     );
-    expect(ir.layers[0].regions).toHaveLength(1);
+    // 1 clipped artwork region + 4 injected screw-hole stadiums (#235).
+    expect(ir.layers[0].regions).toHaveLength(5);
     expect(bounds(ir.layers[0].regions[0].outer)).toEqual([WIDTH - 5, 20, WIDTH, 30]);
     expect(area(ir.layers[0].regions[0])).toBeCloseTo(5 * 10, 6);
   });
@@ -189,7 +294,8 @@ describe('profile clipping (Decision 7)', () => {
         doc({ copper: [rect({ id: 'off', x: WIDTH + 10, y: 20, width: 10, height: 10 })] }),
       ),
     );
-    expect(ir.layers[0].regions).toEqual([]);
+    // The off-panel shape is dropped; only the injected stadiums remain.
+    expect(ir.layers[0].regions).toHaveLength(4);
   });
 
   it('keeps every emitted coordinate non-negative and inside the panel', async () => {
@@ -203,7 +309,7 @@ describe('profile clipping (Decision 7)', () => {
             expect(p.x).toBeGreaterThanOrEqual(0);
             expect(p.y).toBeGreaterThanOrEqual(0);
             expect(p.x).toBeLessThanOrEqual(WIDTH + 1e-9);
-            expect(p.y).toBeLessThanOrEqual(PANEL_HEIGHT_MM + 1e-9);
+            expect(p.y).toBeLessThanOrEqual(HEIGHT + 1e-9);
           }
         }
       }
@@ -212,7 +318,8 @@ describe('profile clipping (Decision 7)', () => {
 
   it('does not clip the outline layer — it IS the clip boundary', async () => {
     const ir = ok(await build(doc()));
-    expect(area(ir.layers[3].regions[0])).toBeCloseTo(WIDTH * PANEL_HEIGHT_MM, 6);
+    const outline = ir.layers.find((l) => l.role === 'outline')!;
+    expect(area(outline.regions[0])).toBeCloseTo(WIDTH * HEIGHT, 6);
   });
 });
 
@@ -224,26 +331,32 @@ describe('solder mask (Decision 3.2 / Decision 4)', () => {
     // of what a hidden container means (bare copper, no mask anywhere).
     const ir = ok(await build(doc({ 'solder-mask': [maskLeaf] }, { maskHidden: true })));
     const mask = ir.layers[1];
-    expect(mask.regions).toHaveLength(1);
-    expect(bounds(mask.regions[0].outer)).toEqual([0, 0, WIDTH, PANEL_HEIGHT_MM]);
-    expect(area(mask.regions[0])).toBeCloseTo(WIDTH * PANEL_HEIGHT_MM, 6);
+    // The four injected screw-hole openings (#235) are appended after the
+    // full-panel opening and land entirely inside it — dark within dark in a
+    // negative file, so they are physically subsumed by the full-panel row.
+    expect(mask.regions).toHaveLength(1 + 4);
+    expect(bounds(mask.regions[0].outer)).toEqual([0, 0, WIDTH, HEIGHT]);
+    expect(area(mask.regions[0])).toBeCloseTo(WIDTH * HEIGHT, 6);
   });
 
-  it('row 2 — visible container with no leaves is empty, meaning full coverage', async () => {
+  it('row 2 — visible container with no leaves means full coverage EXCEPT the screw holes', async () => {
     const ir = ok(await build(doc({ 'solder-mask': [] })));
-    expect(ir.layers[1].regions).toEqual([]);
+    // The injected stadiums are the only openings — exactly the convention
+    // the ordered alumi reference sets used for an otherwise untouched mask.
+    expect(ir.layers[1].regions).toHaveLength(4);
     expect(ir.layers[1].filePolarity).toBe('negative');
   });
 
   it('row 3 — leaves pass through UNCOMPLEMENTED as the openings they already are', async () => {
     const ir = ok(await build(doc({ 'solder-mask': [maskLeaf] })));
     const mask = ir.layers[1];
-    expect(mask.regions).toHaveLength(1);
+    // 1 artwork opening + 4 injected screw-hole openings appended after it.
+    expect(mask.regions).toHaveLength(1 + 4);
     expect(bounds(mask.regions[0].outer)).toEqual([20, 20, 30, 30]);
     // 100 mm², NOT the panel minus 100 mm². README.md's "positive coverage"
     // prose is stale and inverted (#216); complementing here scraps boards.
     expect(area(mask.regions[0])).toBeCloseTo(100, 6);
-    expect(area(mask.regions[0])).not.toBeCloseTo(WIDTH * PANEL_HEIGHT_MM - 100, 0);
+    expect(area(mask.regions[0])).not.toBeCloseTo(WIDTH * HEIGHT - 100, 0);
   });
 
   it('declares Negative polarity without ever touching the geometry', async () => {
@@ -251,6 +364,41 @@ describe('solder mask (Decision 3.2 / Decision 4)', () => {
     const empty = ok(await build(doc()));
     expect(withLeaf.layers[1].filePolarity).toBe('negative');
     expect(empty.layers[1].filePolarity).toBe('negative');
+  });
+});
+
+describe('screw-hole fabrication injections (#235, Decisions 11/12)', () => {
+  // hp16 catalog: openings 4.0 × 11.08 centred on (10.16 | 70.74, 3 | 125.5).
+  const artwork = rect({ id: 'art', x: 30, y: 50, width: 10, height: 10 });
+
+  it('appends the FR-4 copper stadiums AFTER the artwork regions — the gold ring around each hole', async () => {
+    const ir = ok(await build(doc({ copper: [artwork] })));
+    const copper = ir.layers[0];
+    expect(copper.regions).toHaveLength(5);
+    expect(bounds(copper.regions[0].outer)).toEqual([30, 50, 40, 60]);
+    const [, , , stadiumTop] = bounds(copper.regions[1].outer);
+    expect(bounds(copper.regions[1].outer)[1]).toBeCloseTo(3 - 2, 9);
+    expect(stadiumTop).toBeCloseTo(3 + 2, 9);
+  });
+
+  it('gives alumi NO copper ring — non-plated bare-metal hole edges (Decision 11)', async () => {
+    const ir = ok(await build({ ...doc({ copper: [artwork] }), material: 'alumi' }));
+    expect(ir.layers[0].regions).toHaveLength(1);
+    expect(bounds(ir.layers[0].regions[0].outer)).toEqual([30, 50, 40, 60]);
+  });
+
+  // Dropped at the merge: #235's branch asserted the alumi back mask was EMPTY
+  // here, which held only while back extraction was unimplemented. #236 now
+  // fills it with the four Decision-12 openings, so that assertion contradicted
+  // the spec rather than protecting it. The invariant it was reaching for —
+  // injectHoleFabrication names FRONT roles only — is asserted at the seam
+  // itself, and more strictly (exact key sets), by holes.test.ts's
+  // 'injects FRONT roles only' case. Not restated here.
+
+  it('injects nothing on silkscreen or the outline', async () => {
+    const ir = ok(await build(doc()));
+    expect(ir.layers.find((l) => l.role === 'silkscreen')!.regions).toEqual([]);
+    expect(ir.layers.find((l) => l.role === 'outline')!.regions).toHaveLength(1);
   });
 });
 
@@ -288,7 +436,8 @@ describe('refusals (Decision 8)', () => {
 
   it('lets a HIDDEN image layer through — hidden never triggers a refusal', async () => {
     const ir = ok(await build(doc({ copper: [{ ...image, hidden: true }] })));
-    expect(ir.layers[0].regions).toEqual([]);
+    // Only the four injected screw-hole stadiums — no extracted artwork.
+    expect(ir.layers[0].regions).toHaveLength(4);
   });
 
   it('refuses an unlisted panel HP, where panelWidthMm is only an approximation', async () => {
@@ -400,7 +549,8 @@ describe('refusals (Decision 8)', () => {
         },
       ],
     });
-    expect(ok(result).layers[0].regions).toHaveLength(1);
+    // 1 extracted region + 4 injected screw-hole stadiums (#235).
+    expect(ok(result).layers[0].regions).toHaveLength(5);
   });
 
   // #218/#215: path-bool corrupts the union for a measured set of pattern
@@ -443,7 +593,8 @@ describe('refusals (Decision 8)', () => {
       size: 20,
     };
     const ir = ok(await build(doc({ copper: [hidden] })));
-    expect(ir.layers[0].regions).toEqual([]);
+    // Only the four injected screw-hole stadiums — no extracted artwork.
+    expect(ir.layers[0].regions).toHaveLength(4);
   });
 
   it('refuses a complexity overrun rather than hanging the tab', async () => {
@@ -491,7 +642,8 @@ describe('end-to-end nesting and flattening', () => {
       await build(doc({ copper: [frame('outer', 10, 10, 60, 10), frame('inner', 30, 30, 20, 4)] })),
     );
     const regions = ir.layers[0].regions;
-    expect(regions).toHaveLength(2);
+    // 2 artwork regions + 4 injected screw-hole stadiums (#235).
+    expect(regions).toHaveLength(6);
     expect(bounds(regions[0].outer)).toEqual([10, 10, 70, 70]);
     expect(regions[0].holes).toHaveLength(1);
     expect(bounds(regions[0].holes[0])).toEqual([20, 20, 60, 60]);
@@ -508,7 +660,7 @@ describe('end-to-end nesting and flattening', () => {
       type: 'shape',
       shape: 'ellipse',
       x: WIDTH / 2 - 64,
-      y: PANEL_HEIGHT_MM / 2 - 64,
+      y: HEIGHT / 2 - 64,
       width: 128,
       height: 128,
       color: 1,
@@ -516,7 +668,7 @@ describe('end-to-end nesting and flattening', () => {
     const ir = ok(await build(doc({ copper: [ellipse] })));
     const ring = ir.layers[0].regions[0].outer;
     const cx = WIDTH / 2;
-    const cy = PANEL_HEIGHT_MM / 2;
+    const cy = HEIGHT / 2;
     let worst = 0;
     for (let i = 0; i < ring.length; i++) {
       const a = ring[i];

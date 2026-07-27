@@ -1,4 +1,8 @@
-// Decision 2.4's artwork-only statement, word-for-word as DECISIONS.md pins it.
+// Decision 2.4's export-scope statement, word-for-word as DECISIONS.md pins it.
+// (Filename kept from the original artwork-only era to avoid an import churn
+// across the lazy/static boundary — the CONSTANT is renamed because "artwork
+// only" retired with #231: the export ships drill data and, on FR-4,
+// back-side files now.)
 //
 // It lives in its own dependency-free module because BOTH consumers need it and
 // they have opposite loading requirements:
@@ -11,5 +15,19 @@
 //
 // Keeping the constant here satisfies both: the statement is statically
 // importable and free, while the pipeline stays lazy.
-export const GERBER_ARTWORK_ONLY_STATEMENT =
-  'This export contains artwork only — copper, solder mask, silkscreen, and the board outline. It contains no drill file and no mounting-hole geometry. It is artwork for an already-specified Takazudo blank panel, not a standalone orderable board.';
+import type { PcbMaterial } from '@zpd/core';
+
+// The trailing "still landing across the material-holes epic / may be
+// incomplete in this build" caveat was TRUE when #231 wrote it mid-epic and
+// expired silently when #235/#236/#238 completed drill and back-side output.
+// It is removed rather than reworded: this string is embedded in README.txt
+// inside the fab-house zip, and telling a fab house the drill data "may be
+// incomplete" when it is complete invites them to question a good order.
+export const GERBER_EXPORT_SCOPE_STATEMENT =
+  'This export contains fabrication data for a Takazudo blank panel: copper, solder mask, silkscreen, the board outline, and Excellon drill files for the panel screw holes (FR-4 panels also carry back-side files). The copper is decorative artwork, not a functional circuit.';
+
+/** User-facing material names for the confirm gate and README.txt. */
+export const PCB_MATERIAL_LABEL: Record<PcbMaterial, string> = {
+  fr4: 'FR-4',
+  alumi: 'aluminum',
+};

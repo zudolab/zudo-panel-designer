@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultDoc } from './default-doc';
-import {
-  MAX_PANEL_HP,
-  PANEL_HEIGHT_MM,
-  PANEL_SIZES,
-  PANEL_THICKNESS_MM,
-  panelWidthMm,
-} from './panel-sizes';
+import { MAX_PANEL_HP, PANEL_SIZES, PANEL_THICKNESS_MM, panelWidthMm } from './panel-sizes';
 import { serializePanelConfig } from './serialize';
 
 describe('MAX_PANEL_HP', () => {
@@ -35,12 +29,6 @@ describe('panelWidthMm', () => {
   });
 });
 
-describe('PANEL_HEIGHT_MM', () => {
-  it('is the fixed 3U Eurorack height', () => {
-    expect(PANEL_HEIGHT_MM).toBe(128.5);
-  });
-});
-
 describe('PANEL_THICKNESS_MM', () => {
   it('is the exact manufactured PCB thickness', () => {
     expect(PANEL_THICKNESS_MM).toBe(2.5);
@@ -49,7 +37,7 @@ describe('PANEL_THICKNESS_MM', () => {
   it('remains derived product data outside the persisted document schema', () => {
     const config = serializePanelConfig(createDefaultDoc());
 
-    expect(Object.keys(config.panel).sort()).toEqual(['heightMm', 'hp', 'widthMm']);
+    expect(Object.keys(config.panel).sort()).toEqual(['format', 'heightMm', 'hp', 'widthMm']);
     expect(JSON.stringify(config)).not.toContain('thicknessMm');
   });
 });

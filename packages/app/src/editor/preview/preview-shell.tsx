@@ -217,7 +217,10 @@ export function PreviewShell({
   readonly reloadPage?: () => void;
 }) {
   const [cameraControls, setCameraControls] = useState<PreviewCameraControls | null>(null);
-  const copy = useMemo(() => createPreviewAccessibilityCopy(dimensions), [dimensions]);
+  const copy = useMemo(
+    () => createPreviewAccessibilityCopy(dimensions, doc.material),
+    [dimensions, doc.material],
+  );
 
   return (
     <div className="flex h-[calc(100dvh-4rem)] max-h-[56rem] min-h-0 w-[calc(100vw-4rem)] max-w-[80rem] min-w-0 flex-col">

@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+import { panelHoles } from '@zpd/core';
 import {
+  PREVIEW_BACK_FACE_ORIENTATION,
   PREVIEW_FRONT_FACE_ORIENTATION,
   PREVIEW_MAP_COLOR_SPACES,
   choosePreviewRasterSize,
@@ -16,11 +18,24 @@ import {
   type PreviewDebugSummary,
   type PreviewDisposableTexture,
   type PreviewPhysicalDimensions,
+  type PreviewSurfaceMaps,
   type PreviewTextureSet,
 } from './contracts';
 
 function fakeCanvas(width: number, height: number): PreviewCanvasSource {
   return { width, height } as PreviewCanvasSource;
+}
+
+function fakeCanvasSet(
+  width: number,
+  height: number,
+): Readonly<Record<keyof PreviewSurfaceMaps, PreviewCanvasSource>> {
+  return {
+    baseColor: fakeCanvas(width, height),
+    metalness: fakeCanvas(width, height),
+    roughness: fakeCanvas(width, height),
+    height: fakeCanvas(width, height),
+  };
 }
 
 const dimensions: PreviewPhysicalDimensions = {
@@ -127,6 +142,24 @@ describe('front-face orientation', () => {
   });
 });
 
+describe('back-face orientation', () => {
+  it('pins the canonical-coordinate x mirror for the -z back face', () => {
+    // Canonical fabrication coords are front-view; a back-side consumer
+    // mirrors x for display only (`width − x`). The back face therefore
+    // shares every front-face convention except the mirrored u.
+    expect(PREVIEW_BACK_FACE_ORIENTATION.outwardNormal).toBe('-z');
+    expect(PREVIEW_BACK_FACE_ORIENTATION.documentTopLeftUv).toEqual({ u: 1, v: 1 });
+    expect(PREVIEW_BACK_FACE_ORIENTATION).toMatchObject({
+      documentOrigin: PREVIEW_FRONT_FACE_ORIENTATION.documentOrigin,
+      documentXAxis: PREVIEW_FRONT_FACE_ORIENTATION.documentXAxis,
+      documentYAxis: PREVIEW_FRONT_FACE_ORIENTATION.documentYAxis,
+      modelOrigin: PREVIEW_FRONT_FACE_ORIENTATION.modelOrigin,
+      canvasOrigin: PREVIEW_FRONT_FACE_ORIENTATION.canvasOrigin,
+    });
+    expect(Object.isFrozen(PREVIEW_BACK_FACE_ORIENTATION)).toBe(true);
+  });
+});
+
 describe('surface snapshot', () => {
   it('freezes the 2.5 mm physical contract and unambiguous map color-space tags', () => {
     const rasterSize = choosePreviewRasterSize({
@@ -135,21 +168,22 @@ describe('surface snapshot', () => {
       preferredPixelsPerMm: 4,
       maximumTextureSizePx: 4096,
     });
+    const holes = panelHoles('3U', 12);
     const snapshot = createPreviewSurfaceSnapshot({
       surfaceRevision: 7,
+      material: 'fr4',
       widthMm: 60,
       heightMm: 128.5,
       thicknessMm: 2.5,
+      holes,
       rasterSize,
-      canvases: {
-        baseColor: fakeCanvas(240, 514),
-        metalness: fakeCanvas(240, 514),
-        roughness: fakeCanvas(240, 514),
-        height: fakeCanvas(240, 514),
-      },
+      canvases: fakeCanvasSet(240, 514),
+      backCanvases: fakeCanvasSet(240, 514),
     });
 
     expect(snapshot.physicalDimensions.thicknessMm).toBe(2.5);
+    expect(snapshot.material).toBe('fr4');
+    expect(snapshot.holes).toEqual(holes);
     expect(snapshot.maps.baseColor.colorSpace).toBe('srgb');
     expect(snapshot.maps.metalness.colorSpace).toBe('linear-scalar');
     expect(snapshot.maps.roughness.colorSpace).toBe('linear-scalar');
@@ -160,24 +194,87 @@ describe('surface snapshot', () => {
       roughness: 'linear-scalar',
       height: 'linear-scalar',
     });
+    expect(snapshot.orientation).toBe(PREVIEW_FRONT_FACE_ORIENTATION);
+    expect(snapshot.backOrientation).toBe(PREVIEW_BACK_FACE_ORIENTATION);
+    expect(snapshot.backMaps).not.toBeNull();
+    expect(snapshot.backMaps!.baseColor.colorSpace).toBe('srgb');
+    expect(snapshot.backMaps!.height.colorSpace).toBe('linear-scalar');
+    expect(snapshot.backMaps!.baseColor.source).not.toBe(snapshot.maps.baseColor.source);
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot.physicalDimensions)).toBe(true);
+    expect(Object.isFrozen(snapshot.holes)).toBe(true);
     expect(Object.isFrozen(snapshot.maps.baseColor)).toBe(true);
+    expect(Object.isFrozen(snapshot.backMaps)).toBe(true);
+  });
+
+  it('couples the back map set to the document material', () => {
+    const rasterSize = { widthPx: 240, heightPx: 514, effectivePixelsPerMm: 4 };
+    const base = {
+      surfaceRevision: 1,
+      widthMm: 60,
+      heightMm: 128.5,
+      thicknessMm: 2.5,
+      holes: panelHoles('3U', 12),
+      rasterSize,
+    } as const;
+
+    const alumi = createPreviewSurfaceSnapshot({
+      ...base,
+      material: 'alumi',
+      canvases: fakeCanvasSet(240, 514),
+      backCanvases: null,
+    });
+    expect(alumi.material).toBe('alumi');
+    expect(alumi.backMaps).toBeNull();
+
+    expect(() =>
+      createPreviewSurfaceSnapshot({
+        ...base,
+        material: 'alumi',
+        canvases: fakeCanvasSet(240, 514),
+        backCanvases: fakeCanvasSet(240, 514),
+      }),
+    ).toThrow('untextured bare-metal back');
+    expect(() =>
+      createPreviewSurfaceSnapshot({
+        ...base,
+        material: 'fr4',
+        canvases: fakeCanvasSet(240, 514),
+        backCanvases: null,
+      }),
+    ).toThrow('backCanvases are required');
   });
 
   it('rejects a canvas whose dimensions differ from the selected raster size', () => {
     expect(() =>
       createPreviewSurfaceSnapshot({
         surfaceRevision: 1,
+        material: 'fr4',
         widthMm: 60,
         heightMm: 128.5,
         thicknessMm: 2.5,
+        holes: panelHoles('3U', 12),
         rasterSize: { widthPx: 240, heightPx: 514, effectivePixelsPerMm: 4 },
         canvases: {
+          ...fakeCanvasSet(240, 514),
           baseColor: fakeCanvas(239, 514),
-          metalness: fakeCanvas(240, 514),
-          roughness: fakeCanvas(240, 514),
-          height: fakeCanvas(240, 514),
+        },
+        backCanvases: fakeCanvasSet(240, 514),
+      }),
+    ).toThrow('every preview canvas must match');
+    expect(() =>
+      createPreviewSurfaceSnapshot({
+        surfaceRevision: 1,
+        material: 'fr4',
+        widthMm: 60,
+        heightMm: 128.5,
+        thicknessMm: 2.5,
+        holes: panelHoles('3U', 12),
+        rasterSize: { widthPx: 240, heightPx: 514, effectivePixelsPerMm: 4 },
+        canvases: fakeCanvasSet(240, 514),
+        backCanvases: {
+          ...fakeCanvasSet(240, 514),
+          height: fakeCanvas(240, 513),
         },
       }),
     ).toThrow('every preview canvas must match');
@@ -187,16 +284,14 @@ describe('surface snapshot', () => {
     expect(() =>
       createPreviewSurfaceSnapshot({
         surfaceRevision: 1,
+        material: 'fr4',
         widthMm: 60,
         heightMm: 128.5,
         thicknessMm: 0,
+        holes: panelHoles('3U', 12),
         rasterSize: { widthPx: 240, heightPx: 514, effectivePixelsPerMm: 4 },
-        canvases: {
-          baseColor: fakeCanvas(240, 514),
-          metalness: fakeCanvas(240, 514),
-          roughness: fakeCanvas(240, 514),
-          height: fakeCanvas(240, 514),
-        },
+        canvases: fakeCanvasSet(240, 514),
+        backCanvases: fakeCanvasSet(240, 514),
       }),
     ).toThrow('thicknessMm must be a positive finite number');
   });
@@ -373,7 +468,7 @@ describe('debug and accessibility contracts', () => {
   });
 
   it('describes both controls and the manufactured panel finish in text', () => {
-    const copy = createPreviewAccessibilityCopy(dimensions);
+    const copy = createPreviewAccessibilityCopy(dimensions, 'fr4');
     expect(copy.stageInstructions).toContain('Pan');
     expect(copy.stageInstructions).toContain('plus and minus');
     expect(copy.stageInstructions).toContain('Reset');
@@ -383,6 +478,18 @@ describe('debug and accessibility contracts', () => {
     // default, drawn openings expose, and copper reads embossed.
     expect(copy.panelSummary).toContain('covers the board except where drawn openings expose it');
     expect(copy.panelSummary).toContain('emboss');
+  });
+
+  it('describes the polished aluminum finish for alumi documents', () => {
+    const copy = createPreviewAccessibilityCopy(dimensions, 'alumi');
+    expect(copy.panelSummary).toContain('Aluminum PCB preview');
+    expect(copy.panelSummary).toContain('100 mm wide by 50 mm high by 2.5 mm thick');
+    expect(copy.panelSummary).toContain('Polished aluminum');
+    expect(copy.panelSummary).toContain('edges and back');
+    // Shared instruction copy stays material-agnostic.
+    expect(copy.stageInstructions).toBe(
+      createPreviewAccessibilityCopy(dimensions, 'fr4').stageInstructions,
+    );
   });
 });
 

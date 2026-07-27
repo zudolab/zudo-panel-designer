@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "app": "zpd",
   "panel": { "hp": 12, "widthMm": 60.6, "heightMm": 128.5 },
   "palette": ["black", "gold", "white"],

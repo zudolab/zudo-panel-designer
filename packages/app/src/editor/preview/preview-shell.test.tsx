@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { createPcbLayerStack, type DocState } from '@zpd/core';
+import { createDefaultDoc, createPcbLayerStack, type DocState } from '@zpd/core';
 import type { PreviewCameraControls, PreviewPhysicalDimensions } from './contracts';
 import {
   LazyPreviewViewer,
@@ -22,7 +22,12 @@ const dimensions: PreviewPhysicalDimensions = {
   heightMm: 128.5,
   thicknessMm: 2.5,
 };
-const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
+const doc: DocState = {
+  ...createDefaultDoc(),
+  panelHp: 12,
+  guides: [],
+  layers: createPcbLayerStack(),
+};
 
 function deferredViewerModule() {
   let resolve!: (module: PreviewViewerModule) => void;
@@ -262,15 +267,9 @@ describe('eager import boundary', () => {
     const directory = dirname(fileURLToPath(import.meta.url));
     const shellSource = readFileSync(`${directory}/preview-shell.tsx`, 'utf8');
     const loaderSource = readFileSync(`${directory}/load-viewer.ts`, 'utf8');
-    const dialogSource = readFileSync(
-      join(directory, '..', 'dialogs', 'preview-3d.tsx'),
-      'utf8',
-    );
+    const dialogSource = readFileSync(join(directory, '..', 'dialogs', 'preview-3d.tsx'), 'utf8');
     const debugSource = readFileSync(`${directory}/debug-state.ts`, 'utf8');
-    const testBridgeSource = readFileSync(
-      join(directory, '..', 'test-bridge.ts'),
-      'utf8',
-    );
+    const testBridgeSource = readFileSync(join(directory, '..', 'test-bridge.ts'), 'utf8');
     const eagerSources = `${shellSource}\n${loaderSource}\n${dialogSource}\n${debugSource}\n${testBridgeSource}`;
 
     expect(shellSource).not.toMatch(/from\s+['"]\.\/viewer['"]/);

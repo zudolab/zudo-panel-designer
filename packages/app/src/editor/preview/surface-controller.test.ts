@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createPcbLayerStack, type DocState } from '@zpd/core';
+import { createDefaultDoc, createPcbLayerStack, type DocState } from '@zpd/core';
 import {
   createPreviewSurfaceSnapshot,
   type PreviewCanvasSource,
@@ -13,11 +13,14 @@ function snapshot(revision: number): PreviewSurfaceSnapshot {
   const source = { width: 120, height: 257 } as PreviewCanvasSource;
   return createPreviewSurfaceSnapshot({
     surfaceRevision: revision,
+    material: 'fr4',
     widthMm: 60,
     heightMm: 128.5,
     thicknessMm: 2.5,
+    holes: [],
     rasterSize: { widthPx: 120, heightPx: 257, effectivePixelsPerMm: 2 },
     canvases: { baseColor: source, metalness: source, roughness: source, height: source },
+    backCanvases: { baseColor: source, metalness: source, roughness: source, height: source },
   });
 }
 
@@ -43,7 +46,12 @@ describe('preview surface controller', () => {
       onError: vi.fn(),
       createGenerator: () => ({ generate, close }),
     });
-    const first: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
+    const first: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     const second: DocState = { ...first, layers: createPcbLayerStack() };
 
     controller.update(first);
@@ -74,7 +82,12 @@ describe('preview surface controller', () => {
         return generator;
       },
     });
-    controller.update({ panelHp: 12, guides: [], layers: createPcbLayerStack() });
+    controller.update({
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+    });
 
     generatorOptions!.onFontReadyRevision?.(1);
     generatorOptions!.onFontReadyRevision?.(1);
@@ -104,7 +117,12 @@ describe('preview surface controller', () => {
         return generator;
       },
     });
-    controller.update({ panelHp: 12, guides: [], layers: createPcbLayerStack() });
+    controller.update({
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+    });
     controller.close();
     generatorOptions!.onFontReadyRevision?.(1);
     await Promise.resolve();
@@ -130,7 +148,12 @@ describe('preview surface controller', () => {
       }),
     });
 
-    controller.update({ panelHp: 12, guides: [], layers: createPcbLayerStack() });
+    controller.update({
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+    });
     expect(onError).toHaveBeenCalledWith(error);
     expect(scene.applySnapshot).not.toHaveBeenCalled();
     controller.close();

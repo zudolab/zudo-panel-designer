@@ -74,6 +74,17 @@ describe('v2 autosave envelope', () => {
     expect(window.localStorage.getItem(DOC_STORAGE_KEY)).toBe(raw);
   });
 
+  it('discards a v5 (or any pre-v6) config stored directly at the current key, no promotion (#229 acceptance)', () => {
+    const raw = JSON.stringify({
+      version: DOC_STORAGE_VERSION,
+      savedAt: 1,
+      config: { ...legacyConfig, version: PANEL_CONFIG_VERSION - 1 },
+    });
+    window.localStorage.setItem(DOC_STORAGE_KEY, raw);
+    expect(readDoc()).toBeNull();
+    expect(window.localStorage.getItem(DOC_STORAGE_KEY)).toBe(raw);
+  });
+
   it('preserves invalid JSON instead of replacing it with a generated default', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     window.localStorage.setItem(DOC_STORAGE_KEY, '{broken');
@@ -84,34 +95,23 @@ describe('v2 autosave envelope', () => {
   });
 });
 
-describe('legacy autosave promotion', () => {
-  it('promotes a validated v1-v4 config to the new key and retains the old key', () => {
+describe('legacy autosave: the v1 read-and-promote path is deleted (schema-v6 compat cut, #229)', () => {
+  it('never reads the legacy key at all: a v1-only entry leaves readDoc() null with no warning, no v2 write', () => {
+    // Unlike the pre-#229 interim behavior (readDoc() opened the legacy key,
+    // found it unsupported, and warned), readDoc() now never looks at
+    // LEGACY_DOC_STORAGE_KEY when the current key is empty — there is simply
+    // no promotion code path left to run.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const oldRaw = JSON.stringify({ version: 1, savedAt: 1, config: legacyConfig });
     window.localStorage.setItem(LEGACY_DOC_STORAGE_KEY, oldRaw);
-    const doc = readDoc();
-
-    expect(doc?.layers[0].children[0]).toMatchObject({ id: 'legacy-gold', color: 1 });
-    expect(window.localStorage.getItem(LEGACY_DOC_STORAGE_KEY)).toBe(oldRaw);
-    const promoted = JSON.parse(window.localStorage.getItem(DOC_STORAGE_KEY)!);
-    expect(promoted.version).toBe(DOC_STORAGE_VERSION);
-    expect(promoted.config.version).toBe(PANEL_CONFIG_VERSION);
-  });
-
-  it('does not promote or expose legacy data when the new write fails', () => {
-    const oldRaw = JSON.stringify({ version: 1, savedAt: 1, config: legacyConfig });
-    window.localStorage.setItem(LEGACY_DOC_STORAGE_KEY, oldRaw);
-    const originalSetItem = window.localStorage.setItem.bind(window.localStorage);
-    vi.spyOn(window.localStorage.__proto__, 'setItem').mockImplementation((key, value) => {
-      if (key === DOC_STORAGE_KEY) throw new DOMException('full', 'QuotaExceededError');
-      if (typeof key === 'string' && typeof value === 'string') originalSetItem(key, value);
-    });
 
     expect(readDoc()).toBeNull();
-    expect(window.localStorage.getItem(DOC_STORAGE_KEY)).toBeNull();
     expect(window.localStorage.getItem(LEGACY_DOC_STORAGE_KEY)).toBe(oldRaw);
+    expect(window.localStorage.getItem(DOC_STORAGE_KEY)).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it('does not promote corrupt or future legacy configs', () => {
+  it('ignores a legacy entry even when its config is already at the current PANEL_CONFIG_VERSION', () => {
     const raw = JSON.stringify({
       version: 1,
       savedAt: 1,
@@ -123,7 +123,7 @@ describe('legacy autosave promotion', () => {
     expect(window.localStorage.getItem(LEGACY_DOC_STORAGE_KEY)).toBe(raw);
   });
 
-  it('allows a later legitimate v2 write without touching protected legacy bytes', () => {
+  it('a later legitimate v2 write proceeds untouched by a leftover legacy entry', () => {
     const raw = JSON.stringify({
       version: 1,
       savedAt: 1,

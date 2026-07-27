@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import './select'; // registers 'select' as a side effect
 import { getTool } from '../registry/tools';
 import {
+  createDefaultDoc,
   abortGesture as coreAbortGesture,
   beginGesture as coreBeginGesture,
   commit as coreCommit,
@@ -106,6 +107,12 @@ function makeHarness(initialDoc: DocState) {
     },
     setCamera: () => {},
     setActiveTool: () => {},
+    activeSide: 'front',
+    get activeStack() {
+      return history.present.layers;
+    },
+    setActiveSide: () => {},
+    clearToolDraft: () => {},
     requestRepaint: () => {},
     evictImageCache: () => {},
     openDialog: () => {},
@@ -172,6 +179,7 @@ const group = (id: string, children: LayerNode[]): GroupNode => ({
 });
 
 const doc = (layers: LayerNode[]): DocState => ({
+  ...createDefaultDoc(),
   panelHp: 20,
   guides: [],
   layers: createPcbLayerStack({ copper: layers }),

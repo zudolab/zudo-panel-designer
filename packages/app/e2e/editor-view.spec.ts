@@ -8,7 +8,7 @@
 // data can.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PANEL_HEIGHT_MM, panelWidthMm } from '@zpd/core';
+import { panelHeightMm, panelWidthMm } from '@zpd/core';
 import { expect, type Page, test } from '@playwright/test';
 import {
   bridge,
@@ -75,7 +75,7 @@ test('@smoke show-outside-panel toggle ghosts off-panel shapes and the pattern s
   // Region scans, not single pixels: dot-grid paint has gaps (see helpers.ts).
   const pattern = (await bridge(page).getMaterialLayers()).find((l) => l.type === 'pattern');
   if (pattern?.type !== 'pattern') throw new Error('expected the default pattern layer');
-  const midY = PANEL_HEIGHT_MM / 2;
+  const midY = panelHeightMm('3U') / 2;
   // Inside the square, left of the panel; -9mm ≈ -39px at the fitted zoom, so
   // the region clears the panel's drop-shadow blur (renderer.ts: shadowBlur
   // 24). 7mm wide > the 5mm dot pitch, so ghost dots are guaranteed inside.

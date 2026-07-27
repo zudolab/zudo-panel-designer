@@ -59,6 +59,10 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     openDialog: vi.fn(),
     closeDialog: vi.fn(),
     ...overrides,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
 }
 

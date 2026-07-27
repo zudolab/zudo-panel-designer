@@ -129,8 +129,8 @@ const DISTRIBUTE_BUTTONS: IconButtonSpec<DistributeAxis>[] = [
 export function AlignPanel({ ctx, selectedIds }: AlignPanelProps) {
   const [reference, setReference] = useState<Reference>('selection');
 
-  const alignDisabled = !canAlign(ctx.doc, selectedIds, reference);
-  const distributeDisabled = !canDistribute(ctx.doc, selectedIds, reference);
+  const alignDisabled = !canAlign(ctx.activeStack, selectedIds, reference);
+  const distributeDisabled = !canDistribute(ctx.activeStack, selectedIds, reference);
 
   function handleAlign(type: AlignType) {
     applyAlign(ctx, selectedIds, type, reference);

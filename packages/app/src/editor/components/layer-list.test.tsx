@@ -47,6 +47,10 @@ function stubCtx() {
     commit,
     select,
     selectIds,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   Object.defineProperty(ctx, 'flatLayers', {
     get: () => projectFlatLayers(ctx.doc.layers),
@@ -131,6 +135,10 @@ function multiCtx(selectedIds: readonly string[]) {
     commit,
     select: vi.fn(),
     selectIds,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return {
     ctx,
@@ -199,6 +207,10 @@ describe('LayerList multi-select', () => {
       commit: vi.fn(),
       select: vi.fn(),
       selectIds,
+      activeSide: 'front',
+      get activeStack() {
+        return (this as unknown as ToolContext).doc.layers;
+      },
     } as unknown as ToolContext;
     render(<LayerList ctx={ctx} selectedIds={['G']} />);
 
@@ -351,6 +363,9 @@ describe('LayerList keyboard access', () => {
     currentCtx = {
       ...ctx,
       doc: nextDoc,
+      // The spread snapshots stubCtx's live activeStack getter — re-point it
+      // at the post-delete stack alongside doc/flatLayers.
+      activeStack: nextDoc.layers,
       flatLayers: projectFlatLayers(nextDoc.layers),
     } as ToolContext;
     rerender(<LayerList ctx={currentCtx} selectedIds={[]} />);
@@ -386,6 +401,10 @@ function nodeTreeCtx(layers: LayerNode[]) {
     commit,
     select: vi.fn(),
     selectIds,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return {
     ctx,
@@ -434,9 +453,7 @@ describe('LayerList tree rendering (#153)', () => {
     const { ctx } = nodeTreeCtx(fixtureTree());
     const { container } = render(<LayerList ctx={ctx} selectedIds={[]} />);
 
-    const solderMask = container.querySelector(
-      '[data-material-role="solder-mask"]',
-    ) as HTMLElement;
+    const solderMask = container.querySelector('[data-material-role="solder-mask"]') as HTMLElement;
     const header = solderMask.querySelector(':scope > div') as HTMLElement;
     expect(header.getAttribute('title')).toMatch(/open the mask/i);
     expect(within(solderMask).getByText(/open the mask/i)).toBeTruthy();
@@ -845,6 +862,10 @@ function fullStackCtx(config: {
     commit,
     select: vi.fn(),
     selectIds,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return {
     ctx,
@@ -876,13 +897,18 @@ describe('LayerList cross-container move buttons (#192)', () => {
     expect(findRole(nextDoc.layers, 'solder-mask').children).toEqual([]);
     const copperIds = findRole(nextDoc.layers, 'copper').children.map((n) => n.id);
     expect(copperIds).toEqual(['c1', 'sm1']);
-    const moved = findRole(nextDoc.layers, 'copper').children.find((n) => n.id === 'sm1') as ShapeLayer;
+    const moved = findRole(nextDoc.layers, 'copper').children.find(
+      (n) => n.id === 'sm1',
+    ) as ShapeLayer;
     expect(moved.color).toBe(1);
   });
 
   it('bring-forward on the top root-level item of Copper crosses into Solder mask’s bottom, with material flip', () => {
     const { ctx, commit } = fullStackCtx({
-      copper: [{ ...shape('c1', 'C1'), color: 1 }, { ...shape('c2', 'C2'), color: 1 }],
+      copper: [
+        { ...shape('c1', 'C1'), color: 1 },
+        { ...shape('c2', 'C2'), color: 1 },
+      ],
       'solder-mask': [{ ...shape('sm1', 'SM1'), color: 0 }],
     });
     render(<LayerList ctx={ctx} selectedIds={[]} />);
@@ -895,7 +921,9 @@ describe('LayerList cross-container move buttons (#192)', () => {
     expect(findRole(nextDoc.layers, 'copper').children.map((n) => n.id)).toEqual(['c1']);
     const smIds = findRole(nextDoc.layers, 'solder-mask').children.map((n) => n.id);
     expect(smIds).toEqual(['c2', 'sm1']);
-    const moved = findRole(nextDoc.layers, 'solder-mask').children.find((n) => n.id === 'c2') as ShapeLayer;
+    const moved = findRole(nextDoc.layers, 'solder-mask').children.find(
+      (n) => n.id === 'c2',
+    ) as ShapeLayer;
     expect(moved.color).toBe(0);
   });
 

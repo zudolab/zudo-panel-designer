@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultDoc } from './default-doc';
-import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
+import { panelWidthMm } from './panel-sizes';
+import { panelHeightMm } from './panel-templates';
 import { patternCoverGeometry } from './pattern-geometry';
 
 describe('createDefaultDoc', () => {
@@ -16,11 +17,23 @@ describe('createDefaultDoc', () => {
     expect(layer.color).toBe(1);
   });
 
+  it('defaults to FR4 in 3U format with an empty back stack', () => {
+    const doc = createDefaultDoc();
+    expect(doc.material).toBe('fr4');
+    expect(doc.format).toBe('3U');
+    expect(doc.backLayers.map((container) => container.id)).toEqual([
+      'pcb-layer-back-copper',
+      'pcb-layer-back-solder-mask',
+      'pcb-layer-back-silkscreen',
+    ]);
+    expect(doc.backLayers.every((container) => container.children.length === 0)).toBe(true);
+  });
+
   it('gives the default pattern layer explicit cover geometry via the shared helper (#96)', () => {
     const [layer] = createDefaultDoc().layers[0].children;
     if (!layer || 'kind' in layer || layer.type !== 'pattern') throw new Error('unreachable');
     expect({ x: layer.x, y: layer.y, size: layer.size }).toEqual(
-      patternCoverGeometry({ widthMm: panelWidthMm(12), heightMm: PANEL_HEIGHT_MM }),
+      patternCoverGeometry({ widthMm: panelWidthMm(12), heightMm: panelHeightMm('3U') }),
     );
   });
 
@@ -30,7 +43,7 @@ describe('createDefaultDoc', () => {
     const [layer] = doc.layers[0].children;
     if (!layer || 'kind' in layer || layer.type !== 'pattern') throw new Error('unreachable');
     expect({ x: layer.x, y: layer.y, size: layer.size }).toEqual(
-      patternCoverGeometry({ widthMm: panelWidthMm(20), heightMm: PANEL_HEIGHT_MM }),
+      patternCoverGeometry({ widthMm: panelWidthMm(20), heightMm: panelHeightMm('3U') }),
     );
   });
 

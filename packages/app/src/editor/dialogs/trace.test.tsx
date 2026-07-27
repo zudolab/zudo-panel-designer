@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   type DocState,
   type ImageLayer,
@@ -207,7 +208,12 @@ describe('trace dialog', () => {
 
   it('mounts against a real image layer without crashing', () => {
     const ctx = stubCtx({
-      doc: { panelHp: 12, guides: [], layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }) },
+      doc: {
+        ...createDefaultDoc(),
+        panelHp: 12,
+        guides: [],
+        layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }),
+      },
     });
     const Dialog = getDialog('trace')!.component;
     render(<Dialog props={{ layerId: 'img-1' }} close={vi.fn()} ctx={ctx} />);
@@ -218,7 +224,9 @@ describe('trace dialog', () => {
   });
 
   it('shows a fallback + Close when the layer id no longer exists, without crashing', () => {
-    const ctx = stubCtx({ doc: { panelHp: 12, guides: [], layers: createPcbLayerStack() } });
+    const ctx = stubCtx({
+      doc: { ...createDefaultDoc(), panelHp: 12, guides: [], layers: createPcbLayerStack() },
+    });
     const Dialog = getDialog('trace')!.component;
     const close = vi.fn();
     render(<Dialog props={{ layerId: 'missing' }} close={close} ctx={ctx} />);
@@ -233,7 +241,12 @@ describe('trace dialog', () => {
     ['a missing image', [], 'missing'],
   ])('is named through DialogHost for %s', (_label, images, layerId) => {
     const ctx = stubCtx({
-      doc: { panelHp: 12, guides: [], layers: createPcbLayerStack({ copper: images }) },
+      doc: {
+        ...createDefaultDoc(),
+        panelHp: 12,
+        guides: [],
+        layers: createPcbLayerStack({ copper: images }),
+      },
     });
     render(<DialogHost ctx={ctx as CommandContext} />);
 
@@ -257,11 +270,12 @@ describe('insertTracedPaths — material partitioning (#167)', () => {
 
   it('keeps a hidden Copper reference and routes output by palette material', () => {
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }),
     };
-    const next = insertTracedPaths(doc, IMAGE_LAYER, [
+    const next = insertTracedPaths(doc, 'front', IMAGE_LAYER, [
       tracedPath('gold'),
       { ...tracedPath('white'), fill: 2 },
     ]);

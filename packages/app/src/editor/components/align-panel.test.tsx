@@ -37,6 +37,10 @@ function makeHarness(initialFixture: DocFixture) {
     commit: (next: DocState) => {
       history = coreCommit(history, next);
     },
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return {
     ctx,

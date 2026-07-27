@@ -4,6 +4,7 @@
 // same spirit as writer.test.ts's byte-exact Gerber assertions.
 import { loadTestFontFile } from './test-font-loader';
 import {
+  createDefaultDoc,
   createPcbLayerContainer,
   type DocState,
   type PathLayer,
@@ -16,14 +17,15 @@ import { strFromU8, unzipSync } from 'fflate';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createBooleanEngine, type BooleanEngine } from '../geometry-kernel';
 import { buildGerberIr } from './build-ir';
+import { drillFileSet } from './holes';
 import { gerberFileSet, type GerberEmitOptions } from './writer';
 import {
   gerberReadmeText,
   gerberZipBytes,
   gerberZipFilename,
-  GERBER_ARTWORK_ONLY_STATEMENT,
+  GERBER_EXPORT_SCOPE_STATEMENT,
 } from './zip';
-import { fixtureIr } from './test-ir';
+import { fixtureAlumiIr, fixtureIr } from './test-ir';
 import { setCuratedFontFileLoaderForTests } from './text-fonts';
 
 const HP = 16;
@@ -108,7 +110,7 @@ function fixtureDoc(): DocState {
     createPcbLayerContainer('solder-mask', []),
     createPcbLayerContainer('silkscreen', [shapeSilkscreen(), textSilkscreen()]),
   ];
-  return { panelHp: HP, layers, guides: [] };
+  return { ...createDefaultDoc(), panelHp: HP, layers, guides: [] };
 }
 
 const OPTIONS: GerberEmitOptions = {
@@ -117,7 +119,7 @@ const OPTIONS: GerberEmitOptions = {
 };
 
 describe('gerberZipBytes — a document with shape + path + text + pattern layers', () => {
-  it('produces a valid zip fflate itself can re-open, with all four Gerber files plus README.txt', async () => {
+  it('produces a valid zip fflate itself can re-open, with every Gerber file, both drill files, and README.txt', async () => {
     const result = await buildGerberIr(fixtureDoc(), { engine });
     expect(result.ok, result.ok ? '' : result.refusals.map((r) => r.code).join(', ')).toBe(true);
     if (!result.ok) return;
@@ -125,7 +127,10 @@ describe('gerberZipBytes — a document with shape + path + text + pattern layer
     const bytes = gerberZipBytes(result.ir, OPTIONS);
     const unzipped = unzipSync(bytes);
 
-    const expectedFiles = gerberFileSet(result.ir, OPTIONS);
+    const expectedFiles = [
+      ...gerberFileSet(result.ir, OPTIONS),
+      ...drillFileSet(result.ir.drill, result.ir.panel, OPTIONS),
+    ];
     const expectedNames = [...expectedFiles.map((f) => f.filename), 'README.txt'].sort();
     expect(Object.keys(unzipped).sort()).toEqual(expectedNames);
 
@@ -133,6 +138,66 @@ describe('gerberZipBytes — a document with shape + path + text + pattern layer
       expect(strFromU8(unzipped[file.filename])).toBe(file.text);
     }
     expect(strFromU8(unzipped['README.txt'])).toBe(gerberReadmeText(result.ir));
+  });
+
+  // #231's acceptance: the per-material manifests, entry for entry.
+  it('FR-4 zip entry list matches the manifest exactly', () => {
+    const unzipped = unzipSync(gerberZipBytes(fixtureIr(), OPTIONS));
+    expect(Object.keys(unzipped).sort()).toEqual(
+      [
+        'zpd-panel-12hp.GTL',
+        'zpd-panel-12hp.GTS',
+        'zpd-panel-12hp.GTO',
+        'zpd-panel-12hp.GBL',
+        'zpd-panel-12hp.GBS',
+        'zpd-panel-12hp.GBO',
+        'zpd-panel-12hp.GKO',
+        'zpd-panel-12hp-PTH.drl',
+        'zpd-panel-12hp-NPTH.drl',
+        'README.txt',
+      ].sort(),
+    );
+  });
+
+  it('alumi zip entry list matches the manifest exactly — B.Mask but no B.Cu/B.Silk (Decision 12)', () => {
+    const unzipped = unzipSync(gerberZipBytes(fixtureAlumiIr(), OPTIONS));
+    expect(Object.keys(unzipped).sort()).toEqual(
+      [
+        'zpd-panel-12hp.GTL',
+        'zpd-panel-12hp.GTS',
+        'zpd-panel-12hp.GTO',
+        'zpd-panel-12hp.GBS',
+        'zpd-panel-12hp.GKO',
+        'zpd-panel-12hp-PTH.drl',
+        'zpd-panel-12hp-NPTH.drl',
+        'README.txt',
+      ].sort(),
+    );
+  });
+
+  // The hand-authored fixture carries EMPTY_DRILL, so both sides are the
+  // header-only form here; a real export fills exactly one side (#235,
+  // Decision 11) and the other still ships these bytes.
+  it('emits an empty drill side header-only, byte-modelled on the ordered reference sets', () => {
+    const unzipped = unzipSync(gerberZipBytes(fixtureIr(), OPTIONS));
+    expect(strFromU8(unzipped['zpd-panel-12hp-PTH.drl'])).toBe(
+      [
+        'M48',
+        '; #@! TF.CreationDate,2026-07-25T09:30:00+09:00',
+        '; #@! TF.GenerationSoftware,zudolab,zudo-panel-designer,0.0.0',
+        '; #@! TF.FileFunction,Plated,1,2,PTH',
+        'FMAT,2',
+        'METRIC',
+        '%',
+        'G90',
+        'G05',
+        'M30',
+        '',
+      ].join('\n'),
+    );
+    expect(strFromU8(unzipped['zpd-panel-12hp-NPTH.drl'])).toContain(
+      '; #@! TF.FileFunction,NonPlated,1,2,NPTH',
+    );
   });
 
   it('is deterministic — the same IR and options zip to the same bytes twice', async () => {
@@ -144,32 +209,139 @@ describe('gerberZipBytes — a document with shape + path + text + pattern layer
   });
 });
 
+// #236's acceptance: what each material's back files actually CONTAIN, from a
+// real document through the real pipeline — not the hand-authored fixtures.
+describe('per-material back content matrix (#236)', () => {
+  function backRect(id: string): ShapeLayer {
+    // Back-view x ∈ [45.3, 55.3] on the 80.9 mm panel mirrors to canonical
+    // [25.6, 35.6] — the nanometre coordinate tokens asserted below.
+    return {
+      id,
+      name: id,
+      type: 'shape',
+      shape: 'rect',
+      x: 45.3,
+      y: 2,
+      width: 10,
+      height: 4,
+      color: 2,
+    };
+  }
+
+  function matrixDoc(
+    material: DocState['material'],
+    back: Partial<Record<'copper' | 'solder-mask' | 'silkscreen', ShapeLayer[]>> = {},
+  ): DocState {
+    return {
+      ...createDefaultDoc(),
+      material,
+      panelHp: HP,
+      layers: [
+        createPcbLayerContainer('copper', []),
+        createPcbLayerContainer('solder-mask', []),
+        createPcbLayerContainer('silkscreen', []),
+      ],
+      backLayers: [
+        createPcbLayerContainer('back', 'copper', back.copper ?? []),
+        createPcbLayerContainer('back', 'solder-mask', back['solder-mask'] ?? []),
+        createPcbLayerContainer('back', 'silkscreen', back.silkscreen ?? []),
+      ],
+      guides: [],
+    };
+  }
+
+  async function zipText(state: DocState): Promise<Map<string, string>> {
+    const result = await buildGerberIr(state, { engine });
+    if (!result.ok) throw new Error(`refused: ${result.refusals.map((r) => r.code).join(', ')}`);
+    const unzipped = unzipSync(gerberZipBytes(result.ir, OPTIONS));
+    return new Map(Object.entries(unzipped).map(([name, bytes]) => [name, strFromU8(bytes)]));
+  }
+
+  it('FR-4 without back artwork: .GBL/.GBS carry the hole fabrication, .GBO is present but empty', async () => {
+    const entries = await zipText(matrixDoc('fr4'));
+    expect(entries.get(`zpd-panel-${HP}hp.GBS`)).toContain('G36*');
+    expect(entries.get(`zpd-panel-${HP}hp.GBL`)).toContain('G36*');
+    const gbo = entries.get(`zpd-panel-${HP}hp.GBO`);
+    expect(gbo).toBeDefined();
+    expect(gbo).not.toContain('G36*');
+  });
+
+  it('FR-4 with back artwork: the back files carry it, X-mirrored into canonical coordinates', async () => {
+    const entries = await zipText(
+      matrixDoc('fr4', { silkscreen: [backRect('bs')], copper: [backRect('bc')] }),
+    );
+    for (const extension of ['GBO', 'GBL']) {
+      const text = entries.get(`zpd-panel-${HP}hp.${extension}`)!;
+      expect(text).toContain('X25600000');
+      expect(text).toContain('X35600000');
+      // Not at the authored back-view coordinate — that would be a zero/double
+      // mirror (45.3 mm → X45300000).
+      expect(text).not.toContain('X45300000');
+    }
+  });
+
+  it('alumi: no .GBL/.GBO at all, and .GBS carries the openings only — back artwork is ignored', async () => {
+    const withArtwork = await zipText(
+      matrixDoc('alumi', { silkscreen: [backRect('bs')], copper: [backRect('bc')] }),
+    );
+    const names = [...withArtwork.keys()];
+    expect(names).not.toContain(`zpd-panel-${HP}hp.GBL`);
+    expect(names).not.toContain(`zpd-panel-${HP}hp.GBO`);
+    const bare = await zipText(matrixDoc('alumi'));
+    expect(withArtwork.get(`zpd-panel-${HP}hp.GBS`)).toContain('G36*');
+    expect(withArtwork.get(`zpd-panel-${HP}hp.GBS`)).toBe(bare.get(`zpd-panel-${HP}hp.GBS`));
+  });
+});
+
 describe('gerberZipFilename', () => {
-  it('matches download.ts\'s zpd-panel-<hp>hp.json pattern (Decision 2.2)', () => {
-    expect(gerberZipFilename(12)).toBe('zpd-panel-12hp-gerber.zip');
+  it('encodes format, hp, and material via the shared filename helper (#229)', () => {
+    expect(gerberZipFilename({ format: '3U', panelHp: 12, material: 'fr4' })).toBe(
+      'zpd-panel-3U-12hp-fr4-gerber.zip',
+    );
+    expect(gerberZipFilename({ format: '1U', panelHp: 8, material: 'alumi' })).toBe(
+      'zpd-panel-1U-8hp-alumi-gerber.zip',
+    );
   });
 });
 
 describe('gerberReadmeText (Decision 2.2 / 2.4)', () => {
   const ir = fixtureIr();
 
-  it('carries the artwork-only statement word-for-word', () => {
-    expect(gerberReadmeText(ir)).toContain(GERBER_ARTWORK_ONLY_STATEMENT);
+  it('carries the export-scope statement word-for-word', () => {
+    expect(gerberReadmeText(ir)).toContain(GERBER_EXPORT_SCOPE_STATEMENT);
   });
 
-  it('names the panel dimensions and every file with its function', () => {
+  it('names the panel dimensions, the material, and every file with its function', () => {
     const text = gerberReadmeText(ir);
-    expect(text).toContain(`${ir.panel.hp}HP`);
+    expect(text).toContain(`${ir.panel.format} ${ir.panel.hp}HP`);
     expect(text).toContain(`${ir.panel.widthMm}`);
     expect(text).toContain(`${ir.panel.heightMm}`);
+    expect(text).toContain('Material: FR-4.');
     expect(text).toContain('zpd-panel-12hp.GTL');
     expect(text).toContain('zpd-panel-12hp.GTS');
     expect(text).toContain('zpd-panel-12hp.GTO');
+    expect(text).toContain('zpd-panel-12hp.GBL');
+    expect(text).toContain('zpd-panel-12hp.GBS');
+    expect(text).toContain('zpd-panel-12hp.GBO');
     expect(text).toContain('zpd-panel-12hp.GKO');
-    expect(text).toContain('No Excellon drill file');
+    expect(text).toContain('zpd-panel-12hp-PTH.drl');
+    expect(text).toContain('zpd-panel-12hp-NPTH.drl');
+    expect(text).not.toContain('No Excellon drill file');
   });
 
-  it('is LF-terminated, no CRLF (Decision 3.4\'s line-ending discipline; README.txt is free text, not a Gerber body, so Unicode punctuation like the statement\'s em dash is fine)', () => {
+  it('says which drill file carries the screw holes per material (Decision 11)', () => {
+    const fr4 = gerberReadmeText(ir);
+    expect(fr4).toContain('FR-4 screw holes are plated');
+    expect(fr4).toContain('bottom-side files carry the back design');
+
+    const alumi = gerberReadmeText(fixtureAlumiIr());
+    expect(alumi).toContain('Material: aluminum.');
+    expect(alumi).toContain('aluminum screw holes are non-plated');
+    expect(alumi).toContain('screw-hole openings only');
+    expect(alumi).not.toContain('zpd-panel-12hp.GBL');
+  });
+
+  it("is LF-terminated, no CRLF (Decision 3.4's line-ending discipline; README.txt is free text, not a Gerber body, so Unicode punctuation like the statement's em dash is fine)", () => {
     const text = gerberReadmeText(ir);
     expect(text).not.toContain('\r');
     expect(text.endsWith('\n')).toBe(true);

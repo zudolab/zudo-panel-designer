@@ -231,3 +231,46 @@ describe('projectPcbLayerSlices', () => {
     expect(projectPcbLayerSlices(stack).solderMask).toEqual([]);
   });
 });
+
+// The projections are stack-parametric, not front-bound (#230): a BACK stack
+// (pcb-layer-back-* container ids) projects with the same role-driven paint,
+// hidden folding, and slicing — role comes from container.role, never from
+// which DocState field the stack came out of.
+describe('projection against an explicit back stack', () => {
+  it('projects a back stack with role-forced paint and independent memoization', () => {
+    const front = createPcbLayerStack({ copper: [shape('c-front', { color: 0 })] });
+    const back = createPcbLayerStack('back', {
+      copper: [shape('c-back', { color: 0 })],
+      silkscreen: [shape('s-back', { color: 1 })],
+    });
+    expect(back.map((container) => container.id)).toEqual([
+      'pcb-layer-back-copper',
+      'pcb-layer-back-solder-mask',
+      'pcb-layer-back-silkscreen',
+    ]);
+
+    const projected = projectPcbLayerStack(back);
+    expect(projectPcbLayerStack(back)).toBe(projected);
+    expect(projected[0]).toMatchObject({ id: 'c-back', color: 1 });
+    expect(projected[1]).toMatchObject({ id: 's-back', color: 2 });
+
+    // Front and back memoize per stack array — one never shadows the other.
+    expect(projectPcbLayerStack(front)).not.toBe(projected);
+    expect(projectPcbLayerStack(front)[0]).toMatchObject({ id: 'c-front', color: 1 });
+  });
+
+  it('slices a back stack by role with container hidden folded in', () => {
+    const back = createPcbLayerStack('back', {
+      copper: [shape('c')],
+      'solder-mask': [shape('m')],
+    });
+    back[1] = { ...back[1], hidden: true };
+
+    const slices = projectPcbLayerSlices(back);
+    expect(slices.flat).toBe(projectPcbLayerStack(back));
+    expect(slices.copper[0]).toMatchObject({ id: 'c' });
+    expect(slices.solderMask[0]).toMatchObject({ id: 'm', hidden: true });
+    expect(slices.solderMaskHidden).toBe(true);
+    expect(slices.silkscreen).toEqual([]);
+  });
+});

@@ -51,17 +51,28 @@ of opening it.
 
 The three roots cannot be renamed, deleted, grouped, selected, or reordered.
 Ordinary groups remain available inside each material and objects can move
-between containers to change material. Panel JSON is v5; older v1–v4 files
-migrate into the fixed stack on import.
+between containers to change material. Panel JSON is v6. Older files are
+**not** migrated — pre-v6 payloads are refused on import (with a toast naming
+the version, leaving the open document untouched) and a pre-v6 autosave entry
+boots the default document instead. Migration was deliberately removed rather
+than maintained, on the grounds that the app has no users yet.
 
 The same fixed stack drives the Gerber export. **Download Gerber (.zip)**
-writes `.GTL` (copper), `.GTS` (solder mask), `.GTO` (silkscreen), and `.GKO`
-(board outline) plus a README.txt. It is **artwork only** — no Excellon drill
-file and no mounting-hole geometry — so it is artwork for an already-specified
-Takazudo blank panel, not a standalone orderable board. One known limitation
-(issue #218): the current boolean backend corrupts the union for many built-in
-pattern generators (36 of 62 at the last measurement), and the exporter
-refuses those layers rather than emitting geometry known to be wrong.
+writes a per-material fabrication set: the front artwork files `.GTL`
+(copper), `.GTS` (solder mask) and `.GTO` (silkscreen), the `.GKO` board
+outline, Excellon drill files for the panel screw holes (`-PTH.drl` /
+`-NPTH.drl` — FR-4 screw holes are plated, aluminum holes are not, and the
+material's unused side ships header-only), and a README.txt. FR-4 panels also
+carry the back-side files `.GBL`/`.GBS`/`.GBO` with the back design layers;
+aluminum backs are bare metal, so the aluminum set ships only a `.GBS`
+carrying the screw-hole mask openings. The copper is **decorative artwork,
+not a functional circuit** — no nets, no pads, no component drill data — so
+the export is fabrication data for an already-specified Takazudo blank panel,
+not a standalone orderable board. The in-app export dialog carries the same
+statement. One known limitation (issue #218): the current boolean backend
+corrupts the union for many built-in pattern generators (36 of 62 at the last
+measurement), and the exporter refuses those layers rather than emitting
+geometry known to be wrong.
 
 ## Monorepo layout
 

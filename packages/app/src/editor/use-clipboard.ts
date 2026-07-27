@@ -12,18 +12,16 @@
 // 'layers', version:3, layers:[{material,node}, ...]} — written on copy/cut via
 // navigator.clipboard.writeText and read back on paste from the
 // ClipboardEvent's clipboardData, so copy/paste round-trips across zpd tabs
-// (and a payload from an unrelated app, or a future envelope version, is
+// (and a payload from an unrelated app, or any other envelope version, is
 // simply ignored rather than crashing the paste).
 //
 // v3 (#167, fixed PCB stack): `layers` material-tags each ordinary maximal
-// root, never serializing the fixed containers themselves. v2 (#156) had
-// `LayerNode[]` — a copy/cut
+// root, never serializing the fixed containers themselves. A copy/cut
 // captures the selection's MAXIMAL roots (leaves and/or groups) straight
 // from the TREE, so a copied group round-trips as a group, not a bag of
-// loose leaves. A v1 envelope (this app's own pre-#156 output, or a
-// hand-edited one) is still accepted on paste: a flat Layer[] is already a
-// valid LayerNode[] (every Layer is a leaf node), so no separate v1 code path
-// is needed — see parseEnvelope below.
+// loose leaves. Pre-v3 envelopes are no longer accepted: their parser rode
+// the core v1-v4 color partitioner, which was deleted with the schema-v6
+// compat cut (epic #226 — no users yet).
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   cloneNodeWithFreshIds,
@@ -32,8 +30,8 @@ import {
   insertPcbNode,
   isGroupNode,
   parseLayerNodeFragment,
-  parseLegacyLayerFragment,
   translatePathLayer,
+  withStackForSide,
   type MaterialLayerNode,
   type LayerNode,
   type PcbLayerRole,
@@ -44,10 +42,8 @@ import type { ToolContext } from './types';
 
 const ENVELOPE_APP = 'zpd';
 const ENVELOPE_KIND = 'layers';
+// The one and only accepted envelope version — see the compat-cut note above.
 const ENVELOPE_VERSION = 3;
-// Oldest envelope version this app still accepts on paste — a v1 (pre-#156,
-// flat-leaves-only) envelope from an older build or another still-open tab.
-const MIN_SUPPORTED_ENVELOPE_VERSION = 1;
 
 // Cascade offset applied to every clone (paste AND duplicate share this one
 // clone technique) so a repeated paste/duplicate never lands exactly on top
@@ -81,11 +77,11 @@ export interface UseClipboardReturn {
 // Pattern squares are included since #97 (multiple pattern squares are
 // legitimately useful, so copy/cut/paste/duplicate treat them like any
 // layer); select-all below is the ONE deliberate pattern exception left.
-// Each returned node is a LIVE reference into ctx.doc.layers — callers must
-// not mutate it directly (captureToClipboard deep-clones via JSON round-trip
-// before stashing it).
+// Each returned node is a LIVE reference into the ACTIVE side's stack (#233)
+// — callers must not mutate it directly (captureToClipboard deep-clones via
+// JSON round-trip before stashing it).
 function copyableSelection(ctx: ToolContext): MaterialLayerNode[] {
-  const tree = ctx.doc.layers;
+  const tree = ctx.activeStack;
   const rootIds = maximalPcbSelectedRoots(tree, ctx.selectedIds);
   const nodes: MaterialLayerNode[] = [];
   for (const id of rootIds) {
@@ -114,9 +110,9 @@ function maximalPcbSelectedRoots(
 
 // Parses OS clipboard text as a zpd layers envelope. Returns null for
 // anything else — a plain sentence, a URL, JSON from an unrelated app, a
-// version below what this app has ever emitted, or a future/foreign envelope
-// version — so the caller can leave non-envelope text completely untouched
-// rather than guessing at a mismatched shape.
+// retired pre-v3 envelope, or a future/foreign envelope version — so the
+// caller can leave non-envelope text completely untouched rather than
+// guessing at a mismatched shape.
 function isPcbLayerRole(value: unknown): value is PcbLayerRole {
   return value === 'copper' || value === 'solder-mask' || value === 'silkscreen';
 }
@@ -133,10 +129,7 @@ function parseEnvelope(text: string, panelHp: number): MaterialLayerNode[] | nul
   if (
     candidate.app !== ENVELOPE_APP ||
     candidate.kind !== ENVELOPE_KIND ||
-    typeof candidate.version !== 'number' ||
-    !Number.isInteger(candidate.version) ||
-    candidate.version < MIN_SUPPORTED_ENVELOPE_VERSION ||
-    candidate.version > ENVELOPE_VERSION ||
+    candidate.version !== ENVELOPE_VERSION ||
     !Array.isArray(candidate.layers)
   ) {
     return null;
@@ -148,26 +141,19 @@ function parseEnvelope(text: string, panelHp: number): MaterialLayerNode[] | nul
   // same-version envelope from an older/hand-edited/malicious source can't
   // slip in a structurally incomplete layer (e.g. a 'path' with no `points`)
   // or an over-deep group that would later throw or misbehave once inserted.
-  // Deliberately NOT flattened: the whole point of v2/v3 is that a copied group
+  // Deliberately NOT flattened: the whole point of v3 is that a copied group
   // round-trips as a group — flattening here would defeat that while doing
-  // nothing extra for defense (a v1 flat envelope has no groups to flatten,
-  // and the fragment parser already rejects anything a group node's shape
-  // doesn't satisfy). Untrusted input is defended by validating structure,
-  // not by discarding it.
-  if (candidate.version === ENVELOPE_VERSION) {
-    const nodes: MaterialLayerNode[] = [];
-    for (const entry of candidate.layers) {
-      if (typeof entry !== 'object' || entry === null) continue;
-      const tagged = entry as Record<string, unknown>;
-      if (!isPcbLayerRole(tagged.material)) continue;
-      const parsed = parseLayerNodeFragment([tagged.node], panelHp);
-      if (parsed.length === 1) nodes.push({ material: tagged.material, node: parsed[0] });
-    }
-    return nodes.length > 0 ? nodes : null;
+  // nothing extra for defense (the fragment parser already rejects anything
+  // a group node's shape doesn't satisfy). Untrusted input is defended by
+  // validating structure, not by discarding it.
+  const nodes: MaterialLayerNode[] = [];
+  for (const entry of candidate.layers) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const tagged = entry as Record<string, unknown>;
+    if (!isPcbLayerRole(tagged.material)) continue;
+    const parsed = parseLayerNodeFragment([tagged.node], panelHp);
+    if (parsed.length === 1) nodes.push({ material: tagged.material, node: parsed[0] });
   }
-  // v1/v2 were untagged ordinary roots. The core migration partitioner is
-  // deliberately shared here so mixed legacy groups split deterministically.
-  const nodes = parseLegacyLayerFragment(candidate.layers, panelHp);
   return nodes.length > 0 ? nodes : null;
 }
 
@@ -251,7 +237,10 @@ function insertClones(ctx: ToolContext, sourceNodes: readonly MaterialLayerNode[
     material,
     node: offsetNodeLeaves(cloneNodeWithFreshIds(node), CASCADE_OFFSET_MM),
   }));
-  let layers = ctx.doc.layers;
+  // Paste/duplicate land on the ACTIVE side (#233): the envelope only tags
+  // materials, never a side — a front copy pasted while Back is active lands
+  // on the back stack, by design.
+  let layers = ctx.activeStack;
   for (const { material, node } of clones) {
     const inserted = insertPcbNode(layers, material, node);
     // A batch must never partially mutate (e.g. a malicious fragment with an
@@ -259,7 +248,7 @@ function insertClones(ctx: ToolContext, sourceNodes: readonly MaterialLayerNode[
     if (inserted === layers) return;
     layers = inserted;
   }
-  ctx.commit({ ...ctx.doc, layers });
+  ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, layers));
   ctx.selectIds(clones.map(({ node }) => node.id));
 }
 
@@ -288,13 +277,16 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     // cascades away with its whole subtree (deleting only the copied leaves
     // would leave an empty group shell behind), and a descendant of a
     // selected ancestor drops out rather than double-deleting.
-    ctx.commit({
-      ...ctx.doc,
-      layers: maximalPcbSelectedRoots(ctx.doc.layers, ctx.selectedIds).reduce(
-        (tree, id) => deletePcbNodeById(tree, id),
-        ctx.doc.layers,
+    ctx.commit(
+      withStackForSide(
+        ctx.doc,
+        ctx.activeSide,
+        maximalPcbSelectedRoots(ctx.activeStack, ctx.selectedIds).reduce(
+          (tree, id) => deletePcbNodeById(tree, id),
+          ctx.activeStack,
+        ),
       ),
-    });
+    );
     // Every selected id was either cut or a descendant of a cut root.
     ctx.selectIds([]);
   }, [ctx]);
@@ -312,7 +304,7 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     // promotion a full-canvas marquee applies); a pattern-only group never
     // enters (no non-pattern leaf nominates it), but a mixed group joins
     // whole — its pattern members ride along, the rigid-group convention.
-    const tree = ctx.doc.layers;
+    const tree = ctx.activeStack;
     const ids: string[] = [];
     const seen = new Set<string>();
     for (const layer of ctx.flatLayers) {

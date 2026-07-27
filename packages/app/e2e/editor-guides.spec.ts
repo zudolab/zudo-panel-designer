@@ -9,7 +9,7 @@
 //
 // NOTE: authored alongside #54 but NOT run in this worktree (no dev server /
 // browser here). The manager runs the e2e suite on the merged base branch.
-import { PANEL_HEIGHT_MM, panelWidthMm } from '@zpd/core';
+import { panelHeightMm, panelWidthMm } from '@zpd/core';
 import { expect, test } from '@playwright/test';
 import { bridge, openEditor, toScreenPoint } from './helpers';
 
@@ -46,7 +46,7 @@ test('@smoke drag from the vertical ruler onto the canvas creates a vertical gui
 }) => {
   await openEditor(page);
 
-  const dropMm = { x: 20, y: PANEL_HEIGHT_MM / 2 };
+  const dropMm = { x: 20, y: panelHeightMm('3U') / 2 };
   const drop = await toScreenPoint(page, dropMm);
 
   const rulerBox = await page.getByTestId('ruler-v').boundingBox();

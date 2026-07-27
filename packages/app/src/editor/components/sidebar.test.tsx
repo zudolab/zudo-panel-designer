@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   projectPcbLayerStack as projectFlatLayers,
   type GroupNode,
@@ -42,6 +43,8 @@ function stubCtx(copperChildren: LayerNode[] = [LAYER]) {
   const commit = vi.fn();
   const doc = {
     panelHp: 12,
+    format: '3U' as const,
+    material: 'fr4' as const,
     layers: createPcbLayerStack({ copper: copperChildren }),
     guides: GUIDES,
   };
@@ -51,6 +54,10 @@ function stubCtx(copperChildren: LayerNode[] = [LAYER]) {
     commit,
     select: vi.fn(),
     selectIds: vi.fn(),
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   Object.defineProperty(ctx, 'flatLayers', {
     get: () => projectFlatLayers(ctx.doc.layers),
@@ -62,12 +69,13 @@ function renderSidebar(
   overrides: Partial<Parameters<typeof Sidebar>[0]> = {},
   copperChildren?: LayerNode[],
 ) {
-  const { ctx, doc } = stubCtx(copperChildren);
+  const { ctx, doc, commit } = stubCtx(copperChildren);
   const onShowGuidesChange = vi.fn();
   render(
     <Sidebar
       ctx={ctx}
       doc={doc as Parameters<typeof Sidebar>[0]['doc']}
+      activeSide="front"
       selectedIds={[]}
       selectedLayer={null}
       activeToolId="select"
@@ -78,7 +86,7 @@ function renderSidebar(
       {...overrides}
     />,
   );
-  return { onShowGuidesChange };
+  return { onShowGuidesChange, commit };
 }
 
 describe('Sidebar — View section "Show guides"', () => {
@@ -137,6 +145,7 @@ describe('Sidebar — Layers section lifecycle', () => {
   it('renders the committed doc stack immediately even when the live ctx ref is one render behind', () => {
     const moved: ShapeLayer = { ...LAYER, id: 'moved', name: 'Moved to silk', color: 2 };
     const committedDoc = {
+      ...createDefaultDoc(),
       panelHp: 12,
       layers: createPcbLayerStack({ silkscreen: [moved] }),
       guides: GUIDES,
@@ -163,5 +172,63 @@ describe('Sidebar — Layers section lifecycle', () => {
     expect(screen.getByRole('button', { name: 'Expand Copper' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Expand Copper' }));
     expect(screen.getByRole('button', { name: 'Expand Artwork' })).toBeTruthy();
+  });
+});
+
+describe('Sidebar — Panel section: format / size / material selectors (#237)', () => {
+  it('reflects the current format, size and material', () => {
+    renderSidebar({
+      doc: { ...createDefaultDoc(), format: '3U', panelHp: 12, material: 'fr4' },
+    });
+    expect((screen.getByLabelText('Format') as HTMLSelectElement).value).toBe('3U');
+    expect((screen.getByLabelText('Size') as HTMLSelectElement).value).toBe('12');
+    expect((screen.getByLabelText('Material') as HTMLSelectElement).value).toBe('fr4');
+  });
+
+  it('constrains the Size options to the active format\'s supportedHps — 1U stops at 10HP', () => {
+    renderSidebar({ doc: { ...createDefaultDoc(), format: '1U', panelHp: 10 } });
+    const select = screen.getByLabelText('Size') as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(['1', '2', '3', '4', '5', '6', '8', '10']);
+  });
+
+  it('3U offers the full catalog up to 20HP', () => {
+    renderSidebar({ doc: { ...createDefaultDoc(), format: '3U', panelHp: 12 } });
+    const select = screen.getByLabelText('Size') as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(['1', '2', '3', '4', '5', '6', '8', '10', '12', '14', '16', '20']);
+  });
+
+  it('switching format keeps a still-supported hp unchanged, committed in ONE undoable commit', () => {
+    const { commit } = renderSidebar({
+      doc: { ...createDefaultDoc(), format: '3U', panelHp: 6 },
+    });
+    fireEvent.change(screen.getByLabelText('Format'), { target: { value: '1U' } });
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ format: '1U', panelHp: 6 }));
+  });
+
+  it('switching format clamps an unsupported hp to the nearest supported size, in the SAME commit', () => {
+    const { commit } = renderSidebar({
+      doc: { ...createDefaultDoc(), format: '3U', panelHp: 20 },
+    });
+    fireEvent.change(screen.getByLabelText('Format'), { target: { value: '1U' } });
+    expect(commit).toHaveBeenCalledTimes(1);
+    // 1U's catalog tops out at 10HP — nearest to 20 is 10, not the next size down.
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ format: '1U', panelHp: 10 }));
+  });
+
+  it('changing size commits panelHp alone (unchanged behavior)', () => {
+    const { commit } = renderSidebar({
+      doc: { ...createDefaultDoc(), format: '3U', panelHp: 12 },
+    });
+    fireEvent.change(screen.getByLabelText('Size'), { target: { value: '20' } });
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ panelHp: 20, format: '3U' }));
+  });
+
+  it('changing material commits the new material', () => {
+    const { commit } = renderSidebar({ doc: { ...createDefaultDoc(), material: 'fr4' } });
+    fireEvent.change(screen.getByLabelText('Material'), { target: { value: 'alumi' } });
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ material: 'alumi' }));
   });
 });

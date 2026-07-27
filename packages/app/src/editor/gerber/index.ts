@@ -3,6 +3,13 @@
 // export UI). `DECISIONS.md`, next to this file, is the authoritative spec.
 
 export type {
+  BackLayerRole,
+  DrillFileIr,
+  DrillHit,
+  DrillIr,
+  DrillPlating,
+  DrillSlot,
+  DrillTool,
   GerberIr,
   GerberRefusal,
   GerberRefusalCode,
@@ -17,7 +24,15 @@ export type {
   IrRing,
   IrUnsupportedReason,
   LayerGeometrySource,
+  RefusalSink,
 } from './ir';
+export { MATERIAL_BACK_ROLES, MATERIAL_LAYER_ROLES, ROLE_FILE_POLARITY } from './ir';
+
+// The #231 fabrication seams: #235 fills holes.ts, #236 fills back-extract.ts.
+export type { DrillFile, HoleFabrication, HoleFabricationContext } from './holes';
+export { drillFilename, drillFileSet, emptyDrillIr, injectHoleFabrication } from './holes';
+export type { BackExtractContext } from './back-extract';
+export { extractBackLayers } from './back-extract';
 
 export type { IrComplexityLimits, IrTolerance } from './tolerance';
 export {

@@ -2,7 +2,19 @@
 // through the window.__zpdTest bridge (see src/editor/test-bridge.ts) instead
 // of pixel-probing the canvas.
 import { type Page } from '@playwright/test';
+import {
+  PALETTE,
+  PANEL_CONFIG_VERSION,
+  PCB_LAYER_ROLES,
+  panelHeightMm,
+  panelWidthMm,
+  pcbLayerContainerId,
+  type PanelFormat,
+  type PcbLayerRole,
+  type PcbMaterial,
+} from '@zpd/core';
 import type { Camera } from '../src/editor/camera';
+import { DOC_STORAGE_KEY, DOC_STORAGE_VERSION } from '../src/editor/doc-store';
 import type { ZpdTestBridge } from '../src/editor/test-bridge';
 
 declare global {
@@ -20,6 +32,69 @@ export const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
 export async function openEditor(page: Page): Promise<void> {
   await page.goto('/?e2e=1');
   await page.waitForFunction(() => window.__zpdTest !== undefined);
+}
+
+export interface StoredDocSeed {
+  hp: number;
+  format?: PanelFormat;
+  material?: PcbMaterial;
+  // Ordinary roots (leaves and/or group nodes) per fixed container. An omitted
+  // role seeds an empty container. Deliberately explicit rather than a flat
+  // list: parseStack would otherwise bucket bare roots by recoveryRole, which
+  // can silently split a group and its intended sibling across two containers
+  // — and groups cannot span materials, so a test about group depth would then
+  // be rejected for the wrong reason.
+  layers: Partial<Record<PcbLayerRole, unknown[]>>;
+}
+
+// Seeds the autosave entry the editor boots from, in the CURRENT storage and
+// schema shape.
+//
+// Centralized on purpose. Three specs used to inline this envelope, and all
+// three silently stopped seeding anything when epic #226's compat cut moved
+// the key (`zpd.doc.v1` -> `zpd.doc.v2`), the envelope version (1 -> 2), and
+// the schema (v4 -> v6) — readDoc() treats a stale payload as corrupt and
+// boots the demo doc instead, so the specs failed with confusing symptoms far
+// from the cause ("seeded group chain missing", null text geometry). Building
+// the payload from the real exported constants makes the next bump a
+// typecheck/CI signal here rather than a silent no-op in every caller.
+export async function seedStoredDoc(page: Page, seed: StoredDocSeed): Promise<void> {
+  const format = seed.format ?? '3U';
+  const payload = {
+    version: DOC_STORAGE_VERSION,
+    savedAt: 0,
+    config: {
+      version: PANEL_CONFIG_VERSION,
+      app: 'zpd',
+      panel: {
+        hp: seed.hp,
+        format,
+        widthMm: panelWidthMm(seed.hp),
+        heightMm: panelHeightMm(format),
+      },
+      material: seed.material ?? 'fr4',
+      palette: PALETTE.map((entry) => entry.name),
+      layers: PCB_LAYER_ROLES.map((role) => ({
+        kind: 'pcb-layer',
+        id: pcbLayerContainerId('front', role),
+        role,
+        children: seed.layers[role] ?? [],
+      })),
+      backLayers: PCB_LAYER_ROLES.map((role) => ({
+        kind: 'pcb-layer',
+        id: pcbLayerContainerId('back', role),
+        role,
+        children: [],
+      })),
+      guides: [],
+    },
+  };
+  await page.addInitScript(
+    ([key, raw]) => {
+      localStorage.setItem(key, raw);
+    },
+    [DOC_STORAGE_KEY, JSON.stringify(payload)] as const,
+  );
 }
 
 // Playwright's locator.dragTo() targets the destination's pre-drag center.

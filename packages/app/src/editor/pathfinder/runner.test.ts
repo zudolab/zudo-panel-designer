@@ -9,6 +9,7 @@
 // flake is to hold the op's promise open, mutate the host, then resolve. The
 // real ten-op dispatcher runs in the integration block at the bottom.
 import {
+  createDefaultDoc,
   commit as commitHistory,
   createHistory,
   createPcbLayerStack,
@@ -39,7 +40,7 @@ function group(id: string, children: LayerNode[]): GroupNode {
 }
 
 function doc(layers: PcbLayerStack, extra: Partial<DocState> = {}): DocState {
-  return { panelHp: 20, layers, guides: [], ...extra };
+  return { ...createDefaultDoc(), panelHp: 20, layers, guides: [], ...extra };
 }
 
 function spec(name: string): KernelPathSpec {
@@ -102,6 +103,12 @@ function createTestHost(
     },
     get mutationEpoch() {
       return state.epoch;
+    },
+    // Front-pinned like the editor's default: activeStack reads through the
+    // same lagging `visible.doc` as `doc`, mirroring ToolContext's contract.
+    activeSide: 'front',
+    get activeStack() {
+      return visible.doc.layers;
     },
     commit(next) {
       state.epoch += 1;

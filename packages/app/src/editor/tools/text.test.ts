@@ -43,6 +43,10 @@ function stubCtx(doc: DocState, selectedIds: readonly string[] = []): ToolContex
     requestRepaint: vi.fn(),
     openDialog: vi.fn(),
     closeDialog: vi.fn(),
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
 }
 
@@ -65,7 +69,12 @@ const text = getTool('text')!;
 
 describe('text tool — click to place', () => {
   it('inserts a TextLayer at the click point, commits once, then selects it and switches to select', () => {
-    const doc: DocState = { panelHp: 12, guides: [], layers: createPcbLayerStack() };
+    const doc: DocState = {
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+    };
     const ctx = stubCtx(doc);
 
     text.onPointerDown?.(ptr({ x: 12, y: 34 }), ctx);
@@ -101,6 +110,7 @@ describe('text tool — click to place', () => {
       color: 2,
     };
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ silkscreen: [existing] }),
@@ -140,6 +150,7 @@ describe('text tool — selection-relative placement (#191)', () => {
       color: 1,
     };
     const doc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ copper: [anchor] }),

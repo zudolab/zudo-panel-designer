@@ -5,7 +5,7 @@
 // bridge's getLayerTree() (raw tree structure), getSelectedIds(), and
 // getHistory() — never by pixel-probing the canvas.
 import { expect, test, type Page } from '@playwright/test';
-import { bridge, MOD, openEditor, toScreenPoint } from './helpers';
+import { bridge, MOD, openEditor, seedStoredDoc, toScreenPoint } from './helpers';
 
 // demo-doc.ts geometry: demo-rect (8,14) 24x16 -> center (20,22).
 const RECT_CENTER = { x: 20, y: 22 };
@@ -211,42 +211,31 @@ test('@smoke ⌘G that would exceed the depth cap rejects with NO history entry'
   page,
 }) => {
   // Seed a doc with a 9-deep group chain (see nestedGroupChain) plus a
-  // sibling leaf at the top level. Selecting [outermost-group, sibling-leaf]
-  // and wrapping them one level deeper needs
-  // maxSubtreeDepth(outermost-group) <= MAX_GROUP_DEPTH (8) — but it is
-  // already 9, the exact over-cap case isGroupableRootSelection rejects
-  // (commands.ts). Seeded via localStorage.setItem in an addInitScript, same
-  // pattern as editor-rotate.spec.ts's delayed-font test.
-  await page.addInitScript((deepGroup) => {
-    localStorage.setItem(
-      'zpd.doc.v1',
-      JSON.stringify({
-        version: 1,
-        savedAt: 0,
-        config: {
-          version: 4,
-          app: 'zpd',
-          panel: { hp: 12, widthMm: 65.6, heightMm: 128.5 },
-          palette: ['Black', 'Gold', 'White'],
-          layers: [
-            deepGroup,
-            {
-              id: 'sibling-leaf',
-              name: 'Sibling',
-              type: 'shape',
-              shape: 'rect',
-              x: 40,
-              y: 40,
-              width: 4,
-              height: 4,
-              color: 0,
-            },
-          ],
-          guides: [],
+  // sibling leaf. Selecting [outermost-group, sibling-leaf] and wrapping them
+  // one level deeper needs maxSubtreeDepth(outermost-group) <=
+  // MAX_GROUP_DEPTH (8) — but it is already 9, the exact over-cap case
+  // isGroupableRootSelection rejects (commands.ts). Both roots go in the SAME
+  // container: groups cannot span materials, so splitting them would make ⌘G
+  // fail as a cross-material selection and stop testing the depth cap at all.
+  await seedStoredDoc(page, {
+    hp: 12,
+    layers: {
+      'solder-mask': [
+        nestedGroupChain(9),
+        {
+          id: 'sibling-leaf',
+          name: 'Sibling',
+          type: 'shape',
+          shape: 'rect',
+          x: 40,
+          y: 40,
+          width: 4,
+          height: 4,
+          color: 0,
         },
-      }),
-    );
-  }, nestedGroupChain(9));
+      ],
+    },
+  });
   await openEditor(page);
 
   const treeBefore = await bridge(page).getLayerTree();

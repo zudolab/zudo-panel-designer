@@ -4,7 +4,7 @@
 // existing file is edited to add one (see editor/README.md).
 import type { ComponentType, ReactNode } from 'react';
 import type { Camera } from './camera';
-import type { DocState, Layer, PcbLayerRole, Pt, Rect } from '@zpd/core';
+import type { DocState, Layer, PanelSide, PcbLayerRole, PcbLayerStack, Pt, Rect } from '@zpd/core';
 
 export interface PanelDims {
   widthMm: number;
@@ -27,13 +27,22 @@ export interface ToolContext {
   // selected.
   readonly selectedId: string | null;
   readonly selectedLayer: Layer | null;
-  // The flat Layer[] projection of doc.layers (#150): DFS leaf order — the
-  // z-order the renderer paints — with ancestor `hidden` folded down. LIVE
-  // like `doc`, and identity-STABLE per committed tree (memoized in
-  // flat-projection.ts): text geometry treats array identity as
-  // document-incarnation state, so read the flat view HERE — never
-  // re-flatten doc.layers ad hoc.
+  // The flat Layer[] projection of the ACTIVE side's stack (#150, side-scoped
+  // by #233): DFS leaf order — the z-order the renderer paints — with
+  // ancestor `hidden` folded down. LIVE like `doc`, and identity-STABLE per
+  // committed tree (memoized in flat-projection.ts): text geometry treats
+  // array identity as document-incarnation state, so read the flat view
+  // HERE — never re-flatten a stack ad hoc.
   readonly flatLayers: readonly Layer[];
+  // Which panel face is being viewed/edited (#230) — non-persisted view
+  // state owned by Editor.tsx (same pattern as showOutsidePanel), default
+  // 'front'. LIVE like `doc`; reads fresh IMMEDIATELY after setActiveSide
+  // (eager ref sync — see Editor.tsx), unlike doc/selection reads.
+  readonly activeSide: PanelSide;
+  // stackForSide(doc, activeSide): the stack side-aware tools/ops should
+  // read instead of doc.layers (the Wave-4 #233 migration target). LIVE,
+  // with `doc`'s staleness contract — it reads through the same doc ref.
+  readonly activeStack: PcbLayerStack;
   // Monotonic counter bumped SYNCHRONOUSLY by every document and selection
   // mutator below, before the React update it queues. `doc` / `selectedIds`
   // read through refs that resync in a passive effect, so between a mutator
@@ -77,6 +86,16 @@ export interface ToolContext {
   selectIds(ids: readonly string[]): void;
   setCamera(next: Camera | ((cam: Camera) => Camera)): void;
   setActiveTool(id: string): void;
+  // Switches the edited panel face (#230). An ACTUAL switch clears the
+  // selection (ids point into the other side's stack) and discards any
+  // in-progress tool draft via clearToolDraft; a same-side call is a no-op
+  // so re-clicking the active tab (#233's UI) never nukes the selection.
+  setActiveSide(side: PanelSide): void;
+  // Unconditionally discards the active tool's in-progress draft state by
+  // cycling its onDeactivate/onActivate — the exact discard a tool switch
+  // already performs, without changing which tool is active. Used by side
+  // switching (above) and whole-document replacement (replace-doc.ts).
+  clearToolDraft(): void;
 
   // ask the renderer to repaint (e.g. after a tool's own draft state changed)
   requestRepaint(): void;

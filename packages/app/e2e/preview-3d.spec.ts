@@ -484,7 +484,7 @@ test('@smoke 3D preview refreshes font surfaces and reopens on current editor st
 
   // Both changes go through real editor controls, then the command palette
   // opens a fresh preview from the latest document.
-  await page.getByRole('combobox').first().selectOption('20');
+  await page.getByRole('combobox', { name: 'Size' }).selectOption('20');
   await expect.poll(() => bridge(page).getPanelHp()).toBe(20);
   await page.getByRole('button', { name: 'Select layer Gold base' }).click();
   await expect
@@ -556,10 +556,24 @@ async function expectNoPageOverflow(page: Page): Promise<void> {
 test('@smoke 3D preview controls remain accessible and unclipped across viewports', async ({
   page,
 }) => {
-  // This flow creates a fresh renderer at three viewport sizes. It is expected
-  // to approach the default test budget when the complete suite runs in
-  // parallel, so keep the larger budget local to this scenario.
-  test.slow();
+  // This flow creates a fresh renderer at three viewport sizes, so its cost is
+  // three full preview initialisations rather than one.
+  //
+  // It used test.slow() (30s -> 90s) and, per the note this replaces, already
+  // "approached" that budget. Epic #226 made each initialisation heavier —
+  // extruded board geometry carrying a hole loop per screw hole instead of a
+  // BoxGeometry, and, on FR-4, a SECOND painted map set for the back face with
+  // its own ring/mask work. On CI this test went from 53.5s to exceeding 90s,
+  // failing on both the initial run and the retry, while the other 77 specs
+  // passed.
+  //
+  // The budget is therefore stated explicitly rather than derived from the
+  // default, matching the 180s already used by the leak-free scenario above.
+  // This is a budget correction, not a workaround: nothing here got slower per
+  // unit of work — the test simply does more of it now. The suite-level
+  // slowdown it revealed (3m14s -> 5m43s across waves 4-6) is tracked
+  // separately so it is not silently absorbed by this number.
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 320, height: 568 });
   await openEditor(page);
 

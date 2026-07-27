@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  createDefaultDoc,
   createPcbLayerStack,
   PALETTE,
-  PANEL_HEIGHT_MM,
   PANEL_THICKNESS_MM,
   PCB_SUBSTRATE,
+  PCB_SUBSTRATE_ALUMI,
+  panelHeightMm,
+  panelHoles,
   panelWidthMm,
   type DocState,
   type LayerNode,
@@ -18,7 +21,11 @@ import {
   type FontInitialResult,
   type FontLoadAttempt,
 } from '../fonts';
-import { resetTextGeometryForTests, setTextMeasureForTests } from '../text-geometry';
+import {
+  peekTextGeometry,
+  resetTextGeometryForTests,
+  setTextMeasureForTests,
+} from '../text-geometry';
 import {
   openPreviewGenerationSession,
   type PreviewCanvasSource,
@@ -28,6 +35,7 @@ import { representativeSurfaceMapDoc } from './surface-maps.fixtures';
 import { projectFlatLayers } from '../flat-projection';
 import {
   PCB_SUBSTRATE_SURFACE_MATERIAL,
+  PCB_SUBSTRATE_SURFACE_MATERIALS,
   PCB_SURFACE_MATERIALS,
   PREVIEW_HEIGHT_COPPER_COLOR,
   PREVIEW_HEIGHT_MASK_COLOR,
@@ -35,6 +43,7 @@ import {
   surfaceMapColorForPalette,
   surfaceMapSubstrateColor,
   type PreviewCanvasFactory,
+  type PreviewSurfaceGenerationInput,
 } from './surface-maps';
 
 vi.mock('../fonts', () => ({
@@ -68,6 +77,38 @@ class RecordingPath2D {
   }
 }
 
+// Canvas' own affine order, [a, b, c, d, e, f].
+type Affine = readonly [number, number, number, number, number, number];
+const IDENTITY_AFFINE: Affine = [1, 0, 0, 1, 0, 0];
+
+function composeAffine(outer: Affine, inner: Affine): Affine {
+  return [
+    outer[0] * inner[0] + outer[2] * inner[1],
+    outer[1] * inner[0] + outer[3] * inner[1],
+    outer[0] * inner[2] + outer[2] * inner[3],
+    outer[1] * inner[2] + outer[3] * inner[3],
+    outer[0] * inner[4] + outer[2] * inner[5] + outer[4],
+    outer[1] * inner[4] + outer[3] * inner[5] + outer[5],
+  ];
+}
+
+function invertAffine(m: Affine): Affine {
+  const determinant = m[0] * m[3] - m[1] * m[2];
+  if (determinant === 0) throw new Error('recording canvas produced a singular transform');
+  return [
+    m[3] / determinant,
+    -m[1] / determinant,
+    -m[2] / determinant,
+    m[0] / determinant,
+    (m[2] * m[5] - m[3] * m[4]) / determinant,
+    (m[1] * m[4] - m[0] * m[5]) / determinant,
+  ];
+}
+
+function applyAffine(m: Affine, x: number, y: number): readonly [number, number] {
+  return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+}
+
 interface CanvasCall {
   readonly method: string;
   readonly args: readonly unknown[];
@@ -75,6 +116,15 @@ interface CanvasCall {
   readonly strokeStyle: string;
   readonly globalAlpha: number;
   readonly globalCompositeOperation: string;
+  // Transform composed on top of the most recent setTransform — i.e. this
+  // call's own coordinates expressed relative to the PANEL SPACE that
+  // enterPanelSpace establishes. Sampling reads it inverted, so a sample
+  // point given in panel mm resolves through mirrors and rotations instead
+  // of silently comparing against raw, untransformed arguments. Without it a
+  // whole class of coordinate-space bug is invisible here: the back face's
+  // artwork mirror is a pure CTM operation, so an unaware recorder cannot
+  // tell back-view doc space from canonical fabrication space.
+  readonly panelLocal: Affine;
   // Global ordering across every recording canvas: sampling through a mask
   // sheet drawImage must only replay sheet calls issued BEFORE that
   // composite (the shared sheet is re-filled and re-punched per map).
@@ -95,7 +145,26 @@ function recordingContext(calls: CanvasCall[], observer?: CallObserver): CanvasR
     textBaseline: 'alphabetic',
     globalCompositeOperation: 'source-over',
   };
-  const stack: Record<string, unknown>[] = [];
+  let panelLocal: Affine = IDENTITY_AFFINE;
+  const stack: Array<{ state: Record<string, unknown>; panelLocal: Affine }> = [];
+
+  // setTransform re-bases panel space (enterPanelSpace is its only caller);
+  // everything after it composes on top and is what sampling inverts.
+  const trackTransform = (method: string, args: readonly unknown[]): void => {
+    const n = args as number[];
+    if (method === 'setTransform') panelLocal = IDENTITY_AFFINE;
+    else if (method === 'translate') {
+      panelLocal = composeAffine(panelLocal, [1, 0, 0, 1, n[0]!, n[1]!]);
+    } else if (method === 'scale') {
+      panelLocal = composeAffine(panelLocal, [n[0]!, 0, 0, n[1]!, 0, 0]);
+    } else if (method === 'rotate') {
+      const cos = Math.cos(n[0]!);
+      const sin = Math.sin(n[0]!);
+      panelLocal = composeAffine(panelLocal, [cos, sin, -sin, cos, 0, 0]);
+    } else if (method === 'transform') {
+      panelLocal = composeAffine(panelLocal, [n[0]!, n[1]!, n[2]!, n[3]!, n[4]!, n[5]!]);
+    }
+  };
 
   return new Proxy(
     {},
@@ -104,8 +173,15 @@ function recordingContext(calls: CanvasCall[], observer?: CallObserver): CanvasR
         if (property in state) return state[property];
         if (property === 'measureText') return () => ({ width: 0 });
         return (...args: unknown[]) => {
-          if (property === 'save') stack.push({ ...state });
-          if (property === 'restore') state = stack.pop() ?? state;
+          if (property === 'save') stack.push({ state: { ...state }, panelLocal });
+          if (property === 'restore') {
+            const restored = stack.pop();
+            if (restored) {
+              state = restored.state;
+              panelLocal = restored.panelLocal;
+            }
+          }
+          trackTransform(property, args);
           const call: CanvasCall = {
             method: property,
             args,
@@ -113,6 +189,7 @@ function recordingContext(calls: CanvasCall[], observer?: CallObserver): CanvasR
             strokeStyle: String(state.strokeStyle),
             globalAlpha: Number(state.globalAlpha),
             globalCompositeOperation: String(state.globalCompositeOperation),
+            panelLocal,
             seq: nextCallSeq++,
           };
           calls.push(call);
@@ -213,6 +290,19 @@ function ticket(
   return { surfaceRevision, signal };
 }
 
+function docPick(
+  overrides: Partial<PreviewSurfaceGenerationInput['doc']> = {},
+): PreviewSurfaceGenerationInput['doc'] {
+  return {
+    panelHp: 4,
+    format: '3U',
+    material: 'fr4',
+    layers: createPcbLayerStack(),
+    backLayers: createPcbLayerStack('back'),
+    ...overrides,
+  };
+}
+
 function normalizedCalls(canvas: RecordingCanvas): unknown[] {
   // seq is deliberately omitted: it is a process-global counter, so it must
   // not leak into determinism comparisons between two independent runs.
@@ -266,6 +356,29 @@ function pathContains(path: RecordingPath2D, x: number, y: number): boolean {
   return crossings % 2 === 1;
 }
 
+// Point-in-fill for an arc-built subpath (the screw-hole stadium tracer):
+// polygonizes each recorded clockwise arc in draw order — canvas auto-connects
+// consecutive arcs with lines — and runs the same crossing test as
+// pathContains.
+function arcPathContains(arcs: ReadonlyArray<readonly number[]>, x: number, y: number): boolean {
+  const points: Array<readonly [number, number]> = [];
+  for (const [cx, cy, radius, startAngle, endAngle] of arcs) {
+    const sweepEnd = endAngle < startAngle ? endAngle + Math.PI * 2 : endAngle;
+    const steps = 64;
+    for (let step = 0; step <= steps; step += 1) {
+      const angle = startAngle + ((sweepEnd - startAngle) * step) / steps;
+      points.push([cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)]);
+    }
+  }
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [xi, yi] = points[i];
+    const [xj, yj] = points[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 // Replays a canvas call log at one sample point, modeling the negative-mask
 // composite: `apply` receives the style of every covering paint — or null for
 // a destination-out punch that erases the point — plus the composite
@@ -273,6 +386,12 @@ function pathContains(path: RecordingPath2D, x: number, y: number): boolean {
 // 'lighter'). Mask-sheet drawImage calls recurse into the sheet's own log,
 // truncated to calls issued before the composite (the shared sheet is
 // re-filled and re-punched per map).
+//
+// (x, y) is PANEL SPACE — the mm frame enterPanelSpace establishes, which for
+// both faces is canonical fabrication space. Each call's own arguments are
+// read in its local frame, reached by inverting the transform it carries, so
+// the back face's artwork mirror and a layer's rotation both resolve here
+// rather than passing unnoticed.
 function replayStyleAt(
   calls: readonly CanvasCall[],
   x: number,
@@ -280,8 +399,16 @@ function replayStyleAt(
   apply: (style: string | null, compositeOperation: string) => void,
 ): void {
   let pendingRect: readonly number[] | null = null;
+  let pendingArcs: Array<readonly number[]> = [];
+  // Set per call from its own transform, so every containment test below
+  // compares like with like.
+  let localX = x;
+  let localY = y;
   const contains = (rect: readonly number[]) =>
-    x > rect[0] && x < rect[0] + rect[2] && y > rect[1] && y < rect[1] + rect[3];
+    localX > rect[0] &&
+    localX < rect[0] + rect[2] &&
+    localY > rect[1] &&
+    localY < rect[1] + rect[3];
   const applyCall = (call: CanvasCall): void => {
     apply(
       call.globalCompositeOperation === 'destination-out' ? null : call.fillStyle,
@@ -289,9 +416,16 @@ function replayStyleAt(
     );
   };
   for (const call of calls) {
-    if (call.method === 'beginPath') pendingRect = null;
+    [localX, localY] = applyAffine(invertAffine(call.panelLocal), x, y);
+    if (call.method === 'beginPath') {
+      pendingRect = null;
+      pendingArcs = [];
+    }
     if (call.method === 'rect' && call.args.every((arg) => typeof arg === 'number')) {
       pendingRect = call.args as number[];
+    }
+    if (call.method === 'arc' && call.args.slice(0, 5).every((arg) => typeof arg === 'number')) {
+      pendingArcs.push(call.args.slice(0, 5) as number[]);
     }
     if (
       call.method === 'fillRect' &&
@@ -300,7 +434,11 @@ function replayStyleAt(
     ) {
       applyCall(call);
     }
-    if (call.method === 'fill' && call.args.length === 0 && pendingRect) {
+    if (call.method === 'fill' && call.args.length === 0 && pendingArcs.length > 0) {
+      if (arcPathContains(pendingArcs, localX, localY)) applyCall(call);
+      pendingArcs = [];
+      pendingRect = null;
+    } else if (call.method === 'fill' && call.args.length === 0 && pendingRect) {
       if (contains(pendingRect)) applyCall(call);
       pendingRect = null;
     }
@@ -308,7 +446,7 @@ function replayStyleAt(
       call.method === 'fill' &&
       call.args[0] instanceof RecordingPath2D &&
       call.args[1] === 'evenodd' &&
-      pathContains(call.args[0], x, y)
+      pathContains(call.args[0], localX, localY)
     ) {
       applyCall(call);
     }
@@ -423,9 +561,30 @@ describe('PCB surface material classification', () => {
       roughness: 0.55,
     });
     expect(Object.isFrozen(PCB_SUBSTRATE_SURFACE_MATERIAL)).toBe(true);
-    expect(surfaceMapSubstrateColor('baseColor')).toBe(PCB_SUBSTRATE.hex);
-    expect(surfaceMapSubstrateColor('metalness')).toBe('#000000');
-    expect(surfaceMapSubstrateColor('roughness')).toBe('#8c8c8c');
+    // FR-4 regression pin (#232): the fr4 entry IS the pre-material-aware
+    // constant, so existing documents cannot drift.
+    expect(PCB_SUBSTRATE_SURFACE_MATERIALS.fr4).toBe(PCB_SUBSTRATE_SURFACE_MATERIAL);
+    expect(surfaceMapSubstrateColor('baseColor', 'fr4')).toBe(PCB_SUBSTRATE.hex);
+    expect(surfaceMapSubstrateColor('metalness', 'fr4')).toBe('#000000');
+    expect(surfaceMapSubstrateColor('roughness', 'fr4')).toBe('#8c8c8c');
+  });
+
+  it('gives alumi a shining-gray substrate fed from the shared core constant', () => {
+    expect(PCB_SUBSTRATE_SURFACE_MATERIALS.alumi).toMatchObject({
+      baseColor: PCB_SUBSTRATE_ALUMI.hex,
+      metalness: 1,
+    });
+    // "Shining gray": full metalness, clearly lower roughness than every
+    // non-metal surface in the palette so the aluminum reads polished.
+    expect(PCB_SUBSTRATE_SURFACE_MATERIALS.alumi.roughness).toBeLessThanOrEqual(0.25);
+    expect(PCB_SUBSTRATE_SURFACE_MATERIALS.alumi.roughness).toBeLessThan(
+      PCB_SUBSTRATE_SURFACE_MATERIAL.roughness,
+    );
+    expect(Object.isFrozen(PCB_SUBSTRATE_SURFACE_MATERIALS)).toBe(true);
+    expect(Object.isFrozen(PCB_SUBSTRATE_SURFACE_MATERIALS.alumi)).toBe(true);
+    expect(surfaceMapSubstrateColor('baseColor', 'alumi')).toBe(PCB_SUBSTRATE_ALUMI.hex);
+    expect(surfaceMapSubstrateColor('metalness', 'alumi')).toBe('#ffffff');
+    expect(surfaceMapSubstrateColor('roughness', 'alumi')).toBe('#333333');
   });
 });
 
@@ -504,7 +663,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
     const recording = recordingCanvasFactory();
     const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
     const snapshot = generator.generate({
-      doc: { panelHp: 8, layers: stack },
+      doc: docPick({ panelHp: 8, layers: stack }),
       ticket: ticket(21),
       preferredPixelsPerMm: 1,
       maximumTextureSizePx: 512,
@@ -528,7 +687,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
       material: 0 | 1 | 2 | 'substrate',
     ) =>
       material === 'substrate'
-        ? surfaceMapSubstrateColor(mapName)
+        ? surfaceMapSubstrateColor(mapName, 'fr4')
         : surfaceMapColorForPalette(mapName, material);
 
     const visible = generate();
@@ -614,18 +773,24 @@ describe('createPreviewSurfaceMapGenerator', () => {
     expect(snapshot.surfaceRevision).toBe(7);
     expect(snapshot.physicalDimensions).toEqual({
       widthMm: panelWidthMm(doc.panelHp),
-      heightMm: PANEL_HEIGHT_MM,
+      heightMm: panelHeightMm(doc.format),
       thicknessMm: PANEL_THICKNESS_MM,
     });
     expect(snapshot.rasterSize.widthPx).toBeLessThanOrEqual(256);
     expect(snapshot.rasterSize.heightPx).toBeLessThanOrEqual(256);
     expect(snapshot.rasterSize.widthPx / snapshot.rasterSize.heightPx).toBeCloseTo(
-      panelWidthMm(doc.panelHp) / PANEL_HEIGHT_MM,
+      panelWidthMm(doc.panelHp) / panelHeightMm(doc.format),
       2,
     );
     expect(snapshot.orientation.documentTopLeftUv).toEqual({ u: 0, v: 1 });
-    // Four maps plus the one shared mask sheet, all at the chosen raster.
-    expect(recording.canvases).toHaveLength(5);
+    expect(snapshot.backOrientation.documentTopLeftUv).toEqual({ u: 1, v: 1 });
+    expect(snapshot.material).toBe('fr4');
+    // The golden screw-hole catalog rides along for the hole-cutting
+    // consumer (#234), derived from (format, hp), never stored.
+    expect(snapshot.holes).toEqual(panelHoles(doc.format, doc.panelHp));
+    expect(snapshot.backMaps).not.toBeNull();
+    // Two four-map faces plus the one shared mask sheet, all at the raster.
+    expect(recording.canvases).toHaveLength(9);
     expect(recording.canvases.every((canvas) => canvas.width === snapshot.rasterSize.widthPx)).toBe(
       true,
     );
@@ -633,6 +798,258 @@ describe('createPreviewSurfaceMapGenerator', () => {
       recording.canvases.every((canvas) => canvas.height === snapshot.rasterSize.heightPx),
     ).toBe(true);
     expect(JSON.stringify(doc)).toBe(before);
+    generator.close();
+  });
+
+  it('derives the panel height from the document format', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: docPick({ format: '1U' }),
+      ticket: ticket(2),
+      maximumTextureSizePx: 256,
+    });
+
+    expect(panelHeightMm('1U')).toBe(39.65);
+    expect(snapshot.physicalDimensions.heightMm).toBe(panelHeightMm('1U'));
+    expect(snapshot.holes).toEqual(panelHoles('1U', 4));
+    generator.close();
+  });
+
+  it('paints the back map set from the back stack in canonical coordinates', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: docPick({
+        panelHp: 8,
+        backLayers: createPcbLayerStack('back', {
+          copper: [
+            {
+              id: 'back-copper',
+              name: 'Back copper',
+              type: 'shape',
+              shape: 'rect',
+              x: 2,
+              y: 2,
+              width: 20,
+              height: 20,
+              color: 1,
+            },
+          ],
+          'solder-mask': [
+            {
+              id: 'back-opening',
+              name: 'Back opening',
+              type: 'shape',
+              shape: 'rect',
+              x: 8,
+              y: 8,
+              width: 8,
+              height: 8,
+              color: 0,
+            },
+          ],
+        }),
+      }),
+      ticket: ticket(3),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+
+    // `doc.backLayers` is authored in BACK-VIEW doc space (#233), so the x a
+    // back leaf carries is NOT where it lands on a canonical canvas: the
+    // paint reflects it once (surface-maps' withArtworkSpace), exactly as
+    // gerber/back-extract.ts's mirrorInput does at the export boundary. Both
+    // sample points below are therefore canonical, and the sampler resolves
+    // that reflection because it inverts each call's transform.
+    const canonicalX = (backViewX: number) => panelWidthMm(8) - backViewX;
+
+    for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
+      const frontCanvas = snapshot.maps[mapName].source as unknown as RecordingCanvas;
+      const backCanvas = snapshot.backMaps![mapName].source as unknown as RecordingCanvas;
+      expect(backCanvas).not.toBe(frontCanvas);
+      // The back opening reveals the back copper at its CANONICAL x.
+      expect(topMaterialAt(backCanvas.calls, canonicalX(10), 10)).toBe(
+        surfaceMapColorForPalette(mapName, 1),
+      );
+      // Outside the opening the back stack's mask sheet still covers.
+      expect(topMaterialAt(backCanvas.calls, canonicalX(4), 4)).toBe(
+        surfaceMapColorForPalette(mapName, 0),
+      );
+      // REGRESSION GUARD: the un-reflected back-view x must hold NO artwork.
+      // Painting the back stack straight onto the canonical canvas put the
+      // opening here instead, mirroring every back face against both the
+      // composer's Back view and the exported .GBL.
+      expect(topMaterialAt(backCanvas.calls, 10, 10)).toBe(surfaceMapColorForPalette(mapName, 0));
+      // The front face has no artwork at all in this doc: fully covered by
+      // its own sheet at both sample points.
+      expect(topMaterialAt(frontCanvas.calls, 10, 10)).toBe(surfaceMapColorForPalette(mapName, 0));
+    }
+    // Inside the back opening the mask is punched away: copper height only.
+    const backHeight = snapshot.backMaps!.height.source as unknown as RecordingCanvas;
+    expect(heightLevelAt(backHeight.calls, canonicalX(10), 10)).toBeCloseTo(
+      grayLevel(PREVIEW_HEIGHT_COPPER_COLOR),
+      10,
+    );
+    // Outside it the back copper raises the field under the draping mask.
+    expect(heightLevelAt(backHeight.calls, canonicalX(4), 4)).toBeCloseTo(
+      grayLevel(PREVIEW_HEIGHT_COPPER_COLOR) + grayLevel(PREVIEW_HEIGHT_MASK_COLOR),
+      10,
+    );
+    const frontHeight = snapshot.maps.height.source as unknown as RecordingCanvas;
+    expect(heightLevelAt(frontHeight.calls, 10, 10)).toBeCloseTo(
+      grayLevel(PREVIEW_HEIGHT_MASK_COLOR),
+      10,
+    );
+    generator.close();
+  });
+
+  it('reconciles both faces as one text-geometry snapshot so pivots survive regeneration', () => {
+    const rotated = (id: string, y: number): TextLayer => ({
+      id,
+      name: id,
+      type: 'text',
+      content: id,
+      fontFamily: 'Fixture Sans',
+      sizeMm: 5,
+      x: 4,
+      y,
+      rotation: 30,
+      color: 2,
+    });
+    const doc = docPick({
+      layers: createPcbLayerStack({ silkscreen: [rotated('front-rotated', 10)] }),
+      backLayers: createPcbLayerStack('back', { silkscreen: [rotated('back-rotated', 20)] }),
+    });
+    const generator = createPreviewSurfaceMapGenerator({
+      canvasFactory: recordingCanvasFactory().factory,
+    });
+
+    generator.generate({ doc, ticket: ticket(1), maximumTextureSizePx: 128 });
+    const front = peekTextGeometry('front-rotated');
+    const back = peekTextGeometry('back-rotated');
+    expect(front).not.toBeNull();
+    expect(back).not.toBeNull();
+
+    // A same-document regeneration (e.g. font readiness) must reuse BOTH
+    // faces' captured rotation pivots: reconciling the faces as separate
+    // single-document snapshots would evict each other's entries and remint
+    // the metrics every pass.
+    generator.generate({ doc, ticket: ticket(2), maximumTextureSizePx: 128 });
+    expect(peekTextGeometry('front-rotated')?.metricRevision).toBe(front!.metricRevision);
+    expect(peekTextGeometry('back-rotated')?.metricRevision).toBe(back!.metricRevision);
+    generator.close();
+  });
+
+  it('skips the back map set entirely for alumi and bakes its shining substrate into the front', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: docPick({ material: 'alumi' }),
+      ticket: ticket(4),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+
+    expect(snapshot.material).toBe('alumi');
+    expect(snapshot.backMaps).toBeNull();
+    // One four-map face plus the shared mask sheet — no back canvases.
+    expect(recording.canvases).toHaveLength(5);
+
+    // Hide the mask to expose bare substrate everywhere: the alumi
+    // coefficients (metalness 1, low roughness) reach the maps.
+    const hiddenMaskStack = createPcbLayerStack();
+    hiddenMaskStack[1] = { ...hiddenMaskStack[1], hidden: true };
+    const exposed = generator.generate({
+      doc: docPick({ material: 'alumi', layers: hiddenMaskStack }),
+      ticket: ticket(5),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+    for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
+      const canvas = exposed.maps[mapName].source as unknown as RecordingCanvas;
+      expect(topMaterialAt(canvas.calls, 10, 10)).toBe(surfaceMapSubstrateColor(mapName, 'alumi'));
+    }
+    generator.close();
+  });
+
+  it('punches the screw-hole openings and lays the FR-4 copper ring on both faces', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: docPick(),
+      ticket: ticket(31),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+
+    // 3U/4hp catalog: top slot at (6.045, 3), bottom at (13.955, 125.5),
+    // opening 4.0 × 11.08 around a 3.2 drill. Ring samples sit inside the
+    // opening but outside the drill; the drill interior carries the same
+    // copper underlay (the geometry cuts those texels out of sampling).
+    const holes = panelHoles('3U', 4);
+    expect(holes).toHaveLength(2);
+    const samples = holes.map((hole) => ({
+      ring: [hole.cx, hole.cy - hole.drillDiameter / 2 - 0.2] as const,
+      drill: [hole.cx, hole.cy] as const,
+    }));
+    const covered = [holes[0].cx, holes[0].cy + 5] as const;
+
+    for (const face of [snapshot.maps, snapshot.backMaps!]) {
+      for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
+        const canvas = face[mapName].source as unknown as RecordingCanvas;
+        for (const sample of samples) {
+          expect(topMaterialAt(canvas.calls, ...sample.ring)).toBe(
+            surfaceMapColorForPalette(mapName, 1),
+          );
+          expect(topMaterialAt(canvas.calls, ...sample.drill)).toBe(
+            surfaceMapColorForPalette(mapName, 1),
+          );
+        }
+        expect(topMaterialAt(canvas.calls, ...covered)).toBe(surfaceMapColorForPalette(mapName, 0));
+      }
+      // The ring reads as bare copper in the height field too: real copper
+      // thickness with the mask sheet punched away above it.
+      const heightCanvas = face.height.source as unknown as RecordingCanvas;
+      expect(heightLevelAt(heightCanvas.calls, ...samples[0].ring)).toBeCloseTo(
+        grayLevel(PREVIEW_HEIGHT_COPPER_COLOR),
+        10,
+      );
+      expect(heightLevelAt(heightCanvas.calls, ...covered)).toBeCloseTo(
+        grayLevel(PREVIEW_HEIGHT_MASK_COLOR),
+        10,
+      );
+    }
+    generator.close();
+  });
+
+  it('exposes the shining substrate in alumi screw-hole rings with no copper underlay', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: docPick({ material: 'alumi' }),
+      ticket: ticket(32),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+
+    const [topHole] = panelHoles('3U', 4);
+    const ring = [topHole.cx, topHole.cy - topHole.drillDiameter / 2 - 0.2] as const;
+    const covered = [topHole.cx, topHole.cy + 5] as const;
+    expect(snapshot.backMaps).toBeNull();
+    for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
+      const canvas = snapshot.maps[mapName].source as unknown as RecordingCanvas;
+      // NPTH (epic decision 11): the opening exposes bare aluminum, never a
+      // copper ring.
+      expect(topMaterialAt(canvas.calls, ...ring)).toBe(surfaceMapSubstrateColor(mapName, 'alumi'));
+      expect(topMaterialAt(canvas.calls, ...covered)).toBe(surfaceMapColorForPalette(mapName, 0));
+    }
+    const heightCanvas = snapshot.maps.height.source as unknown as RecordingCanvas;
+    expect(heightLevelAt(heightCanvas.calls, ...ring)).toBe(0);
+    expect(heightLevelAt(heightCanvas.calls, ...covered)).toBeCloseTo(
+      grayLevel(PREVIEW_HEIGHT_MASK_COLOR),
+      10,
+    );
     generator.close();
   });
 
@@ -672,7 +1089,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
           call.args[0] === 0 &&
           call.args[1] === 0 &&
           call.args[2] === panelWidthMm(doc.panelHp) &&
-          call.args[3] === PANEL_HEIGHT_MM,
+          call.args[3] === panelHeightMm(doc.format),
       );
       const panelClipIndex = canvas.calls.findIndex(
         (call, index) => call.method === 'clip' && index > panelRectIndex,
@@ -754,11 +1171,18 @@ describe('createPreviewSurfaceMapGenerator', () => {
       ),
     ).toBe(true);
     const sheetBackgroundFills = maskSheet.calls.filter((call) => call.method === 'fillRect');
-    expect(sheetBackgroundFills.map((call) => call.fillStyle)).toEqual(sheetFillStyles);
+    // The same shared sheet is re-filled for the back face's four maps too:
+    // the fixture's empty-but-visible back mask container still composites a
+    // full covering sheet per map (#232).
+    expect(sheetBackgroundFills.map((call) => call.fillStyle)).toEqual([
+      ...sheetFillStyles,
+      ...sheetFillStyles,
+    ]);
     expect(
       sheetBackgroundFills.every((call) => call.globalCompositeOperation === 'source-over'),
     ).toBe(true);
     const sheetStrokes = maskSheet.calls.filter((call) => call.method === 'stroke');
+    // Punch strokes stay front-only: the back stack has no stroked mask leaf.
     expect(sheetStrokes.map((call) => call.strokeStyle)).toEqual(sheetFillStyles);
     expect(sheetStrokes.every((call) => call.globalCompositeOperation === 'destination-out')).toBe(
       true,
@@ -819,7 +1243,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
     const session = openPreviewGenerationSession(1);
     const first = session.initialGeneration;
     const snapshot = generator.generate({
-      doc: { panelHp: 4, layers: createPcbLayerStack() },
+      doc: docPick(),
       ticket: first,
       maximumTextureSizePx: 128,
     });
@@ -850,12 +1274,11 @@ describe('createPreviewSurfaceMapGenerator', () => {
       y: id === 'first' ? 2 : 12,
       color: 1,
     });
-    const doc: Pick<DocState, 'panelHp' | 'layers'> = {
-      panelHp: 4,
+    const doc = docPick({
       layers: createPcbLayerStack({
         silkscreen: [text('first', 'First Font'), text('second', 'Second Font')],
       }),
-    };
+    });
     const onFontReadyRevision = vi.fn();
     const recording = recordingCanvasFactory();
     const generator = createPreviewSurfaceMapGenerator({
@@ -902,12 +1325,12 @@ describe('createPreviewSurfaceMapGenerator', () => {
     };
 
     generator.generate({
-      doc: { panelHp: 4, layers: createPcbLayerStack({ silkscreen: [layer] }) },
+      doc: docPick({ layers: createPcbLayerStack({ silkscreen: [layer] }) }),
       ticket: ticket(4),
       maximumTextureSizePx: 128,
     });
     generator.generate({
-      doc: { panelHp: 4, layers: createPcbLayerStack() },
+      doc: docPick(),
       ticket: ticket(5),
       maximumTextureSizePx: 128,
     });
@@ -942,12 +1365,11 @@ describe('createPreviewSurfaceMapGenerator', () => {
       onFontReadyRevision,
     });
     generator.generate({
-      doc: {
-        panelHp: 4,
+      doc: docPick({
         layers: createPcbLayerStack({
           silkscreen: [layer('late', 'Late Font', 2), layer('closed', 'Closed Font', 12)],
         }),
-      },
+      }),
       ticket: ticket(6),
       maximumTextureSizePx: 128,
     });
@@ -974,7 +1396,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
 
     expect(() =>
       generator.generate({
-        doc: { panelHp: 4, layers: createPcbLayerStack() },
+        doc: docPick(),
         ticket: ticket(8),
         maximumTextureSizePx: 128,
       }),
@@ -1012,6 +1434,7 @@ describe('flat projection parity (#150)', () => {
     });
     const leaves = [rect('s1', 4), rect('s2', 20), rect('s3', 36)];
     const flatDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ silkscreen: [...leaves] }),
@@ -1026,6 +1449,7 @@ describe('flat projection parity (#150)', () => {
       },
     ];
     const groupedDoc: DocState = {
+      ...createDefaultDoc(),
       panelHp: 12,
       guides: [],
       layers: createPcbLayerStack({ silkscreen: groupedLayers }),

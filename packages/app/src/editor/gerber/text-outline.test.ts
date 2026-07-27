@@ -19,8 +19,9 @@
 import { readFile } from 'node:fs/promises';
 import { loadTestFontFile } from './test-font-loader';
 import {
+  createDefaultDoc,
   createPcbLayerContainer,
-  PANEL_HEIGHT_MM,
+  panelHeightMm,
   panelWidthMm,
   type DocState,
   type LayerNode,
@@ -63,7 +64,7 @@ beforeAll(async () => {
   setCuratedFontFileLoaderForTests(loadTestFontFile);
   engine = await createBooleanEngine();
   ctx = {
-    panel: { hp: HP, widthMm: panelWidthMm(HP), heightMm: PANEL_HEIGHT_MM },
+    panel: { format: '3U', hp: HP, widthMm: panelWidthMm(HP), heightMm: panelHeightMm('3U') },
     role: 'silkscreen',
     engine,
     tolerance: DEFAULT_IR_TOLERANCE,
@@ -630,7 +631,7 @@ describe('buildGerberIr integration', () => {
       createPcbLayerContainer('solder-mask', []),
       createPcbLayerContainer('silkscreen', [...children]),
     ];
-    return { panelHp: HP, layers, guides: [] };
+    return { ...createDefaultDoc(), panelHp: HP, layers, guides: [] };
   }
 
   it('exports a curated text layer as silkscreen regions', async () => {

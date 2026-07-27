@@ -2,7 +2,14 @@
 // PCB fabrication data is mm-based, so mm is the single storage space;
 // px exists only at the render boundary (mm -> screen px via the camera).
 
+import type { PanelFormat } from './panel-templates';
+
 export type ColorIndex = 0 | 1 | 2; // 0=black(soldermask) 1=gold(copper/HASL finish) 2=white(silkscreen)
+
+// Physical panel material. fr4 is the classic PCB laminate (current look,
+// back-side design allowed); alumi is an aluminum-core board (front-only
+// editing, bare-metal back — see the material-holes epic #226).
+export type PcbMaterial = 'fr4' | 'alumi';
 
 export interface LayerBase {
   id: string;
@@ -101,13 +108,30 @@ export type LayerNode = Layer | GroupNode;
 
 export type PcbLayerRole = 'copper' | 'solder-mask' | 'silkscreen';
 
+// Which face of the panel a layer stack belongs to. The side is positional
+// in DocState (`layers` = front, `backLayers` = back), not a stored field —
+// only the structural container ids encode it.
+export type PcbLayerSide = 'front' | 'back';
+
+// The editor-facing side selection ("which face am I viewing/editing").
+// Deliberately an alias of PcbLayerSide — one 'front' | 'back' vocabulary
+// shared by layer containers and editor state, never two drifting unions.
+// See panel-side.ts for the doc-level accessors keyed by this type.
+export type PanelSide = PcbLayerSide;
+
+// Front containers keep their original (pre-back-stack) ids; back containers
+// insert the side so the six structural ids never collide across stacks.
+export type PcbLayerContainerId<R extends PcbLayerRole = PcbLayerRole> =
+  | `pcb-layer-${R}`
+  | `pcb-layer-back-${R}`;
+
 // The three physical material roots are structural document containers, not
 // ordinary groups. They deliberately have a distinct discriminator and no
 // mutable name/material metadata. Core constants are the authority for those
 // fields; persistence only stores role, hidden, and ordinary children.
 export interface PcbLayerContainer<R extends PcbLayerRole = PcbLayerRole> {
   kind: 'pcb-layer';
-  id: `pcb-layer-${R}`;
+  id: PcbLayerContainerId<R>;
   role: R;
   children: LayerNode[];
   hidden?: boolean;
@@ -127,7 +151,8 @@ export type GuideOrientation = 'horizontal' | 'vertical';
 // - 'horizontal' is a horizontal line at y = position (spans the panel width)
 // - 'vertical'   is a vertical line at x = position (spans the panel height)
 // position is mm in document space. Hidden guides render faintly (ruler UI, #54)
-// and never participate in snapping (#55).
+// and never participate in snapping (#55). Guides are side-agnostic: ONE
+// shared set, visible on both panel faces (material-holes epic decision, #230).
 export interface Guide {
   id: string;
   orientation: GuideOrientation;
@@ -137,9 +162,16 @@ export interface Guide {
 
 export interface DocState {
   panelHp: number;
+  format: PanelFormat;
+  material: PcbMaterial;
+  // Front stack. Kept as `layers` (not `frontLayers`) so the overwhelmingly
+  // front-oriented consumer base reads unchanged.
   layers: PcbLayerStack;
+  // Back stack — same fixed 3-container shape, `pcb-layer-back-<role>` ids.
+  // Empty containers for a front-only design; alumi docs ignore it entirely.
+  backLayers: PcbLayerStack;
   // Required (never optional): read sites stay clean (no `doc.guides ?? []`),
-  // and the serialization boundary owns backward-compat (old configs -> []).
+  // and the serialization boundary owns recovery (malformed configs -> []).
   guides: Guide[];
 }
 

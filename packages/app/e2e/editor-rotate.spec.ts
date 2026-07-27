@@ -4,7 +4,7 @@
 // window.__zpdTest bridge (getDoc), never by pixel-probing the canvas.
 import { expect, test, type Page } from '@playwright/test';
 import { resizeRotatedRect, type ShapeLayer, type TextLayer } from '@zpd/core';
-import { bridge, openEditor, toScreenPoint } from './helpers';
+import { bridge, openEditor, seedStoredDoc, toScreenPoint } from './helpers';
 
 // Must match renderer.ts's ROTATE_HANDLE_OFFSET_PX: the rotate knob floats
 // this many SCREEN px beyond the top-edge midpoint, along the rotated "up".
@@ -124,23 +124,7 @@ test('@smoke rotated text keeps its render pivot while a bundled font is delayed
     rotation: 35,
     color: 2,
   };
-  await page.addInitScript((textLayer) => {
-    localStorage.setItem(
-      'zpd.doc.v1',
-      JSON.stringify({
-        version: 1,
-        savedAt: 0,
-        config: {
-          version: 3,
-          app: 'zpd',
-          panel: { hp: 20, widthMm: 101.6, heightMm: 128.5 },
-          palette: ['Black', 'Gold', 'White'],
-          layers: [textLayer],
-          guides: [],
-        },
-      }),
-    );
-  }, layer);
+  await seedStoredDoc(page, { hp: 20, layers: { silkscreen: [layer] } });
 
   let releaseFont: () => void = () => {};
   const fontGate = new Promise<void>((resolve) => {

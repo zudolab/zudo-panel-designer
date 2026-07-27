@@ -17,11 +17,15 @@ import {
 } from 'react';
 import {
   mapPcbLeavesById,
-  PANEL_HEIGHT_MM,
+  panelHeightMm,
+  panelHoles,
   panelWidthMm,
+  stackForSide,
   translatePathLayer,
+  withStackForSide,
   type DocState,
   type Layer,
+  type PanelSide,
 } from '@zpd/core';
 import { projectFlatLayers } from './flat-projection';
 import { fit, project, unproject, zoomAt, type Camera } from './camera';
@@ -47,6 +51,7 @@ import { useGuideDrag, type GuideDragDeps } from './use-guide-drag';
 import type { PanelDims, ToolContext, ToolKeyEvent, ToolPointerEvent } from './types';
 import { CanvasViewport } from './components/canvas-viewport';
 import { RulerCorner, RulerStrip } from './components/ruler';
+import { SideTabs } from './components/side-tabs';
 import { DialogHost } from './components/dialog-host';
 import { DropImport } from './components/drop-import';
 import { Header } from './components/header';
@@ -100,6 +105,12 @@ export function Editor() {
   // (view-only state; see showOutsidePanel above). When OFF, guides neither
   // render nor accept drag interaction.
   const [showGuides, setShowGuides] = useState(true);
+  // Which panel face is being edited (#230) — default front, not persisted
+  // (view-only state; see showOutsidePanel above). Mutate ONLY through
+  // ctx.setActiveSide: an actual switch clears the selection and any
+  // in-progress tool draft. The Front/Back tab switcher (SideTabs below) and
+  // every side-scoped derivation in this file consume it (#233).
+  const [activeSide, setActiveSideState] = useState<PanelSide>('front');
   const [, setAssetVersion] = useState(0); // bump repaints when an image loads
   const [, setRepaintNonce] = useState(0); // tools ask for repaints via ctx
 
@@ -110,14 +121,24 @@ export function Editor() {
   const [fitScale, setFitScale] = useState(4);
 
   const panel: PanelDims = useMemo(
-    () => ({ widthMm: panelWidthMm(doc.panelHp), heightMm: PANEL_HEIGHT_MM }),
-    [doc.panelHp],
+    () => ({ widthMm: panelWidthMm(doc.panelHp), heightMm: panelHeightMm(doc.format) }),
+    [doc.panelHp, doc.format],
   );
+  // The derived template-hole set (#227), canonical front-view fabrication
+  // coordinates — the composer's job (#237) is only to PAINT these, never to
+  // derive or store them. renderScene mirrors DISPLAY x on the back view.
+  const holes = useMemo(() => panelHoles(doc.format, doc.panelHp), [doc.format, doc.panelHp]);
+  // The committed render-time stack of the ACTIVE side (#233) — the tree
+  // every side-scoped derivation below reads instead of doc.layers. Same
+  // identity per (doc, activeSide) pair, so downstream memo deps stay cheap.
+  const activeStack = stackForSide(doc, activeSide);
   // Normalized against the TREE (#151): selectedIds may hold group ids, which
-  // a flat projection would wrongly drop as stale.
+  // a flat projection would wrongly drop as stale. Side-scoped (#233):
+  // selection ids only ever point into the active side's stack (a side
+  // switch clears them), and normalizing against it drops hidden-side ids.
   const selectedIds = useMemo(
-    () => normalizeSelectedIds(rawSelectedIds, doc.layers),
-    [rawSelectedIds, doc.layers],
+    () => normalizeSelectedIds(rawSelectedIds, activeStack),
+    [rawSelectedIds, activeStack],
   );
   // The flat-leaf view of the selection for the chrome pass (#151): a selected
   // group id draws per-leaf chrome on its descendants (renderScene consumes
@@ -125,17 +146,17 @@ export function Editor() {
   // mode rides along so a one-child group — which also expands to exactly one
   // leaf id — never wears the single-layer handles the tool won't serve.
   const chromeLeafIds = useMemo(
-    () => expandSelectionToLeafIds(doc.layers, selectedIds),
-    [doc.layers, selectedIds],
+    () => expandSelectionToLeafIds(activeStack, selectedIds),
+    [activeStack, selectedIds],
   );
   const overlayMode = useMemo(
-    () => resolveSelectionOverlayMode(doc.layers, selectedIds),
-    [doc.layers, selectedIds],
+    () => resolveSelectionOverlayMode(activeStack, selectedIds),
+    [activeStack, selectedIds],
   );
   const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const selectedLayer = useMemo(
-    () => projectFlatLayers(doc.layers).find((l) => l.id === selectedId) ?? null,
-    [doc.layers, selectedId],
+    () => projectFlatLayers(activeStack).find((l) => l.id === selectedId) ?? null,
+    [activeStack, selectedId],
   );
 
   // Live refs so the ToolContext getters always read the latest committed
@@ -148,6 +169,14 @@ export function Editor() {
   const rawSelectedIdsRef = useRef(rawSelectedIds);
   const panelRef = useRef(panel);
   const showGuidesRef = useRef(showGuides);
+  // activeSide's ref is ALSO written eagerly by ctx.setActiveSide (not only
+  // in the passive resync below): setActiveSide's same-side no-op guard reads
+  // it, and a switch-then-switch-back within one handler must not no-op
+  // against a stale value. The passive resync then rewrites the same value.
+  const activeSideRef = useRef(activeSide);
+  // For ctx.clearToolDraft (#230): the ctx object is built once, so it reads
+  // the active tool id through a ref like every other live read.
+  const activeToolIdRef = useRef(activeToolId);
   // canvasSize as a ref too (issue #76): lets zoomStep below stay a STABLE
   // callback (empty deps) instead of recreated every resize — see zoomStep.
   const canvasSizeRef = useRef(canvasSize);
@@ -158,13 +187,21 @@ export function Editor() {
     rawSelectedIdsRef.current = rawSelectedIds;
     panelRef.current = panel;
     showGuidesRef.current = showGuides;
+    activeSideRef.current = activeSide;
+    activeToolIdRef.current = activeToolId;
     canvasSizeRef.current = canvasSize;
   });
 
   // The normalized live view of the selection — what ctx and the test bridge
   // read. Single-selection views derive from it (non-null iff exactly one).
+  // Side-scoped (#233): normalized against the ACTIVE side's stack, same as
+  // the committed selectedIds memo above.
   const readSelectedIds = useCallback(
-    () => normalizeSelectedIds(rawSelectedIdsRef.current, docRef.current.layers),
+    () =>
+      normalizeSelectedIds(
+        rawSelectedIdsRef.current,
+        stackForSide(docRef.current, activeSideRef.current),
+      ),
     [],
   );
   const readSelectedId = useCallback(() => {
@@ -190,9 +227,11 @@ export function Editor() {
   // own wheel handler (below) keeps handling in-app zoom unchanged.
   useEffect(() => installBrowserZoomGuard(), []);
 
-  // Built once — all mutators are stable, all reads go through refs.
-  const ctx = useMemo<ToolContext>(
-    () => ({
+  // Built once — all mutators are stable, all reads go through refs. A
+  // statement body (not a bare object literal) so setActiveSide /
+  // clearToolDraft can hand the context itself to the tool lifecycle hooks.
+  const ctx = useMemo<ToolContext>(() => {
+    const context: ToolContext = {
       get doc() {
         return docRef.current;
       },
@@ -210,10 +249,19 @@ export function Editor() {
       },
       get selectedLayer() {
         const id = readSelectedId();
-        return projectFlatLayers(docRef.current.layers).find((l) => l.id === id) ?? null;
+        const stack = stackForSide(docRef.current, activeSideRef.current);
+        return projectFlatLayers(stack).find((l) => l.id === id) ?? null;
       },
       get flatLayers() {
-        return projectFlatLayers(docRef.current.layers);
+        // The ACTIVE side's flat view (#233): hidden-side leaves must never
+        // hit-test, marquee, select-all, or paint through this projection.
+        return projectFlatLayers(stackForSide(docRef.current, activeSideRef.current));
+      },
+      get activeSide() {
+        return activeSideRef.current;
+      },
+      get activeStack() {
+        return stackForSide(docRef.current, activeSideRef.current);
       },
       get mutationEpoch() {
         // Sum of two independently monotonic counters, so it changes whenever
@@ -235,25 +283,48 @@ export function Editor() {
       setCamera: (next) =>
         setCameraState((prev) => (typeof next === 'function' ? (prev ? next(prev) : prev) : next)),
       setActiveTool: setActiveToolId,
+      setActiveSide: (side) => {
+        // Same-side is a strict no-op — must not clear selection/drafts.
+        if (activeSideRef.current === side) return;
+        // Eager ref write (see activeSideRef's declaration): the guard above
+        // and any read within this same handler need the fresh side now, not
+        // after the passive resync.
+        activeSideRef.current = side;
+        setActiveSideState(side);
+        // Lifecycle (#230): the old side's selection points into a stack the
+        // editor is no longer showing, and an in-progress draft was drawn
+        // against it. Clearing the selection also bumps the selection epoch,
+        // so async actions observe the switch via ctx.mutationEpoch.
+        setRawSelectedIds([]);
+        context.clearToolDraft();
+      },
+      clearToolDraft: () => {
+        // The deactivate/activate cycle IS the draft-discard contract every
+        // tool already implements for tool switches (see prevToolRef effect
+        // below); cycling the same tool discards the draft and nothing else.
+        const tool = getTool(activeToolIdRef.current);
+        tool?.onDeactivate?.(context);
+        tool?.onActivate?.(context);
+      },
       requestRepaint: () => setRepaintNonce((n) => n + 1),
       evictImageCache: (layers) => reconcileImageCache(imagesRef.current, layers),
       openDialog,
       closeDialog,
-    }),
-    [
-      commit,
-      replace,
-      reset,
-      beginGesture,
-      abortGesture,
-      undo,
-      redo,
-      readMutationEpoch,
-      readSelectedId,
-      readSelectedIds,
-      setRawSelectedIds,
-    ],
-  );
+    };
+    return context;
+  }, [
+    commit,
+    replace,
+    reset,
+    beginGesture,
+    abortGesture,
+    undo,
+    redo,
+    readMutationEpoch,
+    readSelectedId,
+    readSelectedIds,
+    setRawSelectedIds,
+  ]);
 
   // Clipboard (#74): Cmd/Ctrl+C/X/D/A (wired into the keydown fallback below)
   // plus its own self-contained window `paste` listener — the SOLE Cmd/Ctrl+V
@@ -346,6 +417,12 @@ export function Editor() {
       get flatLayers() {
         return ctx.flatLayers;
       },
+      get activeSide() {
+        return ctx.activeSide;
+      },
+      get activeStack() {
+        return ctx.activeStack;
+      },
       get mutationEpoch() {
         return ctx.mutationEpoch;
       },
@@ -362,6 +439,8 @@ export function Editor() {
       selectIds: ctx.selectIds,
       setCamera: ctx.setCamera,
       setActiveTool: ctx.setActiveTool,
+      setActiveSide: ctx.setActiveSide,
+      clearToolDraft: ctx.clearToolDraft,
       requestRepaint: ctx.requestRepaint,
       evictImageCache: ctx.evictImageCache,
       openDialog: ctx.openDialog,
@@ -381,14 +460,19 @@ export function Editor() {
 
   const measured = canvasSize.w > 0;
   useEffect(() => {
-    // first measure and every panel-size change re-fits (fitView identity
-    // changes with panel.widthMm, so panelHp changes re-run this)
+    // first measure and every panel-size change re-fits: panelHp changes
+    // panel.widthMm, format changes panel.heightMm (panelHeightMm(format)) —
+    // both need a re-fit even though fitView's own identity stays stable
+    // (it reads panelRef, not the closed-over panel).
     if (measured) fitView();
-  }, [measured, doc.panelHp, fitView]);
+  }, [measured, doc.panelHp, doc.format, fitView]);
 
   // --- image asset loading -----------------------------------------------
   useEffect(() => {
-    for (const layer of projectFlatLayers(doc.layers)) {
+    // BOTH sides load (#233): a side switch must paint the newly shown
+    // stack's images immediately, not kick off loads at switch time. The
+    // cache stays one flat id-keyed map — ids are unique across the stacks.
+    for (const layer of [...projectFlatLayers(doc.layers), ...projectFlatLayers(doc.backLayers)]) {
       if (layer.type === 'image' && !imagesRef.current.has(layer.id)) {
         const img = new Image();
         img.onload = () => setAssetVersion((v) => v + 1);
@@ -396,7 +480,16 @@ export function Editor() {
         imagesRef.current.set(layer.id, img);
       }
     }
-  }, [doc.layers]);
+  }, [doc.layers, doc.backLayers]);
+
+  // --- material gating (#233) --------------------------------------------
+  // Alumi panels are front-only: whenever the doc's material stops being fr4
+  // while Back is active — a material switch, an undo/redo of one, a restored
+  // doc — jump to Front. The back stack's CONTENTS are untouched (only the
+  // view moves); setActiveSide clears the now-hidden side's selection/draft.
+  useEffect(() => {
+    if (doc.material !== 'fr4' && activeSide === 'back') ctx.setActiveSide('front');
+  }, [doc.material, activeSide, ctx]);
 
   // --- tool activate / deactivate ----------------------------------------
   const prevToolRef = useRef<string | null>(null);
@@ -425,7 +518,13 @@ export function Editor() {
     // membership before rendering. Identity stability is preserved — core's
     // WeakMap projection returns one flat array per committed tree, so text
     // geometry's incarnation tracking still sees one incarnation per commit.
-    renderScene(canvas, doc, panel, camera, {
+    // The ACTIVE side's stack paints (#233): the back face renders in its own
+    // view space, as if the panel were flipped to face you — no coordinate
+    // mirroring here (export mirroring is the gerber lane's job).
+    renderScene(canvas, { layers: activeStack }, panel, camera, {
+      side: activeSide,
+      material: doc.material,
+      holes,
       // Expanded to leaf ids (#151): the chrome pass matches flat leaves only,
       // so a raw group id would draw no selection chrome at all.
       selectedIds: chromeLeafIds,
@@ -477,7 +576,7 @@ export function Editor() {
       // Group-aware expansion (#151): a selected group id nudges its EDITABLE
       // descendant leaves (hidden — intrinsic or ancestor-folded — excluded),
       // one shared delta for the whole selection like multi-move.
-      const tree = docRef.current.layers;
+      const tree = stackForSide(docRef.current, activeSideRef.current);
       const { editableLeafIds } = resolveSelectionLeaves(tree, ids, projectFlatLayers(tree));
       // mapLeavesById nudges matching leaves at ANY depth and only leaves —
       // group nodes never carry x/y (structure + hidden only, see types.ts).
@@ -489,7 +588,7 @@ export function Editor() {
       // Same tree reference back = no editable leaf matched (e.g. a fully
       // hidden selection) — skip the commit so no phantom undo entry is pushed.
       if (layers === tree) return;
-      commit({ ...docRef.current, layers });
+      commit(withStackForSide(docRef.current, activeSideRef.current, layers));
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -626,39 +725,47 @@ export function Editor() {
       />
       <div className="flex min-h-0 flex-1">
         <Toolbar ctx={ctx} activeToolId={activeToolId} />
-        {/* Ruler frame: fixed 20px gutters; strips repaint content on camera
-            change but NEVER move in layout (see components/ruler.tsx). */}
-        <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[20px_minmax(0,1fr)] grid-rows-[20px_minmax(0,1fr)]">
-          <RulerCorner />
-          <RulerStrip
-            orientation="horizontal"
-            camera={camera}
-            lengthPx={canvasSize.w}
-            guidesEnabled={showGuides}
-            onGuidePointerDown={(e) => guideDrag.startCreate('horizontal', e)}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <SideTabs
+            activeSide={activeSide}
+            material={doc.material}
+            onSideChange={ctx.setActiveSide}
           />
-          <RulerStrip
-            orientation="vertical"
-            camera={camera}
-            lengthPx={canvasSize.h}
-            guidesEnabled={showGuides}
-            onGuidePointerDown={(e) => guideDrag.startCreate('vertical', e)}
-          />
-          <CanvasViewport
-            containerRef={containerRef}
-            canvasRef={canvasRef}
-            cursor={cursor}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerCancel}
-            onPointerLeave={onPointerLeave}
-            onDoubleClick={onDoubleClick}
-          />
+          {/* Ruler frame: fixed 20px gutters; strips repaint content on camera
+              change but NEVER move in layout (see components/ruler.tsx). */}
+          <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[20px_minmax(0,1fr)] grid-rows-[20px_minmax(0,1fr)]">
+            <RulerCorner />
+            <RulerStrip
+              orientation="horizontal"
+              camera={camera}
+              lengthPx={canvasSize.w}
+              guidesEnabled={showGuides}
+              onGuidePointerDown={(e) => guideDrag.startCreate('horizontal', e)}
+            />
+            <RulerStrip
+              orientation="vertical"
+              camera={camera}
+              lengthPx={canvasSize.h}
+              guidesEnabled={showGuides}
+              onGuidePointerDown={(e) => guideDrag.startCreate('vertical', e)}
+            />
+            <CanvasViewport
+              containerRef={containerRef}
+              canvasRef={canvasRef}
+              cursor={cursor}
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerCancel={onPointerCancel}
+              onPointerLeave={onPointerLeave}
+              onDoubleClick={onDoubleClick}
+            />
+          </div>
         </div>
         <Sidebar
           ctx={ctx}
           doc={doc}
+          activeSide={activeSide}
           selectedIds={selectedIds}
           selectedLayer={selectedLayer}
           activeToolId={activeToolId}
