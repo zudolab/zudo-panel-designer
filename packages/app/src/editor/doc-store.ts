@@ -6,8 +6,13 @@
 // Design goals (matching the reference):
 // - Never throws. writeDoc()/readDoc() absorb every error and return a
 //   tagged result or null; boot must never crash on a corrupt payload.
-// - readDoc() validates both envelopes before parsing. Unsupported/corrupt
+// - readDoc() validates the envelope before parsing. Unsupported/corrupt
 //   source bytes are retained and protected from generated-default autosave.
+//
+// v1→v2 legacy promotion was deleted outright (epic #226 compat cut): a v1
+// (`LEGACY_DOC_STORAGE_KEY`) entry, and any pre-v6 config at either key, is
+// never read into a document — readDoc() returns null and boot falls back to
+// the demo doc, same as any other unsupported/corrupt payload.
 import {
   PANEL_CONFIG_VERSION,
   serializePanelConfig,
@@ -17,6 +22,9 @@ import {
 import { getStorage } from './safe-storage';
 
 export const DOC_STORAGE_KEY = 'zpd.doc.v2';
+// No longer read from (see header comment) — clearDoc() still purges it, so a
+// pre-existing rollback entry from before the compat cut doesn't linger
+// forever in a user's storage.
 export const LEGACY_DOC_STORAGE_KEY = 'zpd.doc.v1';
 export const DOC_STORAGE_VERSION = 2;
 
@@ -36,8 +44,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 // SSR-safe read of the stored document. Returns null when there is no stored
-// entry, storage is unavailable, or the stored value is corrupt/unparseable.
-function readPayload(raw: string, expectedEnvelopeVersion: number): DocState | null {
+// entry, storage is unavailable, or the stored value is corrupt/unparseable
+// — including a config at any version other than PANEL_CONFIG_VERSION.
+function readPayload(raw: string): DocState | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -46,25 +55,13 @@ function readPayload(raw: string, expectedEnvelopeVersion: number): DocState | n
   }
   if (
     !isPlainObject(parsed) ||
-    parsed.version !== expectedEnvelopeVersion ||
+    parsed.version !== DOC_STORAGE_VERSION ||
     parsed.config === undefined
   ) {
     return null;
   }
   const config = parsed.config;
-  if (!isPlainObject(config)) return null;
-  if (expectedEnvelopeVersion === DOC_STORAGE_VERSION && config.version !== PANEL_CONFIG_VERSION) {
-    return null;
-  }
-  if (
-    expectedEnvelopeVersion === 1 &&
-    (typeof config.version !== 'number' ||
-      !Number.isInteger(config.version) ||
-      config.version < 1 ||
-      config.version >= PANEL_CONFIG_VERSION)
-  ) {
-    return null;
-  }
+  if (!isPlainObject(config) || config.version !== PANEL_CONFIG_VERSION) return null;
   const result = tryParsePanelConfig(config);
   return result.ok ? result.doc : null;
 }
@@ -79,33 +76,13 @@ export function readDoc(): DocState | null {
   } catch {
     return null;
   }
-  if (raw !== null) {
-    const doc = readPayload(raw, DOC_STORAGE_VERSION);
-    if (!doc) {
-      protectedEntry = { key: DOC_STORAGE_KEY, raw };
-      console.warn('[doc-store] Corrupt or unsupported payload at', DOC_STORAGE_KEY);
-    }
-    return doc;
+  if (raw === null) return null;
+  const doc = readPayload(raw);
+  if (!doc) {
+    protectedEntry = { key: DOC_STORAGE_KEY, raw };
+    console.warn('[doc-store] Corrupt or unsupported payload at', DOC_STORAGE_KEY);
   }
-
-  let legacyRaw: string | null;
-  try {
-    legacyRaw = storage.getItem(LEGACY_DOC_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-  if (legacyRaw === null) return null;
-  const legacyDoc = readPayload(legacyRaw, 1);
-  if (!legacyDoc) {
-    protectedEntry = { key: LEGACY_DOC_STORAGE_KEY, raw: legacyRaw };
-    console.warn('[doc-store] Corrupt or unsupported payload at', LEGACY_DOC_STORAGE_KEY);
-    return null;
-  }
-
-  // Promotion is transactional from the reader's point of view: only expose
-  // the migrated document after its v5 envelope was persisted successfully.
-  const promoted = writeDoc(legacyDoc);
-  return promoted.ok ? legacyDoc : null;
+  return doc;
 }
 
 // Persist the given document. Never throws — returns a tagged result so the
@@ -116,10 +93,9 @@ export function writeDoc(doc: DocState): WriteDocResult {
   if (!storage) {
     return { ok: false, reason: 'unavailable' };
   }
-  // A protected current entry is the exact destination this function would
-  // overwrite, so keep refusing while those bytes remain. A protected legacy
-  // entry lives under a separate rollback key: writing v2 cannot replace it,
-  // and must remain available so subsequent real user work can autosave.
+  // A protected entry is the exact destination this function would
+  // overwrite, so keep refusing while those bytes remain unchanged — a real
+  // write elsewhere (a fresh readDoc()/writeDoc() cycle) clears the guard.
   if (protectedEntry?.key === DOC_STORAGE_KEY) {
     try {
       if (storage.getItem(protectedEntry.key) === protectedEntry.raw) {

@@ -1,4 +1,4 @@
-import { PANEL_SIZES, PANEL_HEIGHT_MM, PANEL_THICKNESS_MM } from '@zpd/core';
+import { panelHeightMm, PANEL_SIZES, PANEL_THICKNESS_MM } from '@zpd/core';
 import { describe, expect, it } from 'vitest';
 import {
   PREVIEW_CAMERA_FAR_MM,
@@ -13,7 +13,7 @@ describe('preview camera fit', () => {
   it.each(PANEL_SIZES)('returns finite, safely clamped values for $hp HP', ({ widthMm }) => {
     for (const aspect of [0.5, 1, 2]) {
       const fit = calculatePreviewCameraFit(
-        { widthMm, heightMm: PANEL_HEIGHT_MM, thicknessMm: PANEL_THICKNESS_MM },
+        { widthMm, heightMm: panelHeightMm('3U'), thicknessMm: PANEL_THICKNESS_MM },
         aspect,
       );
 

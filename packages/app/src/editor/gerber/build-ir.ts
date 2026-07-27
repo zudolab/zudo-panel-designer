@@ -26,7 +26,7 @@
  */
 
 import {
-  PANEL_HEIGHT_MM,
+  panelHeightMm,
   PANEL_SIZES,
   panelWidthMm,
   projectPcbLayerSlices,
@@ -261,7 +261,7 @@ export async function buildGerberIr(
   const panel: IrPanel = {
     hp: doc.panelHp,
     widthMm: panelWidthMm(doc.panelHp),
-    heightMm: PANEL_HEIGHT_MM,
+    heightMm: panelHeightMm(doc.format),
   };
   const profile = rectToRing(0, 0, panel.widthMm, panel.heightMm);
 

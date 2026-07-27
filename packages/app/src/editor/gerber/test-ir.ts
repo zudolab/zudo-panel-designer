@@ -8,7 +8,7 @@
 // test vacuous (Decision 0.1 / Decision 1).
 import type { GerberIr, IrLayer, IrPanel, IrRegion } from './ir';
 
-/** 12HP: panelWidthMm(12) = 60.6, PANEL_HEIGHT_MM = 128.5. */
+/** 12HP: panelWidthMm(12) = 60.6, panelHeightMm('3U') = 128.5. */
 export const FIXTURE_PANEL: IrPanel = { hp: 12, widthMm: 60.6, heightMm: 128.5 };
 
 export const FIXTURE_OPTIONS = {

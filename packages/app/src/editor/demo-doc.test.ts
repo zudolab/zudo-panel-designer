@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { patternCoverGeometry, PANEL_HEIGHT_MM, panelWidthMm } from '@zpd/core';
+import { patternCoverGeometry, panelHeightMm, panelWidthMm } from '@zpd/core';
 import { createDemoDoc } from './demo-doc';
 
 function bbox(node: { x: number; y: number; width: number; height: number }) {
@@ -43,7 +43,7 @@ describe('createDemoDoc fixed PCB stack', () => {
     // canvas beyond the pattern's cover geometry.
     const cover = patternCoverGeometry({
       widthMm: panelWidthMm(doc.panelHp),
-      heightMm: PANEL_HEIGHT_MM,
+      heightMm: panelHeightMm(doc.format),
     });
     const coverBox = bbox({ x: cover.x, y: cover.y, width: cover.size, height: cover.size });
     expect(intersects(maskOpening, coverBox)).toBe(true);
@@ -87,7 +87,10 @@ describe('createDemoDoc fixed PCB stack', () => {
         continue;
       }
       expect(
-        intersects(maskOpening, bbox({ x: leaf.x, y: leaf.y, width: leaf.width, height: leaf.height })),
+        intersects(
+          maskOpening,
+          bbox({ x: leaf.x, y: leaf.y, width: leaf.width, height: leaf.height }),
+        ),
       ).toBe(false);
     }
   });

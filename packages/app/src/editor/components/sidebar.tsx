@@ -2,7 +2,7 @@
 // host — all in a scrolling inner stack. The Help panel (#36) is a
 // non-scrolling footer BELOW that stack: always visible, never scrolled below
 // the fold, even when the panel stack above overflows.
-import { PANEL_HEIGHT_MM, PANEL_SIZES, type DocState, type Layer } from '@zpd/core';
+import { panelHeightMm, PANEL_SIZES, type DocState, type Layer } from '@zpd/core';
 import type { ToolContext } from '../types';
 import { AlignPanel } from './align-panel';
 import { CollapsibleSection } from './collapsible-section';
@@ -75,7 +75,7 @@ export function Sidebar({
             >
               {PANEL_SIZES.map((s) => (
                 <option key={s.hp} value={s.hp}>
-                  {s.hp}HP — {s.widthMm}×{PANEL_HEIGHT_MM}mm
+                  {s.hp}HP — {s.widthMm}×{panelHeightMm(doc.format)}mm
                 </option>
               ))}
             </select>

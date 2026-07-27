@@ -29,7 +29,11 @@ export type GerberFileExtension = '.GTL' | '.GTS' | '.GTO' | '.GKO';
 export interface GerberFile {
   readonly role: IrLayerRole;
   readonly extension: GerberFileExtension;
-  /** `zpd-panel-<hp>hp<ext>`, matching download.ts's `zpd-panel-<hp>hp.json`. */
+  /**
+   * `zpd-panel-<hp>hp<ext>` — the per-file naming INSIDE the Gerber zip, kept
+   * hp-only on purpose (distinct from the outer download filenames, which
+   * gained format/material in #229 — see ../filename.ts).
+   */
   readonly filename: string;
   readonly text: string;
 }

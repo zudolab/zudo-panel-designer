@@ -125,12 +125,12 @@ test('@smoke fixed PCB containers preserve material, persistence, and physical o
     .poll(async () => (await bridge(page).getMaterialLayer('gold-base'))?.material)
     .toBe('silkscreen');
 
-  // The v5 export is the canonical stack and survives autosave reload.
-  expect((await bridge(page).serialize()).version).toBe(5);
+  // The v6 export is the canonical stack and survives autosave reload.
+  expect((await bridge(page).serialize()).version).toBe(6);
   await page.waitForTimeout(900);
   await page.reload();
   await page.waitForFunction(() => window.__zpdTest !== undefined);
-  expect((await bridge(page).serialize()).version).toBe(5);
+  expect((await bridge(page).serialize()).version).toBe(6);
   expect((await bridge(page).getPcbLayerStack()).map((root) => root.role)).toEqual([
     'copper',
     'solder-mask',

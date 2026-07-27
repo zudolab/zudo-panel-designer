@@ -78,7 +78,7 @@ export interface IrPanel {
   readonly hp: number;
   /** panelWidthMm(hp) — always a PANEL_SIZES table value (Decision 8). */
   readonly widthMm: number;
-  /** PANEL_HEIGHT_MM = 128.5, the Y-flip constant. */
+  /** panelHeightMm(doc.format) — the format-derived Y-flip constant. */
   readonly heightMm: number;
 }
 

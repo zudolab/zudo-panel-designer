@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultDoc } from './default-doc';
-import {
-  MAX_PANEL_HP,
-  PANEL_HEIGHT_MM,
-  PANEL_SIZES,
-  PANEL_THICKNESS_MM,
-  panelWidthMm,
-} from './panel-sizes';
+import { MAX_PANEL_HP, PANEL_SIZES, PANEL_THICKNESS_MM, panelWidthMm } from './panel-sizes';
 import { serializePanelConfig } from './serialize';
 
 describe('MAX_PANEL_HP', () => {
@@ -32,12 +26,6 @@ describe('panelWidthMm', () => {
     for (const size of PANEL_SIZES) {
       expect(size.hp * 5.08).not.toBe(size.widthMm);
     }
-  });
-});
-
-describe('PANEL_HEIGHT_MM', () => {
-  it('is the fixed 3U Eurorack height', () => {
-    expect(PANEL_HEIGHT_MM).toBe(128.5);
   });
 });
 

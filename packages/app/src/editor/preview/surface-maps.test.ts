@@ -3,7 +3,7 @@ import {
   createDefaultDoc,
   createPcbLayerStack,
   PALETTE,
-  PANEL_HEIGHT_MM,
+  panelHeightMm,
   PANEL_THICKNESS_MM,
   PCB_SUBSTRATE,
   panelWidthMm,
@@ -505,7 +505,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
     const recording = recordingCanvasFactory();
     const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
     const snapshot = generator.generate({
-      doc: { panelHp: 8, layers: stack },
+      doc: { panelHp: 8, format: '3U', layers: stack },
       ticket: ticket(21),
       preferredPixelsPerMm: 1,
       maximumTextureSizePx: 512,
@@ -615,13 +615,13 @@ describe('createPreviewSurfaceMapGenerator', () => {
     expect(snapshot.surfaceRevision).toBe(7);
     expect(snapshot.physicalDimensions).toEqual({
       widthMm: panelWidthMm(doc.panelHp),
-      heightMm: PANEL_HEIGHT_MM,
+      heightMm: panelHeightMm(doc.format),
       thicknessMm: PANEL_THICKNESS_MM,
     });
     expect(snapshot.rasterSize.widthPx).toBeLessThanOrEqual(256);
     expect(snapshot.rasterSize.heightPx).toBeLessThanOrEqual(256);
     expect(snapshot.rasterSize.widthPx / snapshot.rasterSize.heightPx).toBeCloseTo(
-      panelWidthMm(doc.panelHp) / PANEL_HEIGHT_MM,
+      panelWidthMm(doc.panelHp) / panelHeightMm(doc.format),
       2,
     );
     expect(snapshot.orientation.documentTopLeftUv).toEqual({ u: 0, v: 1 });
@@ -634,6 +634,19 @@ describe('createPreviewSurfaceMapGenerator', () => {
       recording.canvases.every((canvas) => canvas.height === snapshot.rasterSize.heightPx),
     ).toBe(true);
     expect(JSON.stringify(doc)).toBe(before);
+    generator.close();
+  });
+
+  it('derives physicalDimensions.heightMm from the document format, not a fixed 3U constant (#229)', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: { panelHp: 8, format: '1U', layers: createPcbLayerStack() },
+      ticket: ticket(22),
+      maximumTextureSizePx: 256,
+    });
+    expect(snapshot.physicalDimensions.heightMm).toBe(panelHeightMm('1U'));
+    expect(snapshot.physicalDimensions.heightMm).toBe(39.65);
     generator.close();
   });
 
@@ -673,7 +686,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
           call.args[0] === 0 &&
           call.args[1] === 0 &&
           call.args[2] === panelWidthMm(doc.panelHp) &&
-          call.args[3] === PANEL_HEIGHT_MM,
+          call.args[3] === panelHeightMm(doc.format),
       );
       const panelClipIndex = canvas.calls.findIndex(
         (call, index) => call.method === 'clip' && index > panelRectIndex,
@@ -820,7 +833,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
     const session = openPreviewGenerationSession(1);
     const first = session.initialGeneration;
     const snapshot = generator.generate({
-      doc: { panelHp: 4, layers: createPcbLayerStack() },
+      doc: { panelHp: 4, format: '3U', layers: createPcbLayerStack() },
       ticket: first,
       maximumTextureSizePx: 128,
     });
@@ -851,8 +864,9 @@ describe('createPreviewSurfaceMapGenerator', () => {
       y: id === 'first' ? 2 : 12,
       color: 1,
     });
-    const doc: Pick<DocState, 'panelHp' | 'layers'> = {
+    const doc: Pick<DocState, 'panelHp' | 'format' | 'layers'> = {
       panelHp: 4,
+      format: '3U',
       layers: createPcbLayerStack({
         silkscreen: [text('first', 'First Font'), text('second', 'Second Font')],
       }),
@@ -903,12 +917,12 @@ describe('createPreviewSurfaceMapGenerator', () => {
     };
 
     generator.generate({
-      doc: { panelHp: 4, layers: createPcbLayerStack({ silkscreen: [layer] }) },
+      doc: { panelHp: 4, format: '3U', layers: createPcbLayerStack({ silkscreen: [layer] }) },
       ticket: ticket(4),
       maximumTextureSizePx: 128,
     });
     generator.generate({
-      doc: { panelHp: 4, layers: createPcbLayerStack() },
+      doc: { panelHp: 4, format: '3U', layers: createPcbLayerStack() },
       ticket: ticket(5),
       maximumTextureSizePx: 128,
     });
@@ -945,6 +959,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
     generator.generate({
       doc: {
         panelHp: 4,
+        format: '3U',
         layers: createPcbLayerStack({
           silkscreen: [layer('late', 'Late Font', 2), layer('closed', 'Closed Font', 12)],
         }),
@@ -975,7 +990,7 @@ describe('createPreviewSurfaceMapGenerator', () => {
 
     expect(() =>
       generator.generate({
-        doc: { panelHp: 4, layers: createPcbLayerStack() },
+        doc: { panelHp: 4, format: '3U', layers: createPcbLayerStack() },
         ticket: ticket(8),
         maximumTextureSizePx: 128,
       }),

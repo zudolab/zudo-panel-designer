@@ -58,13 +58,7 @@ export {
 } from './palette';
 
 export type { PanelSize } from './panel-sizes';
-export {
-  MAX_PANEL_HP,
-  PANEL_HEIGHT_MM,
-  PANEL_SIZES,
-  PANEL_THICKNESS_MM,
-  panelWidthMm,
-} from './panel-sizes';
+export { MAX_PANEL_HP, PANEL_SIZES, PANEL_THICKNESS_MM, panelWidthMm } from './panel-sizes';
 
 export type { PanelFormat, PanelHole, PanelTemplateProvenance } from './panel-templates';
 export {
