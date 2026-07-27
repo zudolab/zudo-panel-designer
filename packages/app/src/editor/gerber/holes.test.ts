@@ -81,22 +81,19 @@ describe('injectHoleFabrication — drill classification (Decision 11)', () => {
 });
 
 describe('injectHoleFabrication — mask/copper injections (Decisions 11/12/13)', () => {
-  it('injects mask openings on BOTH sides for both materials, copper stadiums only on FR-4', () => {
+  it('injects FRONT roles only — mask openings for both materials, the copper stadium only on FR-4', () => {
+    // Back roles ('b-solder-mask'/'b-copper') are #236's: back-extract.ts
+    // derives the same holes from panelHoles() itself, so injecting them
+    // here too would double every back hole.
     const fr4 = fabricate('fr4').injections;
-    expect(Object.keys(fr4).sort()).toEqual([
-      'b-copper',
-      'b-solder-mask',
-      'copper',
-      'solder-mask',
-    ]);
-    // Same canonical front-view regions on every role — injections never
-    // mirror (Decision 13), and the copper stadium is the SAME shape as the
-    // opening (the drill void pierces it; the plated barrel takes the HASL).
+    expect(Object.keys(fr4).sort()).toEqual(['copper', 'solder-mask']);
+    // Same canonical regions on both roles — the copper stadium is the SAME
+    // shape as the opening (the drill void pierces it; the plated barrel
+    // takes the HASL).
     expect(fr4.copper).toEqual(fr4['solder-mask']);
-    expect(fr4['b-solder-mask']).toEqual(fr4['solder-mask']);
 
     const alumi = fabricate('alumi').injections;
-    expect(Object.keys(alumi).sort()).toEqual(['b-solder-mask', 'solder-mask']);
+    expect(Object.keys(alumi)).toEqual(['solder-mask']);
   });
 
   it('builds each opening as the catalog stadium — bounds, area, winding, flattened', () => {

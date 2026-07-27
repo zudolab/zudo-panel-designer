@@ -38,8 +38,13 @@ export interface HoleFabricationContext {
 export interface HoleFabrication {
   /**
    * Regions build-ir APPENDS to the named role's layer after the artwork
-   * union+clip: mask openings on 'solder-mask'/'b-solder-mask' (both
-   * materials), copper rings on 'copper'/'b-copper' (FR-4 only, Decision 11).
+   * union+clip — FRONT roles only: mask openings on 'solder-mask' (both
+   * materials), copper rings on 'copper' (FR-4 only, Decision 11). The back
+   * roles ('b-solder-mask'/'b-copper') are NOT injected here — #236's
+   * `back-extract.ts` owns them and derives the same holes from the canonical
+   * `panelHoles()` coordinates itself; injecting them from both seams would
+   * double every back hole. (An earlier #231-era draft of this comment named
+   * the back roles here — that wording predated the #235/#236 split.)
    * Appended regions follow Decision 0's ring rules (flattened, positive
    * outers) and paint AFTER the artwork regions — for a ring region whose
    * hole is the drill barrel, the `%LPC*%` clearing artwork beneath it clears
@@ -158,16 +163,17 @@ function drillContent(holes: readonly PanelHole[]): Omit<DrillFileIr, 'plating'>
 }
 
 /**
- * #235's seam, filled: the screw-hole drill pair plus the injection regions.
+ * #235's seam, filled: the screw-hole drill pair plus the FRONT injection
+ * regions. Back-side hole artwork is #236's (`back-extract.ts`), which
+ * derives it from the same canonical `panelHoles()` coordinates — never
+ * injected from here, or the merge would double every back hole.
  *
- * - Mask openings go to BOTH sides' mask roles for both materials — the alumi
- *   `.GBS` is exactly these openings (Decision 12), and the template
- *   coordinates are already canonical front-view values valid for either side
- *   (Decision 13: injections never mirror).
- * - FR-4 only: a copper stadium of the SAME shape as the opening on both
- *   copper roles. The drill void pierces its centre and the plated barrel
- *   takes the HASL finish — the "gold around the hole" result. Alumi holes
- *   are non-plated bare metal: no copper ring.
+ * - Mask openings go to the front solder-mask role for both materials, the
+ *   template coordinates used as-is (Decision 13: injections never mirror).
+ * - FR-4 only: a copper stadium of the SAME shape as the opening on the
+ *   front copper role. The drill void pierces its centre and the plated
+ *   barrel takes the HASL finish — the "gold around the hole" result. Alumi
+ *   holes are non-plated bare metal: no copper ring.
  * - Plating is a per-FILE split (Decision 11): FR-4 content in `pth`, alumi
  *   in `npth`; the other side stays empty and ships header-only.
  */
@@ -180,13 +186,8 @@ export function injectHoleFabrication(ctx: HoleFabricationContext): HoleFabricat
   );
   const injections: Partial<Record<IrLayerRole, readonly IrRegion[]>> =
     ctx.material === 'fr4'
-      ? {
-          copper: openings,
-          'solder-mask': openings,
-          'b-copper': openings,
-          'b-solder-mask': openings,
-        }
-      : { 'solder-mask': openings, 'b-solder-mask': openings };
+      ? { copper: openings, 'solder-mask': openings }
+      : { 'solder-mask': openings };
 
   const content = drillContent(holes);
   const empty = emptyDrillIr();

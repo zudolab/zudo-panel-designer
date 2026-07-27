@@ -167,12 +167,13 @@ describe('GerberIr contract (Decision 0)', () => {
     expect(ir.drill.npth.slots).toHaveLength(4);
   });
 
-  it('back extraction stays a stub until #236 — only #235 fabrication injections reach back layers', async () => {
+  it('back layers stay empty on this branch — #236 owns back extraction AND back hole artwork', async () => {
+    // #235's injections are FRONT-only: back-extract.ts derives the back
+    // screw-hole regions from panelHoles() itself, so an injection here too
+    // would double every back hole at the merge.
     const ir = ok(await build(doc()));
-    const byRole = new Map(ir.layers.map((l) => [l.role, l]));
-    expect(byRole.get('b-silkscreen')!.regions).toEqual([]);
-    expect(byRole.get('b-copper')!.regions).toHaveLength(4);
-    expect(byRole.get('b-solder-mask')!.regions).toHaveLength(4);
+    const backRegions = ir.layers.filter((l) => l.role.startsWith('b-')).map((l) => l.regions);
+    expect(backRegions).toEqual([[], [], []]);
   });
 
   it('keeps geometry in DOCUMENT space, +y down, un-flipped', async () => {
@@ -354,12 +355,10 @@ describe('screw-hole fabrication injections (#235, Decisions 11/12)', () => {
     expect(bounds(ir.layers[0].regions[0].outer)).toEqual([30, 50, 40, 60]);
   });
 
-  it('carries the alumi back mask as exactly the screw-hole openings (Decision 12)', async () => {
+  it('injects nothing on the alumi back mask — its openings are #236 back-extract territory', async () => {
     const ir = ok(await build({ ...doc(), material: 'alumi' }));
     const backMask = ir.layers.find((l) => l.role === 'b-solder-mask')!;
-    expect(backMask.regions).toHaveLength(4);
-    expect(bounds(backMask.regions[0].outer)[0]).toBeCloseTo(10.16 - 5.54, 9);
-    expect(bounds(backMask.regions[0].outer)[1]).toBeCloseTo(1, 9);
+    expect(backMask.regions).toEqual([]);
   });
 
   it('injects nothing on silkscreen or the outline', async () => {
