@@ -74,7 +74,7 @@ test('@smoke switching panel size re-fits the camera', async ({ page }) => {
   expect(await bridge(page).getPanelHp()).toBe(12);
   const before = await bridge(page).getCamera();
 
-  await page.getByRole('combobox').first().selectOption('20');
+  await page.getByRole('combobox', { name: 'Size' }).selectOption('20');
 
   await expect.poll(() => bridge(page).getPanelHp()).toBe(20);
   const after = await bridge(page).getCamera();

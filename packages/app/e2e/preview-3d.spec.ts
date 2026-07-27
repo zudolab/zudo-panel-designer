@@ -484,7 +484,7 @@ test('@smoke 3D preview refreshes font surfaces and reopens on current editor st
 
   // Both changes go through real editor controls, then the command palette
   // opens a fresh preview from the latest document.
-  await page.getByRole('combobox').first().selectOption('20');
+  await page.getByRole('combobox', { name: 'Size' }).selectOption('20');
   await expect.poll(() => bridge(page).getPanelHp()).toBe(20);
   await page.getByRole('button', { name: 'Select layer Gold base' }).click();
   await expect
