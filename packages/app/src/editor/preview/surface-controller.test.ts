@@ -13,11 +13,14 @@ function snapshot(revision: number): PreviewSurfaceSnapshot {
   const source = { width: 120, height: 257 } as PreviewCanvasSource;
   return createPreviewSurfaceSnapshot({
     surfaceRevision: revision,
+    material: 'fr4',
     widthMm: 60,
     heightMm: 128.5,
     thicknessMm: 2.5,
+    holes: [],
     rasterSize: { widthPx: 120, heightPx: 257, effectivePixelsPerMm: 2 },
     canvases: { baseColor: source, metalness: source, roughness: source, height: source },
+    backCanvases: { baseColor: source, metalness: source, roughness: source, height: source },
   });
 }
 

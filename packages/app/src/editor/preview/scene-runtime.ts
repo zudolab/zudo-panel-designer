@@ -356,7 +356,12 @@ export function createPreviewSceneRuntime({
             dimensions.thicknessMm !== snapshot.physicalDimensions.thicknessMm;
         }
         const maximumAnisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-        for (const texture of Object.values(board.textures)) texture.anisotropy = maximumAnisotropy;
+        const ownedTextureSets = board.backTextures
+          ? [board.textures, board.backTextures]
+          : [board.textures];
+        for (const textureSet of ownedTextureSets) {
+          for (const texture of Object.values(textureSet)) texture.anisotropy = maximumAnisotropy;
+        }
         currentSnapshot = snapshot;
         if (dimensionsChanged) {
           dimensions = Object.freeze({ ...snapshot.physicalDimensions });
