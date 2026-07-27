@@ -292,11 +292,7 @@ function pathContains(path: RecordingPath2D, x: number, y: number): boolean {
 // polygonizes each recorded clockwise arc in draw order — canvas auto-connects
 // consecutive arcs with lines — and runs the same crossing test as
 // pathContains.
-function arcPathContains(
-  arcs: ReadonlyArray<readonly number[]>,
-  x: number,
-  y: number,
-): boolean {
+function arcPathContains(arcs: ReadonlyArray<readonly number[]>, x: number, y: number): boolean {
   const points: Array<readonly [number, number]> = [];
   for (const [cx, cy, radius, startAngle, endAngle] of arcs) {
     const sweepEnd = endAngle < startAngle ? endAngle + Math.PI * 2 : endAngle;
@@ -346,10 +342,7 @@ function replayStyleAt(
     if (call.method === 'rect' && call.args.every((arg) => typeof arg === 'number')) {
       pendingRect = call.args as number[];
     }
-    if (
-      call.method === 'arc' &&
-      call.args.slice(0, 5).every((arg) => typeof arg === 'number')
-    ) {
+    if (call.method === 'arc' && call.args.slice(0, 5).every((arg) => typeof arg === 'number')) {
       pendingArcs.push(call.args.slice(0, 5) as number[]);
     }
     if (

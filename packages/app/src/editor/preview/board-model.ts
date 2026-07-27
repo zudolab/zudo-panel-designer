@@ -24,6 +24,7 @@ import { PCB_SUBSTRATE_SURFACE_MATERIALS, PCB_SURFACE_MATERIALS } from './surfac
 export const PREVIEW_FRONT_MATERIAL_INDEX = 0;
 export const PREVIEW_SIDE_MATERIAL_INDEX = 1;
 export const PREVIEW_BACK_MATERIAL_INDEX = 2;
+export const PREVIEW_HOLE_WALL_MATERIAL_INDEX = 3;
 export const PREVIEW_ENVIRONMENT_INTENSITY = 1.35;
 
 // Bump strength for the combined height map (epic #176). Board world units
@@ -68,6 +69,18 @@ export const PREVIEW_ALUMI_BACK_MATERIAL_PARAMETERS = Object.freeze({
   color: materialColorHex(PCB_SUBSTRATE_SURFACE_MATERIALS.alumi.baseColor),
   metalness: 1,
   roughness: 0.2,
+  envMapIntensity: PREVIEW_ENVIRONMENT_INTENSITY,
+});
+
+// FR-4 screw-hole barrels are PTH (epic decision 11): the plating puts the
+// gold/HASL finish on the hole wall, so the barrel gets its own material slot
+// fed from the shared gold surface authority while the routed outer edge
+// keeps the pinned laminate look. Alumi barrels (NPTH) reuse the bare-metal
+// edge parameters — a routed hole exposes the same milled aluminum.
+export const PREVIEW_FR4_HOLE_WALL_MATERIAL_PARAMETERS = Object.freeze({
+  color: materialColorHex(PCB_SURFACE_MATERIALS[1].baseColor),
+  metalness: PCB_SURFACE_MATERIALS[1].metalness,
+  roughness: PCB_SURFACE_MATERIALS[1].roughness,
   envMapIntensity: PREVIEW_ENVIRONMENT_INTENSITY,
 });
 
@@ -162,29 +175,55 @@ export function createPreviewBoardShape(
   return shape;
 }
 
-// The extrusion is non-indexed with per-face normals, so a triangle's first
-// vertex normal classifies its material slot: +z lid → front, −z lid → back,
-// anything else → side. Hole barrels are walls, so they take the side
-// material — bare metal on alumi, gold on FR-4 (the plated PTH barrel, epic
-// decision 11).
-function faceMaterialIndexAt(
-  normal: { getZ(index: number): number },
-  triangle: number,
-): number {
-  const nz = normal.getZ(triangle * 3);
-  if (nz > 0.5) return PREVIEW_FRONT_MATERIAL_INDEX;
-  if (nz < -0.5) return PREVIEW_BACK_MATERIAL_INDEX;
-  return PREVIEW_SIDE_MATERIAL_INDEX;
+// Every catalog hole sits well inside the outline (3mm edge inset), so a
+// wall triangle centroid this close to the panel rectangle's boundary can
+// only belong to the routed outer edge.
+const PREVIEW_OUTLINE_EPSILON_MM = 1e-6;
+
+interface VertexStreamAttribute {
+  getX(index: number): number;
+  getY(index: number): number;
+  getZ(index: number): number;
 }
 
-function assignFaceMaterialGroups(geometry: ExtrudeGeometry): void {
+// The extrusion is non-indexed with per-face normals, so a triangle's first
+// vertex normal classifies its material slot: +z lid → front, −z lid → back.
+// Walls split by position: on the outline rectangle → routed side edge,
+// strictly interior → drilled hole barrel, which owns its own slot so FR-4
+// can show the plated gold barrel against the pinned laminate edge (epic
+// decision 11) while alumi shows bare metal on both.
+function faceMaterialIndexAt(
+  position: VertexStreamAttribute,
+  normal: VertexStreamAttribute,
+  dimensions: PreviewPhysicalDimensions,
+  triangle: number,
+): number {
+  const vertex = triangle * 3;
+  const nz = normal.getZ(vertex);
+  if (nz > 0.5) return PREVIEW_FRONT_MATERIAL_INDEX;
+  if (nz < -0.5) return PREVIEW_BACK_MATERIAL_INDEX;
+  const centroidX =
+    (position.getX(vertex) + position.getX(vertex + 1) + position.getX(vertex + 2)) / 3;
+  const centroidY =
+    (position.getY(vertex) + position.getY(vertex + 1) + position.getY(vertex + 2)) / 3;
+  const onOutline =
+    Math.abs(Math.abs(centroidX) - dimensions.widthMm / 2) < PREVIEW_OUTLINE_EPSILON_MM ||
+    Math.abs(Math.abs(centroidY) - dimensions.heightMm / 2) < PREVIEW_OUTLINE_EPSILON_MM;
+  return onOutline ? PREVIEW_SIDE_MATERIAL_INDEX : PREVIEW_HOLE_WALL_MATERIAL_INDEX;
+}
+
+function assignFaceMaterialGroups(
+  geometry: ExtrudeGeometry,
+  dimensions: PreviewPhysicalDimensions,
+): void {
+  const position = geometry.getAttribute('position');
   const normal = geometry.getAttribute('normal');
   const triangleCount = normal.count / 3;
   geometry.clearGroups();
   let runStart = 0;
-  let runMaterialIndex = faceMaterialIndexAt(normal, 0);
+  let runMaterialIndex = faceMaterialIndexAt(position, normal, dimensions, 0);
   for (let triangle = 1; triangle < triangleCount; triangle += 1) {
-    const materialIndex = faceMaterialIndexAt(normal, triangle);
+    const materialIndex = faceMaterialIndexAt(position, normal, dimensions, triangle);
     if (materialIndex === runMaterialIndex) continue;
     geometry.addGroup(runStart * 3, (triangle - runStart) * 3, runMaterialIndex);
     runStart = triangle;
@@ -199,10 +238,7 @@ function assignFaceMaterialGroups(geometry: ExtrudeGeometry): void {
 // (1, 1), which PREVIEW_BACK_TEXTURE_MIRROR's sampling transform maps back
 // onto the canonically painted canvases (contracts.ts). Wall UVs stay as
 // generated — the side material is untextured.
-function regenerateFaceUvs(
-  geometry: ExtrudeGeometry,
-  dimensions: PreviewPhysicalDimensions,
-): void {
+function regenerateFaceUvs(geometry: ExtrudeGeometry, dimensions: PreviewPhysicalDimensions): void {
   const position = geometry.getAttribute('position');
   const normal = geometry.getAttribute('normal');
   const uv = geometry.getAttribute('uv');
@@ -225,7 +261,7 @@ export function createPreviewBoardGeometry(
     curveSegments: PREVIEW_HOLE_CURVE_SEGMENTS,
   });
   geometry.translate(0, 0, -dimensions.thicknessMm / 2);
-  assignFaceMaterialGroups(geometry);
+  assignFaceMaterialGroups(geometry, dimensions);
   regenerateFaceUvs(geometry, dimensions);
   geometry.userData.previewDimensions = Object.freeze({ ...dimensions });
   return geometry;
@@ -267,13 +303,15 @@ export function createPreviewTextureSet(
   }
 }
 
-// (Re)targets the edge and back materials at one document material's look.
-// FR-4 keeps its pinned laminate edge and textures the back from the back
-// map set; alumi (backTextures null, enforced by the snapshot contract)
-// turns both into polished bare metal.
+// (Re)targets the edge, hole-barrel, and back materials at one document
+// material's look. FR-4 keeps its pinned laminate edge, shows plated gold
+// barrels, and textures the back from the back map set; alumi (backTextures
+// null, enforced by the snapshot contract) turns all three into polished
+// bare metal.
 function configureEdgeAndBackMaterials(
   side: MeshStandardMaterial,
   back: MeshStandardMaterial,
+  holeWall: MeshStandardMaterial,
   material: PcbMaterial,
   backTextures: PreviewTextureSet<Texture> | null,
 ): void {
@@ -286,6 +324,16 @@ function configureEdgeAndBackMaterials(
   side.roughness = edge.roughness;
   side.envMapIntensity = edge.envMapIntensity;
   side.needsUpdate = true;
+
+  const barrel =
+    material === 'alumi'
+      ? PREVIEW_ALUMI_EDGE_MATERIAL_PARAMETERS
+      : PREVIEW_FR4_HOLE_WALL_MATERIAL_PARAMETERS;
+  holeWall.color.setHex(barrel.color);
+  holeWall.metalness = barrel.metalness;
+  holeWall.roughness = barrel.roughness;
+  holeWall.envMapIntensity = barrel.envMapIntensity;
+  holeWall.needsUpdate = true;
 
   if (backTextures) {
     back.color.setHex(0xffffff);
@@ -335,7 +383,9 @@ export function createPreviewBoardMaterials(
     owned.push(side);
     const back = new MeshStandardMaterial({ transparent: false, opacity: 1 });
     owned.push(back);
-    configureEdgeAndBackMaterials(side, back, material, backTextures);
+    const holeWall = new MeshStandardMaterial();
+    owned.push(holeWall);
+    configureEdgeAndBackMaterials(side, back, holeWall, material, backTextures);
     return owned;
   } catch (error) {
     disposeAllSafely(owned.map((ownedMaterial) => () => ownedMaterial.dispose()));
@@ -400,15 +450,22 @@ export function createPreviewBoardModel(snapshot: PreviewSurfaceSnapshot): Previ
             // an fr4 ↔ alumi switch retargets the same owned material slots.
             const side = materials[PREVIEW_SIDE_MATERIAL_INDEX];
             const back = materials[PREVIEW_BACK_MATERIAL_INDEX];
+            const holeWall = materials[PREVIEW_HOLE_WALL_MATERIAL_INDEX];
             if (nextSnapshot.backMaps) {
               const replacementBack = createPreviewTextureSet(nextSnapshot.backMaps, {
                 mirrorX: true,
               });
               backTextures = swapPreviewTextureSet(backTextures, replacementBack, (replacement) => {
-                configureEdgeAndBackMaterials(side, back, nextSnapshot.material, replacement);
+                configureEdgeAndBackMaterials(
+                  side,
+                  back,
+                  holeWall,
+                  nextSnapshot.material,
+                  replacement,
+                );
               });
             } else {
-              configureEdgeAndBackMaterials(side, back, nextSnapshot.material, null);
+              configureEdgeAndBackMaterials(side, back, holeWall, nextSnapshot.material, null);
               const previousBack = backTextures;
               backTextures = null;
               if (previousBack) disposePreviewTextureSet(previousBack);

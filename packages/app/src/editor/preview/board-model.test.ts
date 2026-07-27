@@ -16,8 +16,10 @@ import {
   PREVIEW_BUMP_SCALE,
   PREVIEW_ENVIRONMENT_INTENSITY,
   PREVIEW_FR4_EDGE_MATERIAL_PARAMETERS,
+  PREVIEW_FR4_HOLE_WALL_MATERIAL_PARAMETERS,
   PREVIEW_FRONT_MATERIAL_INDEX,
   PREVIEW_GOLD_MATERIAL_PARAMETERS,
+  PREVIEW_HOLE_WALL_MATERIAL_INDEX,
   PREVIEW_SIDE_MATERIAL_INDEX,
   createPreviewBoardGeometry,
   createPreviewBoardModel,
@@ -158,32 +160,43 @@ describe('preview PCB board model', () => {
     });
 
     // Groups tile the whole non-indexed vertex stream gaplessly, carry all
-    // three material slots, and each triangle's slot matches its face normal
-    // (+z front, −z back, walls — hole barrels included — side).
+    // four material slots, and each triangle's slot matches its face normal
+    // and position: +z front, −z back, outline walls side, interior walls
+    // (drilled barrels) the hole-wall slot.
     const groups = [...geometry.groups].sort((a, b) => a.start - b.start);
     const normal = geometry.attributes.normal;
+    const position = geometry.attributes.position;
     let cursor = 0;
     for (const group of groups) {
       expect(group.start).toBe(cursor);
       cursor += group.count;
     }
-    expect(cursor).toBe(geometry.attributes.position.count);
+    expect(cursor).toBe(position.count);
     expect(new Set(groups.map((group) => group.materialIndex))).toEqual(
       new Set([
         PREVIEW_FRONT_MATERIAL_INDEX,
         PREVIEW_SIDE_MATERIAL_INDEX,
         PREVIEW_BACK_MATERIAL_INDEX,
+        PREVIEW_HOLE_WALL_MATERIAL_INDEX,
       ]),
     );
     for (const group of groups) {
       for (let offset = 0; offset < group.count; offset += 3) {
-        const nz = normal.getZ(group.start + offset);
-        const expected =
-          nz > 0.5
-            ? PREVIEW_FRONT_MATERIAL_INDEX
-            : nz < -0.5
-              ? PREVIEW_BACK_MATERIAL_INDEX
-              : PREVIEW_SIDE_MATERIAL_INDEX;
+        const vertex = group.start + offset;
+        const nz = normal.getZ(vertex);
+        let expected: number;
+        if (nz > 0.5) expected = PREVIEW_FRONT_MATERIAL_INDEX;
+        else if (nz < -0.5) expected = PREVIEW_BACK_MATERIAL_INDEX;
+        else {
+          const centroidX =
+            (position.getX(vertex) + position.getX(vertex + 1) + position.getX(vertex + 2)) / 3;
+          const centroidY =
+            (position.getY(vertex) + position.getY(vertex + 1) + position.getY(vertex + 2)) / 3;
+          const onOutline =
+            Math.abs(Math.abs(centroidX) - 30) < 1e-6 ||
+            Math.abs(Math.abs(centroidY) - 64.25) < 1e-6;
+          expected = onOutline ? PREVIEW_SIDE_MATERIAL_INDEX : PREVIEW_HOLE_WALL_MATERIAL_INDEX;
+        }
         expect(group.materialIndex).toBe(expected);
       }
     }
@@ -254,6 +267,30 @@ describe('preview PCB board model', () => {
     expect(holeLoopBounds(oneUShape, 0).centerY).toBeCloseTo(height / 2 - top.cy, 6);
     expect(holeLoopBounds(oneUShape, 1).centerX).toBeCloseTo(bottom.cx - width / 2, 6);
     expect(holeLoopBounds(oneUShape, 1).centerY).toBeCloseTo(height / 2 - bottom.cy, 6);
+  });
+
+  it('plates FR-4 barrels gold against the pinned laminate edge, and bares alumi barrels', () => {
+    const model = createPreviewBoardModel(snapshot(1));
+    const barrel = model.mesh.material[PREVIEW_HOLE_WALL_MATERIAL_INDEX];
+    const side = model.mesh.material[PREVIEW_SIDE_MATERIAL_INDEX];
+
+    // PTH plating (epic decision 11): the barrel reads as the shared gold
+    // authority, while the outer routed edge keeps the laminate regression
+    // pin — two different slots by design.
+    expect(PREVIEW_FR4_HOLE_WALL_MATERIAL_PARAMETERS.metalness).toBe(1);
+    expect(barrel.color.getHex()).toBe(PREVIEW_FR4_HOLE_WALL_MATERIAL_PARAMETERS.color);
+    expect(barrel.metalness).toBe(PREVIEW_FR4_HOLE_WALL_MATERIAL_PARAMETERS.metalness);
+    expect(barrel.roughness).toBe(PREVIEW_FR4_HOLE_WALL_MATERIAL_PARAMETERS.roughness);
+    expect(barrel.envMapIntensity).toBe(PREVIEW_ENVIRONMENT_INTENSITY);
+    expect(side.color.getHex()).toBe(PREVIEW_FR4_EDGE_MATERIAL_PARAMETERS.color);
+    expect(barrel.color.getHex()).not.toBe(side.color.getHex());
+
+    // NPTH alumi barrels retarget the same slot to the bare-metal edge look.
+    model.applySnapshot(snapshot(2, undefined, 'alumi'));
+    expect(barrel.color.getHex()).toBe(PREVIEW_ALUMI_EDGE_MATERIAL_PARAMETERS.color);
+    expect(barrel.metalness).toBe(PREVIEW_ALUMI_EDGE_MATERIAL_PARAMETERS.metalness);
+    expect(barrel.roughness).toBe(PREVIEW_ALUMI_EDGE_MATERIAL_PARAMETERS.roughness);
+    model.dispose();
   });
 
   it('cuts drill interiors out of both faces so artwork there is never sampled', () => {

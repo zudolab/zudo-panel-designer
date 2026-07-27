@@ -227,10 +227,7 @@ interface SurfaceMapPaintTarget {
 // the shining substrate instead. Canonical catalog coordinates serve both
 // faces unchanged — the back face's x mirror lives in the sampling contract
 // (contracts.PREVIEW_BACK_FACE_ORIENTATION), never in the paint.
-function fillHoleOpeningStadiums(
-  ctx: CanvasRenderingContext2D,
-  holes: readonly PanelHole[],
-): void {
+function fillHoleOpeningStadiums(ctx: CanvasRenderingContext2D, holes: readonly PanelHole[]): void {
   for (const hole of holes) {
     const radius = hole.opening.width / 2;
     // A round hole's square opening (width === length) collapses the flat
