@@ -288,6 +288,33 @@ function pathContains(path: RecordingPath2D, x: number, y: number): boolean {
   return crossings % 2 === 1;
 }
 
+// Point-in-fill for an arc-built subpath (the screw-hole stadium tracer):
+// polygonizes each recorded clockwise arc in draw order — canvas auto-connects
+// consecutive arcs with lines — and runs the same crossing test as
+// pathContains.
+function arcPathContains(
+  arcs: ReadonlyArray<readonly number[]>,
+  x: number,
+  y: number,
+): boolean {
+  const points: Array<readonly [number, number]> = [];
+  for (const [cx, cy, radius, startAngle, endAngle] of arcs) {
+    const sweepEnd = endAngle < startAngle ? endAngle + Math.PI * 2 : endAngle;
+    const steps = 64;
+    for (let step = 0; step <= steps; step += 1) {
+      const angle = startAngle + ((sweepEnd - startAngle) * step) / steps;
+      points.push([cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)]);
+    }
+  }
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [xi, yi] = points[i];
+    const [xj, yj] = points[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
 // Replays a canvas call log at one sample point, modeling the negative-mask
 // composite: `apply` receives the style of every covering paint — or null for
 // a destination-out punch that erases the point — plus the composite
@@ -302,6 +329,7 @@ function replayStyleAt(
   apply: (style: string | null, compositeOperation: string) => void,
 ): void {
   let pendingRect: readonly number[] | null = null;
+  let pendingArcs: Array<readonly number[]> = [];
   const contains = (rect: readonly number[]) =>
     x > rect[0] && x < rect[0] + rect[2] && y > rect[1] && y < rect[1] + rect[3];
   const applyCall = (call: CanvasCall): void => {
@@ -311,9 +339,18 @@ function replayStyleAt(
     );
   };
   for (const call of calls) {
-    if (call.method === 'beginPath') pendingRect = null;
+    if (call.method === 'beginPath') {
+      pendingRect = null;
+      pendingArcs = [];
+    }
     if (call.method === 'rect' && call.args.every((arg) => typeof arg === 'number')) {
       pendingRect = call.args as number[];
+    }
+    if (
+      call.method === 'arc' &&
+      call.args.slice(0, 5).every((arg) => typeof arg === 'number')
+    ) {
+      pendingArcs.push(call.args.slice(0, 5) as number[]);
     }
     if (
       call.method === 'fillRect' &&
@@ -322,7 +359,11 @@ function replayStyleAt(
     ) {
       applyCall(call);
     }
-    if (call.method === 'fill' && call.args.length === 0 && pendingRect) {
+    if (call.method === 'fill' && call.args.length === 0 && pendingArcs.length > 0) {
+      if (arcPathContains(pendingArcs, x, y)) applyCall(call);
+      pendingArcs = [];
+      pendingRect = null;
+    } else if (call.method === 'fill' && call.args.length === 0 && pendingRect) {
       if (contains(pendingRect)) applyCall(call);
       pendingRect = null;
     }
@@ -839,6 +880,86 @@ describe('createPreviewSurfaceMapGenerator', () => {
       const canvas = exposed.maps[mapName].source as unknown as RecordingCanvas;
       expect(topMaterialAt(canvas.calls, 10, 10)).toBe(surfaceMapSubstrateColor(mapName, 'alumi'));
     }
+    generator.close();
+  });
+
+  it('punches the screw-hole openings and lays the FR-4 copper ring on both faces', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: docPick(),
+      ticket: ticket(31),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+
+    // 3U/4hp catalog: top slot at (6.045, 3), bottom at (13.955, 125.5),
+    // opening 4.0 × 11.08 around a 3.2 drill. Ring samples sit inside the
+    // opening but outside the drill; the drill interior carries the same
+    // copper underlay (the geometry cuts those texels out of sampling).
+    const holes = panelHoles('3U', 4);
+    expect(holes).toHaveLength(2);
+    const samples = holes.map((hole) => ({
+      ring: [hole.cx, hole.cy - hole.drillDiameter / 2 - 0.2] as const,
+      drill: [hole.cx, hole.cy] as const,
+    }));
+    const covered = [holes[0].cx, holes[0].cy + 5] as const;
+
+    for (const face of [snapshot.maps, snapshot.backMaps!]) {
+      for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
+        const canvas = face[mapName].source as unknown as RecordingCanvas;
+        for (const sample of samples) {
+          expect(topMaterialAt(canvas.calls, ...sample.ring)).toBe(
+            surfaceMapColorForPalette(mapName, 1),
+          );
+          expect(topMaterialAt(canvas.calls, ...sample.drill)).toBe(
+            surfaceMapColorForPalette(mapName, 1),
+          );
+        }
+        expect(topMaterialAt(canvas.calls, ...covered)).toBe(surfaceMapColorForPalette(mapName, 0));
+      }
+      // The ring reads as bare copper in the height field too: real copper
+      // thickness with the mask sheet punched away above it.
+      const heightCanvas = face.height.source as unknown as RecordingCanvas;
+      expect(heightLevelAt(heightCanvas.calls, ...samples[0].ring)).toBeCloseTo(
+        grayLevel(PREVIEW_HEIGHT_COPPER_COLOR),
+        10,
+      );
+      expect(heightLevelAt(heightCanvas.calls, ...covered)).toBeCloseTo(
+        grayLevel(PREVIEW_HEIGHT_MASK_COLOR),
+        10,
+      );
+    }
+    generator.close();
+  });
+
+  it('exposes the shining substrate in alumi screw-hole rings with no copper underlay', () => {
+    const recording = recordingCanvasFactory();
+    const generator = createPreviewSurfaceMapGenerator({ canvasFactory: recording.factory });
+    const snapshot = generator.generate({
+      doc: docPick({ material: 'alumi' }),
+      ticket: ticket(32),
+      preferredPixelsPerMm: 1,
+      maximumTextureSizePx: 512,
+    });
+
+    const [topHole] = panelHoles('3U', 4);
+    const ring = [topHole.cx, topHole.cy - topHole.drillDiameter / 2 - 0.2] as const;
+    const covered = [topHole.cx, topHole.cy + 5] as const;
+    expect(snapshot.backMaps).toBeNull();
+    for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
+      const canvas = snapshot.maps[mapName].source as unknown as RecordingCanvas;
+      // NPTH (epic decision 11): the opening exposes bare aluminum, never a
+      // copper ring.
+      expect(topMaterialAt(canvas.calls, ...ring)).toBe(surfaceMapSubstrateColor(mapName, 'alumi'));
+      expect(topMaterialAt(canvas.calls, ...covered)).toBe(surfaceMapColorForPalette(mapName, 0));
+    }
+    const heightCanvas = snapshot.maps.height.source as unknown as RecordingCanvas;
+    expect(heightLevelAt(heightCanvas.calls, ...ring)).toBe(0);
+    expect(heightLevelAt(heightCanvas.calls, ...covered)).toBeCloseTo(
+      grayLevel(PREVIEW_HEIGHT_MASK_COLOR),
+      10,
+    );
     generator.close();
   });
 

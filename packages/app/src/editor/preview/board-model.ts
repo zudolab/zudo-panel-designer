@@ -1,13 +1,15 @@
 import {
-  BoxGeometry,
   CanvasTexture,
+  ExtrudeGeometry,
   Mesh,
   MeshStandardMaterial,
   NoColorSpace,
+  Path,
   SRGBColorSpace,
+  Shape,
   type Texture,
 } from 'three';
-import type { PcbMaterial } from '@zpd/core';
+import type { PanelHole, PcbMaterial } from '@zpd/core';
 import {
   disposePreviewTextureSet,
   swapPreviewTextureSet,
@@ -78,7 +80,7 @@ export const PREVIEW_BACK_TEXTURE_MIRROR = Object.freeze({ repeatX: -1, centerX:
 export type PreviewCanvasTexture = CanvasTexture<PreviewCanvasSource>;
 
 export interface PreviewBoardModel {
-  readonly mesh: Mesh<BoxGeometry, MeshStandardMaterial[]>;
+  readonly mesh: Mesh<ExtrudeGeometry, MeshStandardMaterial[]>;
   readonly dimensions: PreviewPhysicalDimensions;
   readonly surfaceRevision: number;
   readonly textures: PreviewTextureSet<PreviewCanvasTexture>;
@@ -101,17 +103,130 @@ function sameDimensions(a: PreviewPhysicalDimensions, b: PreviewPhysicalDimensio
   return a.widthMm === b.widthMm && a.heightMm === b.heightMm && a.thicknessMm === b.thicknessMm;
 }
 
-export function createPreviewBoardGeometry(dimensions: PreviewPhysicalDimensions): BoxGeometry {
-  const geometry = new BoxGeometry(dimensions.widthMm, dimensions.heightMm, dimensions.thicknessMm);
+function samePanelHole(a: PanelHole, b: PanelHole): boolean {
+  return (
+    a.cx === b.cx &&
+    a.cy === b.cy &&
+    a.shape === b.shape &&
+    a.drillDiameter === b.drillDiameter &&
+    a.slotLength === b.slotLength &&
+    a.opening.width === b.opening.width &&
+    a.opening.length === b.opening.length
+  );
+}
 
-  // BoxGeometry creates +x, -x, +y, -y, +z, -z groups in that order.
-  // Preserve the group ranges while collapsing them into front/side/back
-  // material ownership. Only +z receives the generated front artwork.
-  for (const group of geometry.groups) {
-    if (group.materialIndex === 4) group.materialIndex = PREVIEW_FRONT_MATERIAL_INDEX;
-    else if (group.materialIndex === 5) group.materialIndex = PREVIEW_BACK_MATERIAL_INDEX;
-    else group.materialIndex = PREVIEW_SIDE_MATERIAL_INDEX;
+function samePanelHoles(a: readonly PanelHole[], b: readonly PanelHole[]): boolean {
+  return a.length === b.length && a.every((hole, index) => samePanelHole(hole, b[index]));
+}
+
+// Arc flattening resolution for the drilled hole loops: each absarc becomes
+// this many segments, keeping a 3.2mm barrel visually round at preview scale.
+export const PREVIEW_HOLE_CURVE_SEGMENTS = 32;
+
+// Builds the panel outline in centered model coordinates (+x right, +y up)
+// with one hole loop per catalog entry: circles for round holes, stadiums for
+// slots (overall length = slotLength, so the flat routed span is
+// slotLength − drillDiameter, long axis horizontal). Catalog coordinates are
+// canonical fabrication mm — top-left origin, +y down — hence the cy flip.
+export function createPreviewBoardShape(
+  dimensions: PreviewPhysicalDimensions,
+  holes: readonly PanelHole[],
+): Shape {
+  const halfWidth = dimensions.widthMm / 2;
+  const halfHeight = dimensions.heightMm / 2;
+  const shape = new Shape();
+  shape.moveTo(-halfWidth, -halfHeight);
+  shape.lineTo(halfWidth, -halfHeight);
+  shape.lineTo(halfWidth, halfHeight);
+  shape.lineTo(-halfWidth, halfHeight);
+  shape.closePath();
+
+  for (const hole of holes) {
+    const cx = hole.cx - halfWidth;
+    const cy = halfHeight - hole.cy;
+    const radius = hole.drillDiameter / 2;
+    const loop = new Path();
+    if (hole.shape === 'round') {
+      loop.absarc(cx, cy, radius, 0, Math.PI * 2, false);
+    } else {
+      const halfSpan = Math.max(
+        0,
+        ((hole.slotLength ?? hole.drillDiameter) - hole.drillDiameter) / 2,
+      );
+      loop.absarc(cx + halfSpan, cy, radius, -Math.PI / 2, Math.PI / 2, false);
+      loop.absarc(cx - halfSpan, cy, radius, Math.PI / 2, (3 * Math.PI) / 2, false);
+      loop.closePath();
+    }
+    shape.holes.push(loop);
   }
+  return shape;
+}
+
+// The extrusion is non-indexed with per-face normals, so a triangle's first
+// vertex normal classifies its material slot: +z lid → front, −z lid → back,
+// anything else → side. Hole barrels are walls, so they take the side
+// material — bare metal on alumi, gold on FR-4 (the plated PTH barrel, epic
+// decision 11).
+function faceMaterialIndexAt(
+  normal: { getZ(index: number): number },
+  triangle: number,
+): number {
+  const nz = normal.getZ(triangle * 3);
+  if (nz > 0.5) return PREVIEW_FRONT_MATERIAL_INDEX;
+  if (nz < -0.5) return PREVIEW_BACK_MATERIAL_INDEX;
+  return PREVIEW_SIDE_MATERIAL_INDEX;
+}
+
+function assignFaceMaterialGroups(geometry: ExtrudeGeometry): void {
+  const normal = geometry.getAttribute('normal');
+  const triangleCount = normal.count / 3;
+  geometry.clearGroups();
+  let runStart = 0;
+  let runMaterialIndex = faceMaterialIndexAt(normal, 0);
+  for (let triangle = 1; triangle < triangleCount; triangle += 1) {
+    const materialIndex = faceMaterialIndexAt(normal, triangle);
+    if (materialIndex === runMaterialIndex) continue;
+    geometry.addGroup(runStart * 3, (triangle - runStart) * 3, runMaterialIndex);
+    runStart = triangle;
+    runMaterialIndex = materialIndex;
+  }
+  geometry.addGroup(runStart * 3, (triangleCount - runStart) * 3, runMaterialIndex);
+}
+
+// Re-derives both lids' UVs from the model-space rectangle so the orientation
+// contract survives the extrusion (ExtrudeGeometry's generator emits raw mm
+// UVs): the front face keeps documentTopLeftUv (0, 1) and the back face
+// (1, 1), which PREVIEW_BACK_TEXTURE_MIRROR's sampling transform maps back
+// onto the canonically painted canvases (contracts.ts). Wall UVs stay as
+// generated — the side material is untextured.
+function regenerateFaceUvs(
+  geometry: ExtrudeGeometry,
+  dimensions: PreviewPhysicalDimensions,
+): void {
+  const position = geometry.getAttribute('position');
+  const normal = geometry.getAttribute('normal');
+  const uv = geometry.getAttribute('uv');
+  for (let vertex = 0; vertex < position.count; vertex += 1) {
+    const nz = normal.getZ(vertex);
+    if (Math.abs(nz) <= 0.5) continue;
+    const u = position.getX(vertex) / dimensions.widthMm + 0.5;
+    const v = position.getY(vertex) / dimensions.heightMm + 0.5;
+    uv.setXY(vertex, nz > 0 ? u : 1 - u, v);
+  }
+}
+
+export function createPreviewBoardGeometry(
+  dimensions: PreviewPhysicalDimensions,
+  holes: readonly PanelHole[],
+): ExtrudeGeometry {
+  const geometry = new ExtrudeGeometry(createPreviewBoardShape(dimensions, holes), {
+    depth: dimensions.thicknessMm,
+    bevelEnabled: false,
+    curveSegments: PREVIEW_HOLE_CURVE_SEGMENTS,
+  });
+  geometry.translate(0, 0, -dimensions.thicknessMm / 2);
+  assignFaceMaterialGroups(geometry);
+  regenerateFaceUvs(geometry, dimensions);
   geometry.userData.previewDimensions = Object.freeze({ ...dimensions });
   return geometry;
 }
@@ -238,6 +353,7 @@ function installTextures(front: MeshStandardMaterial, textures: PreviewTextureSe
 
 export function createPreviewBoardModel(snapshot: PreviewSurfaceSnapshot): PreviewBoardModel {
   let dimensions = Object.freeze({ ...snapshot.physicalDimensions });
+  let holes = snapshot.holes;
   let surfaceRevision = snapshot.surfaceRevision;
   let textures = createPreviewTextureSet(snapshot.maps);
   try {
@@ -247,8 +363,8 @@ export function createPreviewBoardModel(snapshot: PreviewSurfaceSnapshot): Previ
     try {
       const materials = createPreviewBoardMaterials(textures, snapshot.material, backTextures);
       try {
-        const geometry = createPreviewBoardGeometry(dimensions);
-        let mesh: Mesh<BoxGeometry, MeshStandardMaterial[]>;
+        const geometry = createPreviewBoardGeometry(dimensions, holes);
+        let mesh: Mesh<ExtrudeGeometry, MeshStandardMaterial[]>;
         try {
           mesh = new Mesh(geometry, materials);
         } catch (error) {
@@ -299,14 +415,21 @@ export function createPreviewBoardModel(snapshot: PreviewSurfaceSnapshot): Previ
             }
 
             const dimensionsChanged = !sameDimensions(dimensions, nextSnapshot.physicalDimensions);
-            if (dimensionsChanged) {
+            // Both dims and holes derive from (format, hp), so they normally
+            // change together — comparing the hole list too keeps the cut
+            // honest if a hole-catalog revision ever moves holes at an
+            // unchanged panel size. dimensionsChanged alone stays the camera
+            // refit signal.
+            if (dimensionsChanged || !samePanelHoles(holes, nextSnapshot.holes)) {
               const replacementGeometry = createPreviewBoardGeometry(
                 nextSnapshot.physicalDimensions,
+                nextSnapshot.holes,
               );
               const previousGeometry = mesh.geometry;
               mesh.geometry = replacementGeometry;
               disposeAllSafely([() => previousGeometry.dispose()]);
               dimensions = Object.freeze({ ...nextSnapshot.physicalDimensions });
+              holes = nextSnapshot.holes;
             }
             surfaceRevision = nextSnapshot.surfaceRevision;
             return Object.freeze({ dimensionsChanged });
