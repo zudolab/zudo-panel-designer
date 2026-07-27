@@ -85,14 +85,24 @@ export function excellonFileText(
     lines.push(`T${tool.code}C${excellonNumber(tool.diameterMm)}`);
   }
   lines.push('%', 'G90', 'G05');
+  // Drill vs route mode is MODAL in Excellon: after a G00/M15/G01/M16
+  // sequence the machine stays in route mode, so a later tool's bare `X…Y…`
+  // would read as another routed move, not a drill hit. Re-arm drill mode
+  // with G05 before any hit block that follows routing.
+  let routed = false;
   for (const tool of file.tools) {
     lines.push(`T${tool.code}`);
     for (const hit of file.hits) {
       if (hit.tool !== tool.code) continue;
+      if (routed) {
+        lines.push('G05');
+        routed = false;
+      }
       lines.push(coordinates(hit, panel.heightMm));
     }
     for (const slot of file.slots) {
       if (slot.tool !== tool.code) continue;
+      routed = true;
       lines.push(
         `G00${coordinates(slot.start, panel.heightMm)}`,
         'M15',

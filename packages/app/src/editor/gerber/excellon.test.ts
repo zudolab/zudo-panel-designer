@@ -123,6 +123,27 @@ describe('excellonFileText — byte-exact catalog fixtures', () => {
     }
   });
 
+  it('re-arms drill mode with G05 when hits follow a routed slot — route mode is modal', () => {
+    // Not reachable from today's single-tool catalog, but the emitter accepts
+    // any DrillFileIr: without the G05, the T2 hit below would be interpreted
+    // as another routed move under the still-modal G01.
+    const p = panel('3U', 12);
+    const text = excellonFileText(
+      {
+        plating: 'pth',
+        tools: [
+          { code: 1, diameterMm: 3.2 },
+          { code: 2, diameterMm: 5 },
+        ],
+        hits: [{ tool: 2, x: 10, y: 3 }],
+        slots: [{ tool: 1, start: { x: 6.62, y: 3 }, end: { x: 13.7, y: 3 } }],
+      },
+      p,
+      FIXTURE_OPTIONS,
+    );
+    expect(text).toContain('M16\nT2\nG05\nX10.0Y125.5');
+  });
+
   it('refuses drill content that references a tool absent from the table', () => {
     const p = panel('3U', 12);
     const file = {
