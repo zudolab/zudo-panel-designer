@@ -18,6 +18,7 @@ import {
 import {
   mapPcbLeavesById,
   panelHeightMm,
+  panelHoles,
   panelWidthMm,
   stackForSide,
   translatePathLayer,
@@ -123,6 +124,10 @@ export function Editor() {
     () => ({ widthMm: panelWidthMm(doc.panelHp), heightMm: panelHeightMm(doc.format) }),
     [doc.panelHp, doc.format],
   );
+  // The derived template-hole set (#227), canonical front-view fabrication
+  // coordinates — the composer's job (#237) is only to PAINT these, never to
+  // derive or store them. renderScene mirrors DISPLAY x on the back view.
+  const holes = useMemo(() => panelHoles(doc.format, doc.panelHp), [doc.format, doc.panelHp]);
   // The committed render-time stack of the ACTIVE side (#233) — the tree
   // every side-scoped derivation below reads instead of doc.layers. Same
   // identity per (doc, activeSide) pair, so downstream memo deps stay cheap.
@@ -518,6 +523,8 @@ export function Editor() {
     // mirroring here (export mirroring is the gerber lane's job).
     renderScene(canvas, { layers: activeStack }, panel, camera, {
       side: activeSide,
+      material: doc.material,
+      holes,
       // Expanded to leaf ids (#151): the chrome pass matches flat leaves only,
       // so a raw group id would draw no selection chrome at all.
       selectedIds: chromeLeafIds,
