@@ -77,6 +77,38 @@ class RecordingPath2D {
   }
 }
 
+// Canvas' own affine order, [a, b, c, d, e, f].
+type Affine = readonly [number, number, number, number, number, number];
+const IDENTITY_AFFINE: Affine = [1, 0, 0, 1, 0, 0];
+
+function composeAffine(outer: Affine, inner: Affine): Affine {
+  return [
+    outer[0] * inner[0] + outer[2] * inner[1],
+    outer[1] * inner[0] + outer[3] * inner[1],
+    outer[0] * inner[2] + outer[2] * inner[3],
+    outer[1] * inner[2] + outer[3] * inner[3],
+    outer[0] * inner[4] + outer[2] * inner[5] + outer[4],
+    outer[1] * inner[4] + outer[3] * inner[5] + outer[5],
+  ];
+}
+
+function invertAffine(m: Affine): Affine {
+  const determinant = m[0] * m[3] - m[1] * m[2];
+  if (determinant === 0) throw new Error('recording canvas produced a singular transform');
+  return [
+    m[3] / determinant,
+    -m[1] / determinant,
+    -m[2] / determinant,
+    m[0] / determinant,
+    (m[2] * m[5] - m[3] * m[4]) / determinant,
+    (m[1] * m[4] - m[0] * m[5]) / determinant,
+  ];
+}
+
+function applyAffine(m: Affine, x: number, y: number): readonly [number, number] {
+  return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+}
+
 interface CanvasCall {
   readonly method: string;
   readonly args: readonly unknown[];
@@ -84,6 +116,15 @@ interface CanvasCall {
   readonly strokeStyle: string;
   readonly globalAlpha: number;
   readonly globalCompositeOperation: string;
+  // Transform composed on top of the most recent setTransform — i.e. this
+  // call's own coordinates expressed relative to the PANEL SPACE that
+  // enterPanelSpace establishes. Sampling reads it inverted, so a sample
+  // point given in panel mm resolves through mirrors and rotations instead
+  // of silently comparing against raw, untransformed arguments. Without it a
+  // whole class of coordinate-space bug is invisible here: the back face's
+  // artwork mirror is a pure CTM operation, so an unaware recorder cannot
+  // tell back-view doc space from canonical fabrication space.
+  readonly panelLocal: Affine;
   // Global ordering across every recording canvas: sampling through a mask
   // sheet drawImage must only replay sheet calls issued BEFORE that
   // composite (the shared sheet is re-filled and re-punched per map).
@@ -104,7 +145,26 @@ function recordingContext(calls: CanvasCall[], observer?: CallObserver): CanvasR
     textBaseline: 'alphabetic',
     globalCompositeOperation: 'source-over',
   };
-  const stack: Record<string, unknown>[] = [];
+  let panelLocal: Affine = IDENTITY_AFFINE;
+  const stack: Array<{ state: Record<string, unknown>; panelLocal: Affine }> = [];
+
+  // setTransform re-bases panel space (enterPanelSpace is its only caller);
+  // everything after it composes on top and is what sampling inverts.
+  const trackTransform = (method: string, args: readonly unknown[]): void => {
+    const n = args as number[];
+    if (method === 'setTransform') panelLocal = IDENTITY_AFFINE;
+    else if (method === 'translate') {
+      panelLocal = composeAffine(panelLocal, [1, 0, 0, 1, n[0]!, n[1]!]);
+    } else if (method === 'scale') {
+      panelLocal = composeAffine(panelLocal, [n[0]!, 0, 0, n[1]!, 0, 0]);
+    } else if (method === 'rotate') {
+      const cos = Math.cos(n[0]!);
+      const sin = Math.sin(n[0]!);
+      panelLocal = composeAffine(panelLocal, [cos, sin, -sin, cos, 0, 0]);
+    } else if (method === 'transform') {
+      panelLocal = composeAffine(panelLocal, [n[0]!, n[1]!, n[2]!, n[3]!, n[4]!, n[5]!]);
+    }
+  };
 
   return new Proxy(
     {},
@@ -113,8 +173,15 @@ function recordingContext(calls: CanvasCall[], observer?: CallObserver): CanvasR
         if (property in state) return state[property];
         if (property === 'measureText') return () => ({ width: 0 });
         return (...args: unknown[]) => {
-          if (property === 'save') stack.push({ ...state });
-          if (property === 'restore') state = stack.pop() ?? state;
+          if (property === 'save') stack.push({ state: { ...state }, panelLocal });
+          if (property === 'restore') {
+            const restored = stack.pop();
+            if (restored) {
+              state = restored.state;
+              panelLocal = restored.panelLocal;
+            }
+          }
+          trackTransform(property, args);
           const call: CanvasCall = {
             method: property,
             args,
@@ -122,6 +189,7 @@ function recordingContext(calls: CanvasCall[], observer?: CallObserver): CanvasR
             strokeStyle: String(state.strokeStyle),
             globalAlpha: Number(state.globalAlpha),
             globalCompositeOperation: String(state.globalCompositeOperation),
+            panelLocal,
             seq: nextCallSeq++,
           };
           calls.push(call);
@@ -318,6 +386,12 @@ function arcPathContains(arcs: ReadonlyArray<readonly number[]>, x: number, y: n
 // 'lighter'). Mask-sheet drawImage calls recurse into the sheet's own log,
 // truncated to calls issued before the composite (the shared sheet is
 // re-filled and re-punched per map).
+//
+// (x, y) is PANEL SPACE — the mm frame enterPanelSpace establishes, which for
+// both faces is canonical fabrication space. Each call's own arguments are
+// read in its local frame, reached by inverting the transform it carries, so
+// the back face's artwork mirror and a layer's rotation both resolve here
+// rather than passing unnoticed.
 function replayStyleAt(
   calls: readonly CanvasCall[],
   x: number,
@@ -326,8 +400,15 @@ function replayStyleAt(
 ): void {
   let pendingRect: readonly number[] | null = null;
   let pendingArcs: Array<readonly number[]> = [];
+  // Set per call from its own transform, so every containment test below
+  // compares like with like.
+  let localX = x;
+  let localY = y;
   const contains = (rect: readonly number[]) =>
-    x > rect[0] && x < rect[0] + rect[2] && y > rect[1] && y < rect[1] + rect[3];
+    localX > rect[0] &&
+    localX < rect[0] + rect[2] &&
+    localY > rect[1] &&
+    localY < rect[1] + rect[3];
   const applyCall = (call: CanvasCall): void => {
     apply(
       call.globalCompositeOperation === 'destination-out' ? null : call.fillStyle,
@@ -335,6 +416,7 @@ function replayStyleAt(
     );
   };
   for (const call of calls) {
+    [localX, localY] = applyAffine(invertAffine(call.panelLocal), x, y);
     if (call.method === 'beginPath') {
       pendingRect = null;
       pendingArcs = [];
@@ -353,7 +435,7 @@ function replayStyleAt(
       applyCall(call);
     }
     if (call.method === 'fill' && call.args.length === 0 && pendingArcs.length > 0) {
-      if (arcPathContains(pendingArcs, x, y)) applyCall(call);
+      if (arcPathContains(pendingArcs, localX, localY)) applyCall(call);
       pendingArcs = [];
       pendingRect = null;
     } else if (call.method === 'fill' && call.args.length === 0 && pendingRect) {
@@ -364,7 +446,7 @@ function replayStyleAt(
       call.method === 'fill' &&
       call.args[0] instanceof RecordingPath2D &&
       call.args[1] === 'evenodd' &&
-      pathContains(call.args[0], x, y)
+      pathContains(call.args[0], localX, localY)
     ) {
       applyCall(call);
     }
@@ -774,28 +856,43 @@ describe('createPreviewSurfaceMapGenerator', () => {
       maximumTextureSizePx: 512,
     });
 
+    // `doc.backLayers` is authored in BACK-VIEW doc space (#233), so the x a
+    // back leaf carries is NOT where it lands on a canonical canvas: the
+    // paint reflects it once (surface-maps' withArtworkSpace), exactly as
+    // gerber/back-extract.ts's mirrorInput does at the export boundary. Both
+    // sample points below are therefore canonical, and the sampler resolves
+    // that reflection because it inverts each call's transform.
+    const canonicalX = (backViewX: number) => panelWidthMm(8) - backViewX;
+
     for (const mapName of ['baseColor', 'metalness', 'roughness'] as const) {
       const frontCanvas = snapshot.maps[mapName].source as unknown as RecordingCanvas;
       const backCanvas = snapshot.backMaps![mapName].source as unknown as RecordingCanvas;
       expect(backCanvas).not.toBe(frontCanvas);
-      // The back opening reveals the back copper at its CANONICAL x — the
-      // canvases stay in canonical front-view coords; the display-side x
-      // mirror lives in the sampling contract, never in the paint.
-      expect(topMaterialAt(backCanvas.calls, 10, 10)).toBe(surfaceMapColorForPalette(mapName, 1));
+      // The back opening reveals the back copper at its CANONICAL x.
+      expect(topMaterialAt(backCanvas.calls, canonicalX(10), 10)).toBe(
+        surfaceMapColorForPalette(mapName, 1),
+      );
       // Outside the opening the back stack's mask sheet still covers.
-      expect(topMaterialAt(backCanvas.calls, 4, 4)).toBe(surfaceMapColorForPalette(mapName, 0));
+      expect(topMaterialAt(backCanvas.calls, canonicalX(4), 4)).toBe(
+        surfaceMapColorForPalette(mapName, 0),
+      );
+      // REGRESSION GUARD: the un-reflected back-view x must hold NO artwork.
+      // Painting the back stack straight onto the canonical canvas put the
+      // opening here instead, mirroring every back face against both the
+      // composer's Back view and the exported .GBL.
+      expect(topMaterialAt(backCanvas.calls, 10, 10)).toBe(surfaceMapColorForPalette(mapName, 0));
       // The front face has no artwork at all in this doc: fully covered by
       // its own sheet at both sample points.
       expect(topMaterialAt(frontCanvas.calls, 10, 10)).toBe(surfaceMapColorForPalette(mapName, 0));
     }
     // Inside the back opening the mask is punched away: copper height only.
     const backHeight = snapshot.backMaps!.height.source as unknown as RecordingCanvas;
-    expect(heightLevelAt(backHeight.calls, 10, 10)).toBeCloseTo(
+    expect(heightLevelAt(backHeight.calls, canonicalX(10), 10)).toBeCloseTo(
       grayLevel(PREVIEW_HEIGHT_COPPER_COLOR),
       10,
     );
     // Outside it the back copper raises the field under the draping mask.
-    expect(heightLevelAt(backHeight.calls, 4, 4)).toBeCloseTo(
+    expect(heightLevelAt(backHeight.calls, canonicalX(4), 4)).toBeCloseTo(
       grayLevel(PREVIEW_HEIGHT_COPPER_COLOR) + grayLevel(PREVIEW_HEIGHT_MASK_COLOR),
       10,
     );
