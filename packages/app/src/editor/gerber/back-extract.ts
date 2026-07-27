@@ -14,6 +14,12 @@
 // `b-copper` for FR-4, computed from the canonical `panelHoles()` coordinates
 // directly — template coordinates are already front-view fabrication coords,
 // so they are NEVER mirrored, and never derived from #235's front injections.
+// OWNERSHIP SPLIT (#235/#236): holes.ts's `injections` map covers the FRONT
+// roles only (#235's issue scopes it to the front solder-mask/copper); the
+// back roles' hole fabrication lives HERE. holes.ts's #231-era docblock still
+// naming `b-*` roles is stale against that split — if `injectHoleFabrication`
+// ever returns back-role injections too, build-ir's append would double every
+// back hole (build-ir.test.ts's back-row region counts trip on exactly that).
 //
 // The SIGNATURE here is final: build-ir.ts is already wired to it, so #236
 // never edits that shared file. That freeze is also why the small consultation
@@ -88,10 +94,21 @@ export async function extractBackLayers(
   const holes = panelHoles(ctx.panel.format, ctx.panel.hp);
   const layers: IrLayer[] = [];
   for (const role of MATERIAL_BACK_ROLES[ctx.doc.material]) {
-    const inputs =
-      ctx.doc.material === 'fr4' ? await collectBackArtworkInputs(ctx, role, refusals) : [];
-    for (const input of holeFabricationInputs(role, ctx.doc.material, holes, ctx.tolerance)) {
-      inputs.push(input);
+    const artwork =
+      ctx.doc.material === 'fr4'
+        ? await collectBackArtworkInputs(ctx, role, refusals)
+        : { inputs: [], overrun: false };
+    // A role past the Decision 8 ring ceiling has already refused: skip its
+    // boolean tail rather than uniting the very geometry the ceiling exists
+    // to keep out of the kernel — the export aborts at the refusal gate, so
+    // the regions would be discarded anyway. This is the same protection the
+    // front loop gets from build-ir's gate sitting between extraction and
+    // union.
+    const inputs = artwork.overrun ? [] : artwork.inputs;
+    if (!artwork.overrun) {
+      for (const input of holeFabricationInputs(role, ctx.doc.material, holes, ctx.tolerance)) {
+        inputs.push(input);
+      }
     }
     layers.push({
       role,
@@ -218,15 +235,18 @@ async function collectBackArtworkInputs(
   ctx: BackExtractContext,
   role: BackLayerRole,
   refusals: RefusalSink,
-): Promise<KernelInput[]> {
+): Promise<{ inputs: KernelInput[]; overrun: boolean }> {
   const slices = projectPcbLayerSlices(ctx.doc.backLayers);
   if (role === 'b-solder-mask' && slices.solderMaskHidden) {
-    return [
-      {
-        contours: [rectToRing(0, 0, ctx.panel.widthMm, ctx.panel.heightMm)],
-        fillRule: 'nonzero',
-      },
-    ];
+    return {
+      inputs: [
+        {
+          contours: [rectToRing(0, 0, ctx.panel.widthMm, ctx.panel.heightMm)],
+          fillRule: 'nonzero',
+        },
+      ],
+      overrun: false,
+    };
   }
 
   const sliceLayers =
@@ -243,6 +263,7 @@ async function collectBackArtworkInputs(
   };
   const inputs: KernelInput[] = [];
   let ringCount = 0;
+  let overrun = false;
   for (const layer of sliceLayers) {
     if (layer.hidden) continue;
     if (layer.type === 'pattern' && UNION_UNRELIABLE_PATTERN_ID_SET.has(layer.patternType)) {
@@ -264,9 +285,10 @@ async function collectBackArtworkInputs(
     }
     if (ringCount > ctx.limits.maxRingsPerLayer) {
       refusals.add('complexity-overrun', { id: layer.id, name: layer.name });
+      overrun = true;
     }
   }
-  return inputs;
+  return { inputs, overrun };
 }
 
 // ─── Hole fabrication (Decisions 11/12) ─────────────────────────────────────

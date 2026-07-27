@@ -624,17 +624,26 @@ describe('refusal parity through the shared sink (Decision 8)', () => {
     expect(sink.seen[0].layer?.name).toContain('seigaiha');
   });
 
-  it('applies the Decision 8 ring ceiling to back layers', async () => {
+  it('applies the Decision 8 ring ceiling to back layers and skips their boolean tail', async () => {
     const many = Array.from({ length: 6 }, (_, i) =>
       rect({ id: `r${i}`, x: i * 2, y: 0, width: 1, height: 1 }),
     );
     const sink = recordingSink();
-    await extractBackLayers(
-      ctxFor(backDoc({ copper: many }), { maxRingsPerLayer: 3, maxTotalVertices: 2_000_000 }),
+    const layers = await extractBackLayers(
+      ctxFor(backDoc({ copper: many }, { panelHp: HOLE_HP }), {
+        maxRingsPerLayer: 3,
+        maxTotalVertices: 2_000_000,
+      }),
       sink,
     );
     expect(sink.seen.length).toBeGreaterThan(0);
     expect(sink.seen.every((r) => r.code === 'complexity-overrun')).toBe(true);
+    // The ceiling's whole point is keeping runaway geometry out of the boolean
+    // kernel: a refused role skips union+clip entirely (the export aborts at
+    // the refusal gate, so its regions are discarded regardless).
+    expect(layerOf(layers, 'b-copper').regions).toEqual([]);
+    // Other back roles are unaffected — the mask still carries its stadiums.
+    expect(layerOf(layers, 'b-solder-mask').regions).toHaveLength(2);
   });
 
   it('aborts the whole export with front and back problems in ONE collected dialog', async () => {
