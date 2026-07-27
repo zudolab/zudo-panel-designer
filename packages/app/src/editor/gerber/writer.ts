@@ -24,14 +24,7 @@ export interface GerberEmitOptions {
   readonly softwareVersion: string;
 }
 
-export type GerberFileExtension =
-  | '.GTL'
-  | '.GTS'
-  | '.GTO'
-  | '.GBL'
-  | '.GBS'
-  | '.GBO'
-  | '.GKO';
+export type GerberFileExtension = '.GTL' | '.GTS' | '.GTO' | '.GBL' | '.GBS' | '.GBO' | '.GKO';
 
 export interface GerberFile {
   readonly role: IrLayerRole;

@@ -12,12 +12,7 @@
 // never edits that shared file.
 import type { DocState } from '@zpd/core';
 import type { BooleanEngine } from '../geometry-kernel';
-import type {
-  IrLayer,
-  IrPanel,
-  LayerGeometrySource,
-  RefusalSink,
-} from './ir';
+import type { IrLayer, IrPanel, LayerGeometrySource, RefusalSink } from './ir';
 import { MATERIAL_BACK_ROLES, ROLE_FILE_POLARITY } from './ir';
 import type { IrComplexityLimits, IrTolerance } from './tolerance';
 

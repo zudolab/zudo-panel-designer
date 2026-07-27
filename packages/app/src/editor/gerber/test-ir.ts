@@ -182,7 +182,13 @@ export function fixtureAlumiIr(): GerberIr {
   return {
     material: 'alumi',
     panel: FIXTURE_PANEL,
-    layers: [COPPER_LAYER, MASK_LAYER_WITH_OPENINGS, SILKSCREEN_LAYER, BACK_MASK_LAYER, OUTLINE_LAYER],
+    layers: [
+      COPPER_LAYER,
+      MASK_LAYER_WITH_OPENINGS,
+      SILKSCREEN_LAYER,
+      BACK_MASK_LAYER,
+      OUTLINE_LAYER,
+    ],
     drill: EMPTY_DRILL,
   };
 }

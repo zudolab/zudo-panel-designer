@@ -140,9 +140,7 @@ describe('GerberIr contract (Decision 0)', () => {
 
   it('back layers are empty stubs until #236 fills the extraction seam', async () => {
     const ir = ok(await build(doc()));
-    const backRegions = ir.layers
-      .filter((l) => l.role.startsWith('b-'))
-      .map((l) => l.regions);
+    const backRegions = ir.layers.filter((l) => l.role.startsWith('b-')).map((l) => l.regions);
     expect(backRegions).toEqual([[], [], []]);
   });
 

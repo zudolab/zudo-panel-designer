@@ -7,20 +7,10 @@
 // bodies below. The SIGNATURES here are final: build-ir.ts and zip.ts are
 // already wired to them, so #235 never edits either of those shared files.
 import type { PcbMaterial } from '@zpd/core';
-import type {
-  DrillFileIr,
-  DrillIr,
-  DrillPlating,
-  IrLayerRole,
-  IrPanel,
-  IrRegion,
-} from './ir';
+import type { DrillFileIr, DrillIr, DrillPlating, IrLayerRole, IrPanel, IrRegion } from './ir';
 import type { IrTolerance } from './tolerance';
 import type { GerberEmitOptions } from './writer';
-import {
-  GERBER_SOFTWARE_APPLICATION,
-  GERBER_SOFTWARE_VENDOR,
-} from './writer';
+import { GERBER_SOFTWARE_APPLICATION, GERBER_SOFTWARE_VENDOR } from './writer';
 
 export interface HoleFabricationContext {
   readonly material: PcbMaterial;
