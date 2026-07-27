@@ -6,10 +6,10 @@
 // These are DOCUMENT-space coordinates (top-left origin, +y DOWN) and are
 // deliberately NOT pre-flipped — a pre-flipped fixture would make the Y-flip
 // test vacuous (Decision 0.1 / Decision 1).
-import type { GerberIr, IrLayer, IrPanel, IrRegion } from './ir';
+import type { DrillIr, GerberIr, IrLayer, IrPanel, IrRegion } from './ir';
 
-/** 12HP: panelWidthMm(12) = 60.6, PANEL_HEIGHT_MM = 128.5. */
-export const FIXTURE_PANEL: IrPanel = { hp: 12, widthMm: 60.6, heightMm: 128.5 };
+/** 3U 12HP: panelWidthMm(12) = 60.6, panelHeightMm('3U') = 128.5. */
+export const FIXTURE_PANEL: IrPanel = { format: '3U', hp: 12, widthMm: 60.6, heightMm: 128.5 };
 
 export const FIXTURE_OPTIONS = {
   creationDate: '2026-07-25T09:30:00+09:00',
@@ -83,6 +83,43 @@ export const SILKSCREEN_LAYER: IrLayer = {
   regions: [L_SHAPE],
 };
 
+// --- Back layers (#231). Regions are in CANONICAL front-view doc space: the
+// back X-mirror already happened at the build-IR boundary (Decision 13), so a
+// writer that treats these differently from their front counterparts is wrong.
+
+/**
+ * Deliberately the SAME regions as COPPER_LAYER: the writer must emit
+ * byte-identical operations for both — any coordinate difference means it
+ * sneaked in a mirror or flip of its own.
+ */
+export const BACK_COPPER_LAYER: IrLayer = {
+  role: 'b-copper',
+  filePolarity: 'positive',
+  renderAs: 'filled-region',
+  regions: ASYMMETRIC_REGIONS,
+};
+
+/** Empty back mask = full back coverage, same Decision 4 semantics as front. */
+export const BACK_MASK_LAYER: IrLayer = {
+  role: 'b-solder-mask',
+  filePolarity: 'negative',
+  renderAs: 'filled-region',
+  regions: [],
+};
+
+export const BACK_SILKSCREEN_LAYER: IrLayer = {
+  role: 'b-silkscreen',
+  filePolarity: 'positive',
+  renderAs: 'filled-region',
+  regions: [L_SHAPE],
+};
+
+/** Hand-authored empty drill pair, matching holes.ts's emptyDrillIr() shape. */
+export const EMPTY_DRILL: DrillIr = {
+  pth: { plating: 'pth', tools: [], hits: [], slots: [] },
+  npth: { plating: 'npth', tools: [], hits: [], slots: [] },
+};
+
 /** The clipped board outline as a doc-space rectangle, positive signed area. */
 export const PANEL_RECTANGLE: IrRegion = {
   outer: [
@@ -119,9 +156,33 @@ export const MASK_LAYER_EMPTY = maskLayer([]);
 /** Container visible with leaves ⇒ those leaves are the openings, as-is. */
 export const MASK_LAYER_WITH_OPENINGS = maskLayer([SQUARE_WITH_HOLE, ISLAND_TRIANGLE]);
 
+/** The FR-4 fixture: MATERIAL_LAYER_ROLES.fr4 order, empty drill pair. */
 export function fixtureIr(maskLayerOverride: IrLayer = MASK_LAYER_WITH_OPENINGS): GerberIr {
   return {
+    material: 'fr4',
     panel: FIXTURE_PANEL,
-    layers: [COPPER_LAYER, maskLayerOverride, SILKSCREEN_LAYER, OUTLINE_LAYER],
+    layers: [
+      COPPER_LAYER,
+      maskLayerOverride,
+      SILKSCREEN_LAYER,
+      BACK_COPPER_LAYER,
+      BACK_MASK_LAYER,
+      BACK_SILKSCREEN_LAYER,
+      OUTLINE_LAYER,
+    ],
+    drill: EMPTY_DRILL,
+  };
+}
+
+/**
+ * The alumi fixture: MATERIAL_LAYER_ROLES.alumi order — full front set, a
+ * B.Mask-only back (Decision 12), the profile, and the empty drill pair.
+ */
+export function fixtureAlumiIr(): GerberIr {
+  return {
+    material: 'alumi',
+    panel: FIXTURE_PANEL,
+    layers: [COPPER_LAYER, MASK_LAYER_WITH_OPENINGS, SILKSCREEN_LAYER, BACK_MASK_LAYER, OUTLINE_LAYER],
+    drill: EMPTY_DRILL,
   };
 }

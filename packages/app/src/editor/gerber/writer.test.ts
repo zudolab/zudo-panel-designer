@@ -7,6 +7,9 @@ import { describe, expect, it } from 'vitest';
 import { gerberFileSet, gerberLayerText, type GerberEmitOptions } from './writer';
 import type { IrLayer } from './ir';
 import {
+  BACK_COPPER_LAYER,
+  BACK_MASK_LAYER,
+  BACK_SILKSCREEN_LAYER,
   COPPER_LAYER,
   FIXTURE_OPTIONS,
   FIXTURE_PANEL,
@@ -14,6 +17,7 @@ import {
   MASK_LAYER_EMPTY,
   MASK_LAYER_WITH_OPENINGS,
   OUTLINE_LAYER,
+  fixtureAlumiIr,
   fixtureIr,
 } from './test-ir';
 
@@ -24,7 +28,9 @@ const emit = (layer: IrLayer): string => gerberLayerText(layer, FIXTURE_PANEL, O
 const GLOBAL_ATTRIBUTES = [
   '%TF.GenerationSoftware,zudolab,zudo-panel-designer,0.0.0*%',
   '%TF.CreationDate,2026-07-25T09:30:00+09:00*%',
-  '%TF.Part,Other,Decorative front panel artwork - no drill data*%',
+  // #231: the "no drill data" wording retired — the export ships Excellon
+  // drill files now, but copper is still artwork, not nets.
+  '%TF.Part,Other,Decorative front panel - copper is artwork not a circuit*%',
   '%TF.SameCoordinates*%',
 ];
 
@@ -39,7 +45,7 @@ describe('gerberLayerText — copper (.GTL)', () => {
     // of them survives a missing flip, and a doubled flip restores the doc value.
     expect(emit(COPPER_LAYER)).toBe(
       file([
-        'G04 zudo-panel-designer 12HP panel - top copper*',
+        'G04 zudo-panel-designer 3U 12HP panel - top copper*',
         '%FSLAX46Y46*%',
         '%MOMM*%',
         '%TF.FileFunction,Copper,L1,Top*%',
@@ -98,7 +104,7 @@ describe('gerberLayerText — outline (.GKO)', () => {
   it('emits a stroked profile contour with no TF.FilePolarity and no G36', () => {
     expect(emit(OUTLINE_LAYER)).toBe(
       file([
-        'G04 zudo-panel-designer 12HP panel - board outline profile*',
+        'G04 zudo-panel-designer 3U 12HP panel - board outline profile*',
         '%FSLAX46Y46*%',
         '%MOMM*%',
         '%TF.FileFunction,Profile,NP*%',
@@ -123,7 +129,7 @@ describe('gerberLayerText — outline (.GKO)', () => {
 // opposite things on the board. All three rows are required.
 describe('gerberLayerText — solder mask (.GTS) container matrix', () => {
   const maskHeader = [
-    'G04 zudo-panel-designer 12HP panel - top solder mask*',
+    'G04 zudo-panel-designer 3U 12HP panel - top solder mask*',
     '%FSLAX46Y46*%',
     '%MOMM*%',
     '%TF.FileFunction,Soldermask,Top*%',
@@ -192,6 +198,36 @@ describe('gerberLayerText — solder mask (.GTS) container matrix', () => {
     // A complemented mask would have to introduce a panel-sized outer rectangle
     // around the openings. The openings row has none.
     expect(emit(MASK_LAYER_WITH_OPENINGS)).not.toContain('X60600000');
+  });
+});
+
+// #231: the back files. The writer treats a `b-*` role exactly like its front
+// counterpart — the X mirror happened once, at the build-IR boundary
+// (Decision 13), so a writer-side mirror would double-transform.
+describe('gerberLayerText — back files (.GBL/.GBS/.GBO)', () => {
+  it('declares the bottom-side file functions and the L2 half of the stackup', () => {
+    expect(emit(BACK_COPPER_LAYER)).toContain('%TF.FileFunction,Copper,L2,Bot*%');
+    expect(emit(BACK_MASK_LAYER)).toContain('%TF.FileFunction,Soldermask,Bot*%');
+    expect(emit(BACK_SILKSCREEN_LAYER)).toContain('%TF.FileFunction,Legend,Bot*%');
+  });
+
+  it('labels the G04 comment per side', () => {
+    expect(emit(BACK_COPPER_LAYER)).toContain(
+      'G04 zudo-panel-designer 3U 12HP panel - bottom copper*',
+    );
+  });
+
+  it('emits byte-identical operations to the front layer with the same regions — no writer-side mirror', () => {
+    const ops = (text: string): string[] =>
+      text.split('\n').filter((line) => /D0[12]\*$/.test(line));
+    // BACK_COPPER_LAYER deliberately reuses COPPER_LAYER's asymmetric regions:
+    // if the writer mirrored or re-flipped back geometry, some X or Y would
+    // differ. The headers differ (file function, label); the image must not.
+    expect(ops(emit(BACK_COPPER_LAYER))).toEqual(ops(emit(COPPER_LAYER)));
+  });
+
+  it('declares Negative polarity on the back mask, same as the front', () => {
+    expect(emit(BACK_MASK_LAYER)).toContain('%TF.FilePolarity,Negative*%');
   });
 });
 
@@ -268,11 +304,24 @@ describe('large but legal geometry', () => {
 });
 
 describe('gerberFileSet', () => {
-  it('always writes all four files with the download.ts filename convention', () => {
+  it('writes the full FR-4 file set, front-back-outline, with the download.ts filename convention', () => {
     expect(gerberFileSet(fixtureIr(MASK_LAYER_EMPTY), OPTIONS).map((f) => f.filename)).toEqual([
       'zpd-panel-12hp.GTL',
       'zpd-panel-12hp.GTS',
       'zpd-panel-12hp.GTO',
+      'zpd-panel-12hp.GBL',
+      'zpd-panel-12hp.GBS',
+      'zpd-panel-12hp.GBO',
+      'zpd-panel-12hp.GKO',
+    ]);
+  });
+
+  it('writes the alumi file set — no B.Cu, no B.Silk, a B.Mask for the hole openings (Decision 12)', () => {
+    expect(gerberFileSet(fixtureAlumiIr(), OPTIONS).map((f) => f.filename)).toEqual([
+      'zpd-panel-12hp.GTL',
+      'zpd-panel-12hp.GTS',
+      'zpd-panel-12hp.GTO',
+      'zpd-panel-12hp.GBS',
       'zpd-panel-12hp.GKO',
     ]);
   });

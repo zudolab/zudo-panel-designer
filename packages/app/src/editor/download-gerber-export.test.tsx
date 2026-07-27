@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CONFIRM_DIALOG_ID, type ConfirmDialogProps } from './components/confirm-dialog';
 import { closeDialog, getOpenDialog } from './registry/dialogs';
 import { exportGerberZip } from './download';
-import { GERBER_ARTWORK_ONLY_STATEMENT } from './gerber/zip';
+import { GERBER_EXPORT_SCOPE_STATEMENT } from './gerber/zip';
 
 afterEach(() => {
   closeDialog();
@@ -28,7 +28,7 @@ function confirmGateProps(): ConfirmDialogProps {
   return open!.props as ConfirmDialogProps;
 }
 
-describe('exportGerberZip — the artwork-only statement (Decision 2.4)', () => {
+describe('exportGerberZip — the export-scope statement (Decision 2.4)', () => {
   it('is shown, word for word, BEFORE downloadGerberZip/buildGerberIr ever runs', () => {
     const doc: DocState = {
       ...createDefaultDoc(),
@@ -43,8 +43,9 @@ describe('exportGerberZip — the artwork-only statement (Decision 2.4)', () => 
 
     const props = confirmGateProps();
     expect(props.title).toBe('Export Gerber (.zip)');
-    expect(props.message).toContain(GERBER_ARTWORK_ONLY_STATEMENT);
-    expect(props.message).toContain('12HP');
+    expect(props.message).toContain(GERBER_EXPORT_SCOPE_STATEMENT);
+    expect(props.message).toContain('3U 12HP');
+    expect(props.message).toContain('FR-4');
   });
 
   it('a Cancel click aborts before any export happens (no refusal/success dialog follows)', async () => {

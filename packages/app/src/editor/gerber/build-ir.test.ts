@@ -1,7 +1,7 @@
 import {
   createDefaultDoc,
   createPcbLayerContainer,
-  PANEL_HEIGHT_MM,
+  panelHeightMm,
   panelWidthMm,
   type DocState,
   type ImageLayer,
@@ -23,6 +23,7 @@ import { setCuratedFontFileLoaderForTests } from './text-fonts';
 
 const HP = 16;
 const WIDTH = panelWidthMm(HP); // 80.9
+const HEIGHT = panelHeightMm('3U'); // 128.5 — createDefaultDoc()'s format
 
 let engine: BooleanEngine;
 beforeAll(async () => {
@@ -79,16 +80,22 @@ function bounds(ring: IrRing): [number, number, number, number] {
 }
 
 describe('GerberIr contract (Decision 0)', () => {
-  it('emits exactly four layers, in order, with the pinned polarity and render mode', async () => {
+  it('emits the FR-4 role list in MATERIAL_LAYER_ROLES order with the pinned polarity and render mode', async () => {
     const ir = ok(await build(doc()));
-    expect(ir.layers).toHaveLength(4);
+    expect(ir.material).toBe('fr4');
     expect(ir.layers.map((l) => l.role)).toEqual([
       'copper',
       'solder-mask',
       'silkscreen',
+      'b-copper',
+      'b-solder-mask',
+      'b-silkscreen',
       'outline',
     ]);
     expect(ir.layers.map((l) => l.filePolarity)).toEqual([
+      'positive',
+      'negative',
+      'positive',
       'positive',
       'negative',
       'positive',
@@ -98,14 +105,45 @@ describe('GerberIr contract (Decision 0)', () => {
       'filled-region',
       'filled-region',
       'filled-region',
+      'filled-region',
+      'filled-region',
+      'filled-region',
       'stroked-contour',
+    ]);
+  });
+
+  it('emits the alumi role list — a B.Mask back only (Decision 12)', async () => {
+    const ir = ok(await build({ ...doc(), material: 'alumi' }));
+    expect(ir.material).toBe('alumi');
+    expect(ir.layers.map((l) => l.role)).toEqual([
+      'copper',
+      'solder-mask',
+      'silkscreen',
+      'b-solder-mask',
+      'outline',
     ]);
   });
 
   it('carries the panel from the spec table, not the hp × 5.08 fallback', async () => {
     const ir = ok(await build(doc()));
-    expect(ir.panel).toEqual({ hp: HP, widthMm: 80.9, heightMm: PANEL_HEIGHT_MM });
+    expect(ir.panel).toEqual({ format: '3U', hp: HP, widthMm: 80.9, heightMm: HEIGHT });
     expect(ir.panel.heightMm).toBe(128.5);
+  });
+
+  it('carries both drill files, empty while the #235 stub is in place', async () => {
+    const ir = ok(await build(doc()));
+    expect(ir.drill).toEqual({
+      pth: { plating: 'pth', tools: [], hits: [], slots: [] },
+      npth: { plating: 'npth', tools: [], hits: [], slots: [] },
+    });
+  });
+
+  it('back layers are empty stubs until #236 fills the extraction seam', async () => {
+    const ir = ok(await build(doc()));
+    const backRegions = ir.layers
+      .filter((l) => l.role.startsWith('b-'))
+      .map((l) => l.regions);
+    expect(backRegions).toEqual([[], [], []]);
   });
 
   it('keeps geometry in DOCUMENT space, +y down, un-flipped', async () => {
@@ -119,9 +157,9 @@ describe('GerberIr contract (Decision 0)', () => {
 
   it('carries the panel rectangle on the outline layer, positively wound', async () => {
     const ir = ok(await build(doc()));
-    const outline = ir.layers[3];
+    const outline = ir.layers.find((l) => l.role === 'outline')!;
     expect(outline.regions).toHaveLength(1);
-    expect(bounds(outline.regions[0].outer)).toEqual([0, 0, WIDTH, PANEL_HEIGHT_MM]);
+    expect(bounds(outline.regions[0].outer)).toEqual([0, 0, WIDTH, HEIGHT]);
     expect(polygonSignedArea(outline.regions[0].outer)).toBeGreaterThan(0);
     expect(outline.regions[0].holes).toEqual([]);
   });
@@ -204,7 +242,7 @@ describe('profile clipping (Decision 7)', () => {
             expect(p.x).toBeGreaterThanOrEqual(0);
             expect(p.y).toBeGreaterThanOrEqual(0);
             expect(p.x).toBeLessThanOrEqual(WIDTH + 1e-9);
-            expect(p.y).toBeLessThanOrEqual(PANEL_HEIGHT_MM + 1e-9);
+            expect(p.y).toBeLessThanOrEqual(HEIGHT + 1e-9);
           }
         }
       }
@@ -213,7 +251,8 @@ describe('profile clipping (Decision 7)', () => {
 
   it('does not clip the outline layer — it IS the clip boundary', async () => {
     const ir = ok(await build(doc()));
-    expect(area(ir.layers[3].regions[0])).toBeCloseTo(WIDTH * PANEL_HEIGHT_MM, 6);
+    const outline = ir.layers.find((l) => l.role === 'outline')!;
+    expect(area(outline.regions[0])).toBeCloseTo(WIDTH * HEIGHT, 6);
   });
 });
 
@@ -226,8 +265,8 @@ describe('solder mask (Decision 3.2 / Decision 4)', () => {
     const ir = ok(await build(doc({ 'solder-mask': [maskLeaf] }, { maskHidden: true })));
     const mask = ir.layers[1];
     expect(mask.regions).toHaveLength(1);
-    expect(bounds(mask.regions[0].outer)).toEqual([0, 0, WIDTH, PANEL_HEIGHT_MM]);
-    expect(area(mask.regions[0])).toBeCloseTo(WIDTH * PANEL_HEIGHT_MM, 6);
+    expect(bounds(mask.regions[0].outer)).toEqual([0, 0, WIDTH, HEIGHT]);
+    expect(area(mask.regions[0])).toBeCloseTo(WIDTH * HEIGHT, 6);
   });
 
   it('row 2 — visible container with no leaves is empty, meaning full coverage', async () => {
@@ -244,7 +283,7 @@ describe('solder mask (Decision 3.2 / Decision 4)', () => {
     // 100 mm², NOT the panel minus 100 mm². README.md's "positive coverage"
     // prose is stale and inverted (#216); complementing here scraps boards.
     expect(area(mask.regions[0])).toBeCloseTo(100, 6);
-    expect(area(mask.regions[0])).not.toBeCloseTo(WIDTH * PANEL_HEIGHT_MM - 100, 0);
+    expect(area(mask.regions[0])).not.toBeCloseTo(WIDTH * HEIGHT - 100, 0);
   });
 
   it('declares Negative polarity without ever touching the geometry', async () => {
@@ -509,7 +548,7 @@ describe('end-to-end nesting and flattening', () => {
       type: 'shape',
       shape: 'ellipse',
       x: WIDTH / 2 - 64,
-      y: PANEL_HEIGHT_MM / 2 - 64,
+      y: HEIGHT / 2 - 64,
       width: 128,
       height: 128,
       color: 1,
@@ -517,7 +556,7 @@ describe('end-to-end nesting and flattening', () => {
     const ir = ok(await build(doc({ copper: [ellipse] })));
     const ring = ir.layers[0].regions[0].outer;
     const cx = WIDTH / 2;
-    const cy = PANEL_HEIGHT_MM / 2;
+    const cy = HEIGHT / 2;
     let worst = 0;
     for (let i = 0; i < ring.length; i++) {
       const a = ring[i];

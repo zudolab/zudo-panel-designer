@@ -8,7 +8,7 @@
 // and gerber/zip.test.ts), and only the Blob/anchor mechanics below are
 // shared between the two DOM shells.
 import type { ReactNode } from 'react';
-import { PANEL_HEIGHT_MM, panelWidthMm, serializePanelConfig, type DocState } from '@zpd/core';
+import { panelHeightMm, panelWidthMm, serializePanelConfig, type DocState } from '@zpd/core';
 // package.json's `version` field, read at build time via TS's resolveJsonModule
 // — the same string writer.ts's %TF.GenerationSoftware,...*% attribute needs
 // (Decision 3.3), with no separate version constant to keep in sync by hand.
@@ -20,7 +20,10 @@ import { confirmDialog } from './components/confirm-dialog-api';
 // the pattern recorder + the writer + fflate into the MAIN chunk, parsed on
 // every page load for a feature that only runs on an export click. Type-only
 // imports are fine — they erase.
-import { GERBER_ARTWORK_ONLY_STATEMENT } from './gerber/artwork-only-statement';
+import {
+  GERBER_EXPORT_SCOPE_STATEMENT,
+  PCB_MATERIAL_LABEL,
+} from './gerber/artwork-only-statement';
 import type { GerberRefusal } from './gerber/ir';
 import type { GerberEmitOptions } from './gerber/writer';
 import { toastError, toastSuccess } from './registry/toasts';
@@ -74,7 +77,10 @@ export async function downloadGerberZip(doc: DocState): Promise<GerberDownloadRe
   const result = await buildGerberIr(doc);
   if (!result.ok) return result;
   const bytes = gerberZipBytes(result.ir, gerberEmitOptionsNow());
-  triggerDownload(new Blob([bytes], { type: 'application/zip' }), gerberZipFilename(doc.panelHp));
+  triggerDownload(
+    new Blob([bytes], { type: 'application/zip' }),
+    gerberZipFilename(doc.format, doc.material, doc.panelHp),
+  );
   return { ok: true };
 }
 
@@ -100,11 +106,11 @@ function refusalListNode(refusals: readonly GerberRefusal[]): ReactNode {
 /**
  * The user-facing Gerber export flow (#215) both the header button and the
  * "Download Gerber (.zip)" palette command call — a confirm gate stating
- * Decision 2.4's artwork-only limitation BEFORE the download happens, then
+ * Decision 2.4's export-scope statement BEFORE the download happens, then
  * `downloadGerberZip`, then — if `buildGerberIr` refused — a dialog naming
  * EVERY refusal together (Decision 8: never a console warning, never a silent
  * skip). Reuses confirm-dialog.tsx (via its imperative `confirmDialog()`
- * helper) for both steps rather than a bespoke dialog: the artwork-only
+ * helper) for both steps rather than a bespoke dialog: the export-scope
  * notice is exactly what that component is for — a message the user must see
  * before an action proceeds — and the refusal list is the same primitive with
  * `children` standing in for a free-form body, so there is a single owner of
@@ -129,7 +135,7 @@ export async function exportGerberZip(doc: DocState): Promise<void> {
   const widthMm = panelWidthMm(doc.panelHp);
   const confirmed = await confirmDialog({
     title: 'Export Gerber (.zip)',
-    message: `${GERBER_ARTWORK_ONLY_STATEMENT} Panel: ${doc.panelHp}HP, ${widthMm} × ${PANEL_HEIGHT_MM} mm.`,
+    message: `${GERBER_EXPORT_SCOPE_STATEMENT} Panel: ${doc.format} ${doc.panelHp}HP, ${widthMm} × ${panelHeightMm(doc.format)} mm, ${PCB_MATERIAL_LABEL[doc.material]}.`,
     confirmLabel: 'Export .zip',
     cancelLabel: 'Cancel',
   });
