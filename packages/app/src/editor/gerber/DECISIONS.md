@@ -454,9 +454,14 @@ download happens**:
 > This export contains fabrication data for a Takazudo blank panel: copper,
 > solder mask, silkscreen, the board outline, and Excellon drill files for the
 > panel screw holes (FR-4 panels also carry back-side files). The copper is
-> decorative artwork, not a functional circuit. Hole and back-side support is
-> still landing across the material-holes epic, so drill and back-side content
-> may be incomplete in this build.
+> decorative artwork, not a functional circuit.
+
+The statement previously ended with a "still landing across the material-holes
+epic ... may be incomplete in this build" caveat. That was accurate while #231
+was the stub, and expired when #235/#236/#238 completed drill and back-side
+output. It is gone from the constant and from this pin — the string ships
+inside the fab-house zip's README.txt, where an untrue incompleteness warning
+is worse than none.
 
 The constant is `GERBER_EXPORT_SCOPE_STATEMENT` (renamed from
 `GERBER_ARTWORK_ONLY_STATEMENT`; the `artwork-only-statement.ts` module
@@ -1057,8 +1062,22 @@ drill content is exactly the failure mode Decision 8 exists to prevent.
 
 **Hole artwork is injected, not extracted.** `injectHoleFabrication(...)`
 (`gerber/holes.ts`) returns, per layer role, regions build-ir APPENDS after
-the artwork union+clip: mask openings on `solder-mask`/`b-solder-mask` (both
-materials), copper rings on `copper`/`b-copper` (FR-4 only). Appended regions
+the artwork union+clip: mask openings on `solder-mask` (both materials),
+copper rings on `copper` (FR-4 only) — **FRONT roles only**. The back roles
+(`b-solder-mask`/`b-copper`) are NOT injected here; #236's
+`gerber/back-extract.ts` owns them and derives the same holes from the
+canonical `panelHoles()` coordinates itself. build-ir appends BOTH seams, so
+injecting the back roles from here too would double every back hole.
+
+> Corrected after the #235/#236 merge. This paragraph previously named
+> `b-solder-mask`/`b-copper` here, dating from the #231 stub era before the
+> ownership split. The #235 agent followed this text over its own issue spec
+> and did exactly that; it was caught at merge only because #236's
+> `back-extract.ts` header documented the split and predicted the failure.
+> `build-ir.test.ts`'s back-row region counts are the tripwire — they read 4,
+> and would read 8 if the front seam regressed.
+
+Appended regions
 follow Decision 0's ring rules and paint after the artwork — safe, because a
 ring region whose hole is the drill barrel only ever `%LPC*%`-clears copper
 that is drilled away regardless. The #231 stub returns no injections and an
@@ -1089,10 +1108,17 @@ a real, user-editable back (`doc.backLayers`, projected by #236).
   entry per role in that order, and the zip manifest follows it entry for
   entry (Decision 2.1).
 
-The alumi `b-solder-mask` layer stays EMPTY at extraction permanently: its
-screw-hole openings are #235's injections (Decision 11), not #236's
-extraction. `extractBackLayers` returns it with zero regions even after #236
-is done.
+The alumi `b-solder-mask` layer carries the screw-hole openings and nothing
+else (Decision 12) — that exact data is what produced bare-metal backs on the
+real reference orders. Those openings come from #236's `extractBackLayers`,
+which derives them from the canonical `panelHoles()` coordinates, NOT from
+#235's front injections.
+
+> Corrected after the #235/#236 merge. This paragraph previously claimed the
+> layer "stays EMPTY at extraction permanently" and that its openings were
+> #235's injections — the exact inverse of what shipped, and contradicted by
+> `build-ir.test.ts`'s "fills the alumi B.Mask with the screw-hole openings
+> only (Decision 12)" case, which asserts four positive-area regions.
 
 ---
 

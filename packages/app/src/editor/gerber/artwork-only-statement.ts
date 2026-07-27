@@ -17,8 +17,14 @@
 // importable and free, while the pipeline stays lazy.
 import type { PcbMaterial } from '@zpd/core';
 
+// The trailing "still landing across the material-holes epic / may be
+// incomplete in this build" caveat was TRUE when #231 wrote it mid-epic and
+// expired silently when #235/#236/#238 completed drill and back-side output.
+// It is removed rather than reworded: this string is embedded in README.txt
+// inside the fab-house zip, and telling a fab house the drill data "may be
+// incomplete" when it is complete invites them to question a good order.
 export const GERBER_EXPORT_SCOPE_STATEMENT =
-  'This export contains fabrication data for a Takazudo blank panel: copper, solder mask, silkscreen, the board outline, and Excellon drill files for the panel screw holes (FR-4 panels also carry back-side files). The copper is decorative artwork, not a functional circuit. Hole and back-side support is still landing across the material-holes epic, so drill and back-side content may be incomplete in this build.';
+  'This export contains fabrication data for a Takazudo blank panel: copper, solder mask, silkscreen, the board outline, and Excellon drill files for the panel screw holes (FR-4 panels also carry back-side files). The copper is decorative artwork, not a functional circuit.';
 
 /** User-facing material names for the confirm gate and README.txt. */
 export const PCB_MATERIAL_LABEL: Record<PcbMaterial, string> = {
