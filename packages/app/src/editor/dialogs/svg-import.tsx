@@ -23,6 +23,7 @@ import {
   PALETTE,
   pathBbox,
   pcbLayerRoleForColor,
+  withStackForSide,
   type ColorIndex,
   type PathLayer,
 } from '@zpd/core';
@@ -230,8 +231,9 @@ function SvgImportDialog({ props, close, ctx }: DialogProps<SvgImportDialogProps
     // only defends against buildPathLayers somehow disagreeing with itself.
     if (!result.ok) return;
     // One commit = one undo entry. Source-color mappings now select physical
-    // PCB destinations, so a multicolor SVG fans out across fixed containers.
-    let layers = ctx.doc.layers;
+    // PCB destinations, so a multicolor SVG fans out across fixed containers
+    // of the ACTIVE side's stack (#233).
+    let layers = ctx.activeStack;
     for (const layer of result.layers) {
       const color = layer.fill ?? layer.stroke;
       if (color === null) return;
@@ -239,7 +241,7 @@ function SvgImportDialog({ props, close, ctx }: DialogProps<SvgImportDialogProps
       if (inserted === layers) return;
       layers = inserted;
     }
-    ctx.commit({ ...ctx.doc, layers });
+    ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, layers));
     ctx.selectIds(result.layers.map((layer) => layer.id));
     toastSuccess(`Imported ${result.layers.length} shape${result.layers.length === 1 ? '' : 's'}`);
     close();
@@ -320,8 +322,8 @@ function SvgImportDialog({ props, close, ctx }: DialogProps<SvgImportDialogProps
               there's no copper) beneath. Routing itself is unchanged (black
               still -> solder-mask container) — this is copy only. */}
           <p className="mb-2 text-[11px] text-neutral-500">
-            Shapes mapped to Solder mask open the mask there, revealing copper — or bare substrate
-            — beneath.
+            Shapes mapped to Solder mask open the mask there, revealing copper — or bare substrate —
+            beneath.
           </p>
           <div className="flex gap-4">
             {/* Capped + scrollable: the extractor allows up to MAX_COLORS-1

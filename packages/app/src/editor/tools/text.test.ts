@@ -43,6 +43,10 @@ function stubCtx(doc: DocState, selectedIds: readonly string[] = []): ToolContex
     requestRepaint: vi.fn(),
     openDialog: vi.fn(),
     closeDialog: vi.fn(),
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
 }
 

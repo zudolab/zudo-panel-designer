@@ -82,6 +82,10 @@ function stubCtx(overrides: ToolFixtureOverrides = {}): ToolContext {
     closeDialog: vi.fn(),
     ...overrides,
     ...(overrides.doc ? { doc: canonicalDoc(overrides.doc) } : {}),
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return withLiveFlatLayers(ctx);
 }
@@ -814,6 +818,43 @@ describe('chordless commands (zoom / align / file / text) have run() wired to a 
       .find((c) => c.id === 'file-download-gerber')!
       .run(ctx);
     expect(exportGerberZip).toHaveBeenCalledWith(ctx.doc);
+  });
+});
+
+describe('side-switch commands (#233) — palette-only Front/Back with material gating', () => {
+  it('both are chordless View commands wired to ctx.setActiveSide', () => {
+    const ctx = stubCommandCtx({ setActiveSide: vi.fn() });
+    const front = allCommands().find((c) => c.id === 'view-switch-side-front')!;
+    const back = allCommands().find((c) => c.id === 'view-switch-side-back')!;
+    expect(front.category).toBe('View');
+    expect(back.category).toBe('View');
+    expect(front.chord).toBeUndefined();
+    expect(back.chord).toBeUndefined();
+
+    back.run(ctx);
+    expect(ctx.setActiveSide).toHaveBeenCalledWith('back');
+    front.run(ctx);
+    expect(ctx.setActiveSide).toHaveBeenCalledWith('front');
+  });
+
+  it('Switch to Back is enabled only on fr4, and only while Front is active', () => {
+    const back = allCommands().find((c) => c.id === 'view-switch-side-back')!;
+    // A doc override routes through canonicalDoc, whose default material is
+    // fr4 (the bare stub literal carries no material field at all).
+    const fr4Doc: DocFixture = { panelHp: 12, guides: [], layers: [] };
+    expect(back.isEnabled(stubCommandCtx({ doc: fr4Doc }))).toBe(true);
+    expect(back.isEnabled(stubCommandCtx({ doc: fr4Doc, activeSide: 'back' }))).toBe(false);
+    expect(
+      back.isEnabled(
+        stubCommandCtx({ doc: { panelHp: 12, guides: [], layers: [], material: 'alumi' } }),
+      ),
+    ).toBe(false);
+  });
+
+  it('Switch to Front is enabled only while Back is active', () => {
+    const front = allCommands().find((c) => c.id === 'view-switch-side-front')!;
+    expect(front.isEnabled(stubCommandCtx())).toBe(false);
+    expect(front.isEnabled(stubCommandCtx({ activeSide: 'back' }))).toBe(true);
   });
 });
 

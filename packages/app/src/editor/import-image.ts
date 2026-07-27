@@ -3,7 +3,7 @@
 // panel), ONE commit, select the new layer. Extracted from add-actions/
 // add-image.ts (behavior-identical) so the clipboard-paste and drop-import
 // subs can share it instead of re-deriving the scale-to-fit math.
-import { mintId, snapToGrid, type ImageLayer } from '@zpd/core';
+import { mintId, snapToGrid, stackForSide, withStackForSide, type ImageLayer } from '@zpd/core';
 import { insertNewNodeRelativeToSelection } from './insert-relative';
 import type { ToolContext } from './types';
 
@@ -15,6 +15,12 @@ import type { ToolContext } from './types';
 const DEFAULT_ROLE = 'copper';
 
 export function importImageFile(file: File, ctx: ToolContext): Promise<void> {
+  // Captured at CALL time, not at decode completion (#233 codex review):
+  // FileReader + the natural-size probe are async, so a user who switches
+  // faces mid-decode would otherwise have the image silently land on
+  // whatever side is active when onload fires — not the one the import
+  // started on.
+  const side = ctx.activeSide;
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -34,17 +40,18 @@ export function importImageFile(file: File, ctx: ToolContext): Promise<void> {
           width: snapToGrid(probe.naturalWidth * scale),
           height: snapToGrid(probe.naturalHeight * scale),
         };
+        const stack = stackForSide(ctx.doc, side);
         const nextLayers = insertNewNodeRelativeToSelection(
-          ctx.doc.layers,
+          stack,
           ctx.selectedIds,
           layer,
           DEFAULT_ROLE,
         );
-        if (nextLayers === ctx.doc.layers) {
+        if (nextLayers === stack) {
           resolve(); // refused: commit/select nothing (#191)
           return;
         }
-        ctx.commit({ ...ctx.doc, layers: nextLayers });
+        ctx.commit(withStackForSide(ctx.doc, side, nextLayers));
         ctx.select(layer.id);
         resolve();
       };

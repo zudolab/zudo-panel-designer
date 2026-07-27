@@ -26,8 +26,13 @@ export function replaceDoc(nextDoc: DocState, ctx: ToolContext): void {
   ctx.setActiveSide('front');
   // projectFlatLayers (not ctx.flatLayers): ctx.doc still reads the OLD doc
   // until React re-renders after reset(); the eviction must see the INCOMING
-  // doc's leaves. Also warms the projection cache for nextDoc's tree.
-  ctx.evictImageCache(projectFlatLayers(nextDoc.layers));
+  // doc's leaves. BOTH sides (#233): the image cache holds back-stack rasters
+  // too, so reconciling against front-only leaves would evict live back
+  // images. Also warms the projection cache for nextDoc's trees.
+  ctx.evictImageCache([
+    ...projectFlatLayers(nextDoc.layers),
+    ...projectFlatLayers(nextDoc.backLayers),
+  ]);
 }
 
 // New Panel (issue #76): confirm-then-replace with the default starter doc.

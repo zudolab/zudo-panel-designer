@@ -21,9 +21,13 @@
 // bit-identical to this row's captured session (both come from the same
 // pre-gesture doc).
 import { useMemo, useState } from 'react';
-import type { DocState } from '@zpd/core';
+import { stackForSide, withStackForSide, type DocState, type PanelSide } from '@zpd/core';
 import { projectFlatLayers } from '../flat-projection';
-import { bakeMultiRotate, captureMultiRotateSession, type MultiRotateSession } from '../multi-rotate';
+import {
+  bakeMultiRotate,
+  captureMultiRotateSession,
+  type MultiRotateSession,
+} from '../multi-rotate';
 import { resolveSelectionLeaves, resolveSelectionOverlayMode } from '../selection-resolve';
 import type { ToolContext } from '../types';
 import { Field } from './inspector-ui';
@@ -45,6 +49,9 @@ export interface RotateSelectionPanelProps {
   // row and its doc always come from the same commit — child-fresh/
   // parent-stale cannot happen, and no timing/provenance heuristics needed.
   doc: DocState;
+  // Committed alongside `doc` (#233) — the panel reads/writes the ACTIVE
+  // side's stack, with the same freshness contract as the doc prop.
+  activeSide: PanelSide;
   selectedIds: readonly string[];
 }
 
@@ -54,8 +61,13 @@ function selectionKey(ids: readonly string[]): string {
   return ids.join(' ');
 }
 
-export function RotateSelectionPanel({ ctx, doc, selectedIds }: RotateSelectionPanelProps) {
-  const tree = doc.layers;
+export function RotateSelectionPanel({
+  ctx,
+  doc,
+  activeSide,
+  selectedIds,
+}: RotateSelectionPanelProps) {
+  const tree = stackForSide(doc, activeSide);
   // Derived from the committed tree, NOT ctx.flatLayers (docRef-lagged like
   // ctx.doc — see the doc prop's comment): session snapshots come from this
   // projection, so it must be exactly as fresh as the tree it projects.
@@ -120,7 +132,7 @@ export function RotateSelectionPanel({ ctx, doc, selectedIds }: RotateSelectionP
       ctx.beginGesture();
     }
     const baked = bakeMultiRotate(tree, session, deltaDeg);
-    ctx.replace({ ...doc, layers: baked });
+    ctx.replace(withStackForSide(doc, activeSide, baked));
   };
 
   // Enter/blur: the gesture entry (if one opened) stands as-is — zpd-native,

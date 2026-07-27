@@ -27,6 +27,7 @@ import {
   maximalSelectedRoots,
   maxSubtreeDepth,
   ungroupPcbNode,
+  withStackForSide,
   type AlignType,
   type DistributeAxis,
   type PcbLayerStack,
@@ -239,7 +240,7 @@ function alignCommand(id: string, label: string, type: AlignType): CommandDef {
     label,
     category: 'Align',
     run: (ctx) => applyAlign(ctx, ctx.selectedIds, type, ALIGN_REFERENCE),
-    isEnabled: (ctx) => canAlign(ctx.doc, ctx.selectedIds, ALIGN_REFERENCE),
+    isEnabled: (ctx) => canAlign(ctx.activeStack, ctx.selectedIds, ALIGN_REFERENCE),
   };
 }
 
@@ -249,7 +250,7 @@ function distributeCommand(id: string, label: string, axis: DistributeAxis): Com
     label,
     category: 'Align',
     run: (ctx) => applyDistribute(ctx, ctx.selectedIds, axis, ALIGN_REFERENCE),
-    isEnabled: (ctx) => canDistribute(ctx.doc, ctx.selectedIds, ALIGN_REFERENCE),
+    isEnabled: (ctx) => canDistribute(ctx.activeStack, ctx.selectedIds, ALIGN_REFERENCE),
   };
 }
 
@@ -275,7 +276,7 @@ function pathfinderCommand(op: PathfinderOp): CommandDef {
       void dispatchPathfinderOp(createPathfinderRunner(ctx), op);
     },
     isEnabled: (ctx) =>
-      canApplyPathfinderOp(op, resolvePathfinderInputs(ctx.doc.layers, ctx.selectedIds).length),
+      canApplyPathfinderOp(op, resolvePathfinderInputs(ctx.activeStack, ctx.selectedIds).length),
   };
 }
 
@@ -365,12 +366,15 @@ const STATIC_COMMANDS: CommandDef[] = [
       // MAXIMAL roots (a descendant of a selected ancestor drops out), then
       // deleteNodeById cascades each root — a group id deletes its whole
       // subtree — wherever it sits in the tree, all in this ONE commit.
-      const roots = maximalPcbSelectedRoots(ctx.doc.layers, ids);
+      const roots = maximalPcbSelectedRoots(ctx.activeStack, ids);
       if (roots.length === 0) return;
-      ctx.commit({
-        ...ctx.doc,
-        layers: roots.reduce((tree, id) => deletePcbNodeById(tree, id), ctx.doc.layers),
-      });
+      ctx.commit(
+        withStackForSide(
+          ctx.doc,
+          ctx.activeSide,
+          roots.reduce((tree, id) => deletePcbNodeById(tree, id), ctx.activeStack),
+        ),
+      );
       ctx.selectIds([]);
     },
     isEnabled: ALWAYS_ENABLED,
@@ -388,21 +392,17 @@ const STATIC_COMMANDS: CommandDef[] = [
     preventDefault: true,
     alwaysClaimsChord: true,
     run: (ctx) => {
-      if (!isGroupableRootSelection(ctx.doc.layers, ctx.selectedIds)) return;
-      const { stack: tree, group } = groupPcbNodes(ctx.doc.layers, ctx.selectedIds, 'Group');
+      if (!isGroupableRootSelection(ctx.activeStack, ctx.selectedIds)) return;
+      const { stack: tree, group } = groupPcbNodes(ctx.activeStack, ctx.selectedIds, 'Group');
       // groupNodes mints and returns the group actually inserted into the
       // tree — selecting anything else (e.g. a locally-fabricated id) would
       // point at a node that was never inserted (the exact bug #148's
       // GroupNodesResult contract closes off; see group-ops.ts).
       if (!group) return;
-      ctx.commit({ ...ctx.doc, layers: tree });
+      ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, tree));
       ctx.selectIds([group.id]);
     },
-    isEnabled: (ctx) =>
-      isGroupableRootSelection(
-        ctx.doc.layers,
-        ctx.selectedIds,
-      ),
+    isEnabled: (ctx) => isGroupableRootSelection(ctx.activeStack, ctx.selectedIds),
   },
   {
     id: 'edit-ungroup',
@@ -419,7 +419,7 @@ const STATIC_COMMANDS: CommandDef[] = [
       // Looked up in the TREE, not ctx.flatLayers — a flat-projection lookup
       // never resolves a group id (groups aren't leaves), which made the
       // reference port's ungroup a silent no-op. See group-ops.ts.
-      const tree = ctx.doc.layers;
+      const tree = ctx.activeStack;
       const groupIds = ctx.selectedIds.filter((id) => {
         const found = findPcbNodeById(tree, id);
         return found !== null && isGroupNode(found.node);
@@ -444,12 +444,12 @@ const STATIC_COMMANDS: CommandDef[] = [
       // real released leaves/groups, not a stale intermediate id.
       const dissolving = new Set(groupIds);
       const finalSelection = [...new Set(released.filter((id) => !dissolving.has(id)))];
-      ctx.commit({ ...ctx.doc, layers: nextTree });
+      ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextTree));
       ctx.selectIds(finalSelection);
     },
     isEnabled: (ctx) =>
       ctx.selectedIds.some((id) => {
-        const found = findPcbNodeById(ctx.doc.layers, id);
+        const found = findPcbNodeById(ctx.activeStack, id);
         return found !== null && isGroupNode(found.node);
       }),
   },
@@ -508,6 +508,26 @@ const STATIC_COMMANDS: CommandDef[] = [
     category: 'View',
     run: (ctx) => ctx.openDialog('preview-3d'),
     isEnabled: ALWAYS_ENABLED,
+  },
+  // Front/Back face switching (#233) — chordless (palette-only), the palette
+  // twin of the SideTabs UI above the canvas. run() goes through the same
+  // ctx.setActiveSide lifecycle (clears selection + tool draft on an actual
+  // switch; same-side is a strict no-op). "Switch to Back" is additionally
+  // gated on the material: alumi panels are front-only (the Back tab isn't
+  // rendered for them either — see components/side-tabs.tsx).
+  {
+    id: 'view-switch-side-front',
+    label: 'Switch to Front',
+    category: 'View',
+    run: (ctx) => ctx.setActiveSide('front'),
+    isEnabled: (ctx) => ctx.activeSide !== 'front',
+  },
+  {
+    id: 'view-switch-side-back',
+    label: 'Switch to Back',
+    category: 'View',
+    run: (ctx) => ctx.setActiveSide('back'),
+    isEnabled: (ctx) => ctx.doc.material === 'fr4' && ctx.activeSide !== 'back',
   },
 
   // ── Align ─────────────────────────────────────────────────────────────

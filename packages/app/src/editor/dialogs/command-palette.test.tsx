@@ -65,6 +65,10 @@ function stubCommandCtx(overrides: Partial<CommandContext> = {}): CommandContext
     zoomIn: vi.fn(),
     zoomOut: vi.fn(),
     zoomFit: vi.fn(),
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as CommandContext).doc.layers;
+    },
   } as unknown as CommandContext;
   return Object.assign(base, overrides);
 }

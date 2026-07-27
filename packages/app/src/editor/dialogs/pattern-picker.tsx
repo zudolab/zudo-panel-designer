@@ -20,6 +20,7 @@ import {
   patternCoverGeometry,
   pcbLayerDefinition,
   updatePcbNodeById,
+  withStackForSide,
   type PatternLayer,
 } from '@zpd/core';
 import { insertNewNodeRelativeToSelection } from '../insert-relative';
@@ -164,12 +165,12 @@ function PatternPickerDialog({ props, close, ctx }: DialogProps<PatternPickerPro
     if (props.layerId) {
       const layerId = props.layerId;
       // Recursive write (#150): the pattern leaf may be nested inside a group.
-      const nextLayers = updatePcbNodeById(ctx.doc.layers, layerId, (l) =>
+      const nextLayers = updatePcbNodeById(ctx.activeStack, layerId, (l) =>
         !isGroupNode(l) && l.type === 'pattern'
           ? { ...l, patternType: gen.name, params: defaultParams(gen.name) }
           : l,
       );
-      ctx.commit({ ...ctx.doc, layers: nextLayers });
+      ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextLayers));
     } else {
       const layer: PatternLayer = {
         id: mintId('pattern'),
@@ -186,16 +187,16 @@ function PatternPickerDialog({ props, close, ctx }: DialogProps<PatternPickerPro
         ...patternCoverGeometry(ctx.panel),
       };
       const nextLayers = insertNewNodeRelativeToSelection(
-        ctx.doc.layers,
+        ctx.activeStack,
         ctx.selectedIds,
         layer,
         DEFAULT_ROLE,
       );
-      if (nextLayers === ctx.doc.layers) {
+      if (nextLayers === ctx.activeStack) {
         close(); // refused: commit/select nothing (#191), still close the dialog
         return;
       }
-      ctx.commit({ ...ctx.doc, layers: nextLayers });
+      ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextLayers));
       ctx.select(layer.id);
     }
     close();

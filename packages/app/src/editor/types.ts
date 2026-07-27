@@ -27,12 +27,12 @@ export interface ToolContext {
   // selected.
   readonly selectedId: string | null;
   readonly selectedLayer: Layer | null;
-  // The flat Layer[] projection of doc.layers (#150): DFS leaf order — the
-  // z-order the renderer paints — with ancestor `hidden` folded down. LIVE
-  // like `doc`, and identity-STABLE per committed tree (memoized in
-  // flat-projection.ts): text geometry treats array identity as
-  // document-incarnation state, so read the flat view HERE — never
-  // re-flatten doc.layers ad hoc.
+  // The flat Layer[] projection of the ACTIVE side's stack (#150, side-scoped
+  // by #233): DFS leaf order — the z-order the renderer paints — with
+  // ancestor `hidden` folded down. LIVE like `doc`, and identity-STABLE per
+  // committed tree (memoized in flat-projection.ts): text geometry treats
+  // array identity as document-incarnation state, so read the flat view
+  // HERE — never re-flatten a stack ad hoc.
   readonly flatLayers: readonly Layer[];
   // Which panel face is being viewed/edited (#230) — non-persisted view
   // state owned by Editor.tsx (same pattern as showOutsidePanel), default

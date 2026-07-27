@@ -55,6 +55,10 @@ function treeCtx(layers: LayerNode[], selectedIds: readonly string[] = []) {
     commit,
     select: vi.fn(),
     selectIds,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return { ctx, commit, selectIds };
 }

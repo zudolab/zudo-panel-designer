@@ -27,6 +27,7 @@ import {
   ungroupPcbNode,
   updatePcbNodeById,
   walkLayerNodes,
+  withStackForSide,
   type ColorIndex,
   type GroupNode,
   type Layer,
@@ -171,7 +172,7 @@ function collectDescendantIds(stack: PcbLayerStack, id: string): Set<string> {
 }
 
 export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerListProps) {
-  const stack = committedStack ?? ctx.doc.layers;
+  const stack = committedStack ?? ctx.activeStack;
   const flatById = useMemo(
     () => new Map(projectPcbLayerStack(stack).map((layer) => [layer.id, layer])),
     [stack],
@@ -319,7 +320,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
     // no phantom history entry.
     if (nextStack === stack) return;
     // One commit for the whole multi-root batch = ONE history entry.
-    ctx.commit({ ...ctx.doc, layers: nextStack });
+    ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextStack));
   };
 
   const handleRowDrop = (e: DragEvent<HTMLElement>, rowId: string, zone: DropZone) => {
@@ -462,7 +463,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
     if (!slot) return;
     const next = movePcbNode(stack, id, slot.role, slot.parentId, slot.index + dir);
     if (next !== stack) {
-      ctx.commit({ ...ctx.doc, layers: next });
+      ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, next));
       return;
     }
     // moveNodeToParent returned the SAME reference: the node is already at
@@ -474,7 +475,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
     if (!crossSlot) return;
     const crossed = movePcbNode(stack, id, crossSlot.role, crossSlot.parentId, crossSlot.index);
     if (crossed === stack) return;
-    ctx.commit({ ...ctx.doc, layers: crossed });
+    ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, crossed));
   };
 
   const remove = (id: string) => {
@@ -502,7 +503,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
         ? currentFocusId
         : (nextVisibleRowIds[Math.min(renderedIndex, nextVisibleRowIds.length - 1)] ?? null);
 
-    ctx.commit({ ...ctx.doc, layers: nextStack });
+    ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextStack));
     setFocusedRowId(nextFocusId);
     if (nextFocusId) selectionButtonRefs.current.get(nextFocusId)?.focus();
     // Multi-capable drop-from-selection (#44): drop every removed id (the
@@ -518,7 +519,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
     const childIds = found.node.children.map((child) => child.id);
     const nextStack = ungroupPcbNode(stack, groupId);
     if (nextStack === stack) return;
-    ctx.commit({ ...ctx.doc, layers: nextStack });
+    ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextStack));
     // Releasing a selected group's children in its place (#153): the group
     // id no longer exists, so swap it for the children it just released —
     // maximalSelectedRoots re-collapses the result in case any of those
@@ -534,7 +535,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
     // Recursive toggle (#148/#150): flips the node's OWN hidden flag at any
     // depth — a group's toggle folds to every descendant at flatten time.
     const next = updatePcbNodeById(stack, id, (node) => ({ ...node, hidden: !node.hidden }));
-    if (next !== stack) ctx.commit({ ...ctx.doc, layers: next });
+    if (next !== stack) ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, next));
   };
 
   const duplicate = (id: string) => {
@@ -543,13 +544,13 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
     // one undo entry. Select the clone so the copy becomes the active layer.
     const result = clonePcbNode(stack, id);
     if (result.stack === stack || !result.node) return;
-    ctx.commit({ ...ctx.doc, layers: result.stack });
+    ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, result.stack));
     ctx.selectIds([result.node.id]);
   };
 
   const toggleMaterialVisibility = (role: PcbLayerRole) => {
     const next = togglePcbLayerHidden(stack, role);
-    if (next !== stack) ctx.commit({ ...ctx.doc, layers: next });
+    if (next !== stack) ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, next));
   };
 
   const startLeafRename = (layer: Layer) => {
@@ -564,7 +565,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
     // An empty name is a valid stored value — the row display already falls
     // back to layer.type (see the span below), same as the initial data.
     const next = updatePcbNodeById(stack, id, (node) => ({ ...node, name: draftName.trim() }));
-    if (next !== stack) ctx.commit({ ...ctx.doc, layers: next });
+    if (next !== stack) ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, next));
     setRenamingId(null);
   };
 
@@ -589,7 +590,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
       const trimmed = draftName.trim();
       if (trimmed !== group.name) {
         const next = updatePcbNodeById(stack, group.id, (node) => ({ ...node, name: trimmed }));
-        if (next !== stack) ctx.commit({ ...ctx.doc, layers: next });
+        if (next !== stack) ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, next));
       }
     }
     setRenamingId(null);
@@ -886,11 +887,7 @@ export function LayerList({ ctx, stack: committedStack, selectedIds }: LayerList
                 toggle(group.id);
               }}
             >
-              {group.hidden ? (
-                <EyeOff className="h-3.5 w-3.5" />
-              ) : (
-                <Eye className="h-3.5 w-3.5" />
-              )}
+              {group.hidden ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
             </button>
             <button
               title="Ungroup"

@@ -31,6 +31,7 @@ import {
   isGroupNode,
   parseLayerNodeFragment,
   translatePathLayer,
+  withStackForSide,
   type MaterialLayerNode,
   type LayerNode,
   type PcbLayerRole,
@@ -76,11 +77,11 @@ export interface UseClipboardReturn {
 // Pattern squares are included since #97 (multiple pattern squares are
 // legitimately useful, so copy/cut/paste/duplicate treat them like any
 // layer); select-all below is the ONE deliberate pattern exception left.
-// Each returned node is a LIVE reference into ctx.doc.layers — callers must
-// not mutate it directly (captureToClipboard deep-clones via JSON round-trip
-// before stashing it).
+// Each returned node is a LIVE reference into the ACTIVE side's stack (#233)
+// — callers must not mutate it directly (captureToClipboard deep-clones via
+// JSON round-trip before stashing it).
 function copyableSelection(ctx: ToolContext): MaterialLayerNode[] {
-  const tree = ctx.doc.layers;
+  const tree = ctx.activeStack;
   const rootIds = maximalPcbSelectedRoots(tree, ctx.selectedIds);
   const nodes: MaterialLayerNode[] = [];
   for (const id of rootIds) {
@@ -236,7 +237,10 @@ function insertClones(ctx: ToolContext, sourceNodes: readonly MaterialLayerNode[
     material,
     node: offsetNodeLeaves(cloneNodeWithFreshIds(node), CASCADE_OFFSET_MM),
   }));
-  let layers = ctx.doc.layers;
+  // Paste/duplicate land on the ACTIVE side (#233): the envelope only tags
+  // materials, never a side — a front copy pasted while Back is active lands
+  // on the back stack, by design.
+  let layers = ctx.activeStack;
   for (const { material, node } of clones) {
     const inserted = insertPcbNode(layers, material, node);
     // A batch must never partially mutate (e.g. a malicious fragment with an
@@ -244,7 +248,7 @@ function insertClones(ctx: ToolContext, sourceNodes: readonly MaterialLayerNode[
     if (inserted === layers) return;
     layers = inserted;
   }
-  ctx.commit({ ...ctx.doc, layers });
+  ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, layers));
   ctx.selectIds(clones.map(({ node }) => node.id));
 }
 
@@ -273,13 +277,16 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     // cascades away with its whole subtree (deleting only the copied leaves
     // would leave an empty group shell behind), and a descendant of a
     // selected ancestor drops out rather than double-deleting.
-    ctx.commit({
-      ...ctx.doc,
-      layers: maximalPcbSelectedRoots(ctx.doc.layers, ctx.selectedIds).reduce(
-        (tree, id) => deletePcbNodeById(tree, id),
-        ctx.doc.layers,
+    ctx.commit(
+      withStackForSide(
+        ctx.doc,
+        ctx.activeSide,
+        maximalPcbSelectedRoots(ctx.activeStack, ctx.selectedIds).reduce(
+          (tree, id) => deletePcbNodeById(tree, id),
+          ctx.activeStack,
+        ),
       ),
-    });
+    );
     // Every selected id was either cut or a descendant of a cut root.
     ctx.selectIds([]);
   }, [ctx]);
@@ -297,7 +304,7 @@ export function useClipboard(ctx: ToolContext): UseClipboardReturn {
     // promotion a full-canvas marquee applies); a pattern-only group never
     // enters (no non-pattern leaf nominates it), but a mixed group joins
     // whole — its pattern members ride along, the rigid-group convention.
-    const tree = ctx.doc.layers;
+    const tree = ctx.activeStack;
     const ids: string[] = [];
     const seen = new Set<string>();
     for (const layer of ctx.flatLayers) {

@@ -23,6 +23,7 @@ import {
   snapScalar,
   snapToGrid,
   translatePathLayer,
+  withStackForSide,
   type DocState,
   type Layer,
   type LayerNode,
@@ -319,12 +320,14 @@ export function marqueeHitIds(layers: readonly Layer[], rectMm: Rect): string[] 
 }
 
 function updateLayer(ctx: ToolContext, id: string, patch: Partial<Layer>, commit: boolean): void {
-  const next: DocState = {
-    ...ctx.doc,
-    // Recursive write (#150): patches the leaf wherever it sits in the tree —
-    // a flat root-array map would silently no-op for a leaf nested in a group.
-    layers: mapPcbLeavesById(ctx.doc.layers, [id], (l) => ({ ...l, ...patch }) as Layer),
-  };
+  // Recursive write (#150): patches the leaf wherever it sits in the tree —
+  // a flat root-array map would silently no-op for a leaf nested in a group.
+  // Side-scoped (#233): reads/writes the ACTIVE side's stack.
+  const next: DocState = withStackForSide(
+    ctx.doc,
+    ctx.activeSide,
+    mapPcbLeavesById(ctx.activeStack, [id], (l) => ({ ...l, ...patch }) as Layer),
+  );
   if (commit) ctx.commit(next);
   else ctx.replace(next);
 }
@@ -544,7 +547,7 @@ function maximalPcbSelectedRoots(tree: DocState['layers'], ids: readonly string[
 // group id matches no flat layer, and identical ids for a group-free doc.
 function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
   const layers = ctx.flatLayers;
-  const ids = resolveSelectionLeaves(ctx.doc.layers, ctx.selectedIds, layers).editableLeafIds;
+  const ids = resolveSelectionLeaves(ctx.activeStack, ctx.selectedIds, layers).editableLeafIds;
   const bbox = multiResizeBbox(layers, ids);
   if (!bbox) return false;
   for (const h of cornerHandleRects(bbox, ctx.camera)) {
@@ -577,7 +580,7 @@ function tryGrabMultiResizeHandle(e: ToolPointerEvent, ctx: ToolContext): boolea
 // outlines); the gesture's pivot/bounds come from the rotatable leaves only
 // (captureMultiRotateSession) — a selected pattern must not displace them.
 function tryGrabMultiRotateHandle(e: ToolPointerEvent, ctx: ToolContext): boolean {
-  const tree = ctx.doc.layers;
+  const tree = ctx.activeStack;
   if (resolveSelectionOverlayMode(tree, ctx.selectedIds) !== 'combined') return false;
   const layers = ctx.flatLayers;
   const ids = resolveSelectionLeaves(tree, ctx.selectedIds, layers).editableLeafIds;
@@ -646,7 +649,7 @@ registerTool({
 
     const hit = topmostHit(ctx, e.mm);
     const toggleModifier = e.shiftKey || e.metaKey || e.ctrlKey;
-    const tree = ctx.doc.layers;
+    const tree = ctx.activeStack;
     // #97's drag rule: a press on a pattern square that is NOT already
     // selected behaves like empty space for DRAG purposes — the panel stays
     // marquee-able even with a cover-sized square under everything — while a
@@ -740,7 +743,7 @@ registerTool({
       // and collapsed to maximal roots with the additive base (#151).
       const hits = marqueeHitIds(ctx.flatLayers, marqueeRect(marquee.startMm, marquee.currentMm));
       ctx.selectIds(
-        promoteMarqueeSelection(ctx.doc.layers, hits, marquee.additive ? marquee.baseIds : []),
+        promoteMarqueeSelection(ctx.activeStack, hits, marquee.additive ? marquee.baseIds : []),
       );
       ctx.requestRepaint(); // the rubber-band moved even if the selection didn't
       return;
@@ -777,7 +780,7 @@ registerTool({
         // via mapLeavesById, and Alt-duplicate clones whole SUBTREES per
         // maximal selected root — a grouped selection duplicates its groups
         // instead of dissolving them into loose leaves.
-        let tree = ctx.doc.layers;
+        let tree = ctx.activeStack;
         if (!drag.crossed) {
           // We're past the client-space threshold gate above, so THIS move is
           // the crossing moment — the one instant Alt is sampled (#49). An
@@ -878,13 +881,16 @@ registerTool({
         }
         // Recursive write (#150/#151): each patched leaf lands wherever it
         // sits in `tree` (which already contains this event's Alt-clones).
-        ctx.replace({
-          ...ctx.doc,
-          layers: mapPcbLeavesById(tree, [...patches.keys()], (l) => {
-            const patch = patches.get(l.id);
-            return patch ? ({ ...l, ...patch } as Layer) : l;
-          }),
-        });
+        ctx.replace(
+          withStackForSide(
+            ctx.doc,
+            ctx.activeSide,
+            mapPcbLeavesById(tree, [...patches.keys()], (l) => {
+              const patch = patches.get(l.id);
+              return patch ? ({ ...l, ...patch } as Layer) : l;
+            }),
+          ),
+        );
         break;
       }
       case 'resize': {
@@ -946,14 +952,13 @@ registerTool({
         }
         // Recursive write (#150): each scaled leaf lands wherever it sits in
         // the tree — a flat root map would no-op for group-nested members.
-        ctx.replace({
-          ...ctx.doc,
-          layers: mapPcbLeavesById(
-            ctx.doc.layers,
-            [...scaled.keys()],
-            (l) => scaled.get(l.id) ?? l,
+        ctx.replace(
+          withStackForSide(
+            ctx.doc,
+            ctx.activeSide,
+            mapPcbLeavesById(ctx.activeStack, [...scaled.keys()], (l) => scaled.get(l.id) ?? l),
           ),
-        });
+        );
         break;
       }
       case 'rotate': {
@@ -982,10 +987,13 @@ registerTool({
         // ONE streamed replace per tick, re-baked ENTIRELY from the frozen
         // start snapshots (never cumulatively from live state — compounding
         // rounding would drift the orbit). Pointerup adds no trailing commit.
-        ctx.replace({
-          ...ctx.doc,
-          layers: bakeMultiRotate(ctx.doc.layers, drag.session, delta),
-        });
+        ctx.replace(
+          withStackForSide(
+            ctx.doc,
+            ctx.activeSide,
+            bakeMultiRotate(ctx.activeStack, drag.session, delta),
+          ),
+        );
         break;
       }
       case 'anchor': {
@@ -1074,7 +1082,7 @@ registerTool({
     // already wears chrome, so hovering it must not double-outline.
     if (
       hoveredId &&
-      !expandSelectionToLeafIds(ctx.doc.layers, ctx.selectedIds).includes(hoveredId)
+      !expandSelectionToLeafIds(ctx.activeStack, ctx.selectedIds).includes(hoveredId)
     ) {
       const layer = ctx.flatLayers.find((l) => l.id === hoveredId);
       const bbox = layer && !layer.hidden ? layerBbox(layer) : null;
@@ -1107,7 +1115,7 @@ function endPointerSession(_e: ToolPointerEvent, ctx: ToolContext) {
   // mirroring the modifier vocabulary of the direct-hit path above.
   if (marquee && !marquee.active && marquee.clickSelectId !== null) {
     const id = marquee.clickSelectId;
-    const tree = ctx.doc.layers;
+    const tree = ctx.activeStack;
     // Same group-aware modifier vocabulary as the direct-hit path (#151):
     // Meta targets the raw pattern leaf, Shift toggles the promoted id, a
     // plain click selects the promoted id (identity when ungrouped).

@@ -68,6 +68,10 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     openDialog: vi.fn(),
     closeDialog: vi.fn(),
     ...overrides,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
 }
 
@@ -100,6 +104,30 @@ describe('importImageFile', () => {
 
     expect(ctx.select).toHaveBeenCalledWith(layer.id);
     expect(ctx.select).toHaveBeenCalledTimes(1);
+  });
+
+  // #233 (codex review): the decode is async, so the landing side is captured
+  // at CALL time — a face switch mid-decode must not migrate the image.
+  it('lands on the side that started the import even if the side switches mid-decode', async () => {
+    stubImageProbe(100, 100);
+    const doc = {
+      ...createDefaultDoc(),
+      panelHp: 12,
+      guides: [],
+      layers: createPcbLayerStack(),
+      backLayers: createPcbLayerStack('back'),
+    };
+    const ctx = stubCtx({ doc });
+    const file = new File(['bytes'], 'a.png', { type: 'image/png' });
+
+    const pending = importImageFile(file, ctx); // side captured here: front
+    (ctx as { activeSide: 'front' | 'back' }).activeSide = 'back'; // user switches mid-decode
+    await pending;
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    const committed = (ctx.commit as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(projectFlatLayers(committed.layers)).toHaveLength(1); // landed on FRONT
+    expect(committed.backLayers).toBe(doc.backLayers); // back untouched
   });
 
   it('appends onto the existing layers rather than replacing them', async () => {

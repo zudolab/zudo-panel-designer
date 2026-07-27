@@ -14,6 +14,7 @@ import {
   mintId,
   pcbLayerDefinition,
   snapToGrid,
+  withStackForSide,
   type PathLayer,
   type PathPoint,
   type Pt,
@@ -148,13 +149,13 @@ function finishClosed(ctx: ToolContext): void {
   if (!canClosePath(current)) return;
   const layer = buildClosedPathLayer(current);
   const nextLayers = insertNewNodeRelativeToSelection(
-    ctx.doc.layers,
+    ctx.activeStack,
     ctx.selectedIds,
     layer,
     DEFAULT_ROLE,
   );
-  if (nextLayers === ctx.doc.layers) return; // refused: commit/select nothing (#191)
-  ctx.commit({ ...ctx.doc, layers: nextLayers });
+  if (nextLayers === ctx.activeStack) return; // refused: commit/select nothing (#191)
+  ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextLayers));
   ctx.select(layer.id);
   ctx.setActiveTool('select');
   resetDraft(ctx);
@@ -165,13 +166,13 @@ function finishOpen(ctx: ToolContext): void {
   if (!canFinishOpen(current)) return;
   const layer = buildOpenPathLayer(current);
   const nextLayers = insertNewNodeRelativeToSelection(
-    ctx.doc.layers,
+    ctx.activeStack,
     ctx.selectedIds,
     layer,
     DEFAULT_ROLE,
   );
-  if (nextLayers === ctx.doc.layers) return; // refused: commit/select nothing (#191)
-  ctx.commit({ ...ctx.doc, layers: nextLayers });
+  if (nextLayers === ctx.activeStack) return; // refused: commit/select nothing (#191)
+  ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextLayers));
   ctx.select(layer.id);
   ctx.setActiveTool('select');
   resetDraft(ctx);

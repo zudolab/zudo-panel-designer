@@ -19,6 +19,7 @@ import {
   type ColorIndex,
   type Guide,
   type Layer,
+  type PanelSide,
   type PcbLayerSlices,
   type PcbLayerStack,
   type Pt,
@@ -48,6 +49,14 @@ const OUTSIDE_GHOST_ALPHA = 0.35;
 const LOADING_FONT_ALPHA = 0.3;
 
 export interface RenderExtras {
+  // Which panel face the supplied stack belongs to (#233). The scene itself
+  // paints identically for both faces — the back renders in its own view
+  // space (as if the panel were flipped to face you), with NO coordinate
+  // mirroring here (export mirroring is the gerber lane's job). This field
+  // exists for the Wave-5 template-hole composer, whose hole DISPLAY
+  // positions mirror x on the back view — see holeDisplayCx below. Optional,
+  // defaulting to 'front', so pre-#233 callers/tests stay untouched.
+  side?: PanelSide;
   // Multi-select contract (#44): the full (normalized) selection, EXPANDED to
   // flat leaf ids since #151 (a raw group id matches no flat layer). The
   // chrome pass draws a dashed bbox per selected layer plus a combined bbox
@@ -95,6 +104,18 @@ export interface LayerPaintOptions {
 }
 
 const editorPaletteColor = (color: ColorIndex): string => PALETTE[color].hex;
+
+// Template-hole DISPLAY x for a given view side (#233). Panel holes are
+// defined in fabrication coordinates on the FRONT face (core's panelHoles);
+// the back view shows the panel flipped to face you, so a hole at cx appears
+// at width − cx. This is a VIEW transform only — hole data itself is never
+// mirrored, and layer content never goes through this (the back stack is
+// authored directly in its own view space, no mirroring). Consumed by the
+// Wave-5 template-hole composer; exported now so the mirror rule is pinned
+// with the side plumbing (RenderExtras.side) it rides on.
+export function holeDisplayCx(cxMm: number, side: PanelSide, panelWidthMm: number): number {
+  return side === 'back' ? panelWidthMm - cxMm : cxMm;
+}
 
 // Layer bbox in mm (pre-rotation). Pattern layers are bbox-bound since #96:
 // their bounds are the layer's own x/y/size square, not the panel rect, so no

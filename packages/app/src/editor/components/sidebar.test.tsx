@@ -52,6 +52,10 @@ function stubCtx(copperChildren: LayerNode[] = [LAYER]) {
     commit,
     select: vi.fn(),
     selectIds: vi.fn(),
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   Object.defineProperty(ctx, 'flatLayers', {
     get: () => projectFlatLayers(ctx.doc.layers),
@@ -69,6 +73,7 @@ function renderSidebar(
     <Sidebar
       ctx={ctx}
       doc={doc as Parameters<typeof Sidebar>[0]['doc']}
+      activeSide="front"
       selectedIds={[]}
       selectedLayer={null}
       activeToolId="select"

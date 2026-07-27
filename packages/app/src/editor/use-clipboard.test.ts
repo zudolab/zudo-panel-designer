@@ -11,10 +11,12 @@ import {
   insertPcbNode,
   isGroupNode,
   MAX_GROUP_DEPTH,
+  stackForSide,
   type DocState,
   type GroupNode,
   type Layer,
   type LayerNode,
+  type PanelSide,
   type PathLayer,
   type Pt,
   type ShapeLayer,
@@ -78,6 +80,7 @@ function groupNode(id: string, children: LayerNode[]): GroupNode {
 function createCtx(fixture: DocFixture, selectedIds: readonly string[] = []) {
   let currentDoc = canonicalDoc(fixture);
   let currentSelectedIds: readonly string[] = selectedIds;
+  let currentSide: PanelSide = 'front';
   const ctx = {
     get doc() {
       return currentDoc;
@@ -94,6 +97,19 @@ function createCtx(fixture: DocFixture, selectedIds: readonly string[] = []) {
     get flatLayers() {
       return projectFlatLayers(currentDoc.layers);
     },
+    get activeSide() {
+      return currentSide;
+    },
+    get activeStack() {
+      return stackForSide(currentDoc, currentSide);
+    },
+    // Mirrors the real setActiveSide lifecycle (#230): an actual switch
+    // clears the selection; same-side is a strict no-op.
+    setActiveSide: vi.fn((side: PanelSide) => {
+      if (side === currentSide) return;
+      currentSide = side;
+      currentSelectedIds = [];
+    }),
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     toMm: (p: Pt) => p,
@@ -337,6 +353,31 @@ describe('useClipboard — copy -> paste round trip (internal clipboard)', () =>
 
     act(() => dispatchPaste(window));
     expect(ctx.commit).not.toHaveBeenCalled();
+  });
+
+  // #233: the envelope tags materials, never a side — a front copy pasted
+  // while Back is active lands on the back stack, front untouched.
+  it('lands on the ACTIVE side: front copy pasted on Back goes to backLayers only', () => {
+    const doc = baseDoc([shapeLayer]);
+    const ctx = createCtx(doc, ['shape-1']);
+    const { result } = renderHook(() => useClipboard(ctx));
+
+    act(() => result.current.handleCopy());
+    const frontBefore = ctx.doc.layers;
+    act(() => ctx.setActiveSide('back'));
+    act(() => dispatchPaste(window));
+
+    expect(ctx.commit).toHaveBeenCalledTimes(1);
+    // Front stack is the SAME reference — never touched by the back paste.
+    expect(ctx.doc.layers).toBe(frontBefore);
+    const backFlat = projectFlatLayers(ctx.doc.backLayers);
+    expect(backFlat).toHaveLength(1);
+    const pasted = backFlat[0] as ShapeLayer;
+    expect(pasted.id).not.toBe(shapeLayer.id);
+    expect(pasted.x).toBeCloseTo(shapeLayer.x + 2, 5);
+    // Copper stays copper across sides (material-tagged root).
+    expect(ctx.doc.backLayers[0].children.map((n) => n.id)).toEqual([pasted.id]);
+    expect(ctx.selectedIds).toEqual([pasted.id]);
   });
 });
 

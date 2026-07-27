@@ -116,6 +116,10 @@ function stubCtx(overrides: Partial<ToolContext> = {}): ToolContext {
     openDialog: vi.fn(),
     closeDialog: vi.fn(),
     ...overrides,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   // Live flat view over whatever doc the stub ended up with (non-enumerable
   // so object spreads never snapshot it).

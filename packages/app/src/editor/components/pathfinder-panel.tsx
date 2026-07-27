@@ -10,7 +10,7 @@
 // `createPathfinderRunner(ctx).run(op)`, which owns the async stale-input
 // guard and the one-undo-entry commit; nothing here re-derives either.
 import { useMemo, useState, type ReactNode } from 'react';
-import type { DocState } from '@zpd/core';
+import type { PcbLayerStack } from '@zpd/core';
 import {
   canApplyPathfinderOp,
   createPathfinderRunner,
@@ -36,17 +36,17 @@ import {
 
 export interface PathfinderPanelProps {
   ctx: ToolContext;
-  // The COMMITTED doc from Editor's render — NOT the docRef-lagged ctx.doc
-  // (see rotate-selection-panel.tsx's identical doc-prop comment for why:
-  // ctx.doc resyncs in a passive effect, so the render a commit triggers
-  // still sees the PREVIOUS tree). Align/Distribute get away with reading
-  // ctx.doc directly because their ops never change WHICH ids are selected
-  // or eligible; a Path Finder op mints brand-new leaf ids and reselects
-  // them in the same commit, so pairing the fresh `selectedIds` below against
-  // a stale `ctx.doc` would resolve zero eligible leaves — every button
-  // (including Divide/Outline) would render disabled right after a
-  // successful op, with no further render to self-correct it.
-  doc: DocState;
+  // The COMMITTED active-side stack from Editor's render (#233) — NOT the
+  // docRef-lagged ctx.activeStack (see rotate-selection-panel.tsx's identical
+  // doc-prop comment for why: ctx.doc resyncs in a passive effect, so the
+  // render a commit triggers still sees the PREVIOUS tree). Align/Distribute
+  // get away with reading ctx directly because their ops never change WHICH
+  // ids are selected or eligible; a Path Finder op mints brand-new leaf ids
+  // and reselects them in the same commit, so pairing the fresh `selectedIds`
+  // below against a stale ctx stack would resolve zero eligible leaves —
+  // every button (including Divide/Outline) would render disabled right
+  // after a successful op, with no further render to self-correct it.
+  stack: PcbLayerStack;
   selectedIds: readonly string[];
 }
 
@@ -73,7 +73,7 @@ const PATHFINDER_BUTTONS: PathfinderButtonSpec[] = [
   { op: 'minusBack', icon: <PathfinderMinusBack className={ICON_CLASS} /> },
 ];
 
-export function PathfinderPanel({ ctx, doc, selectedIds }: PathfinderPanelProps) {
+export function PathfinderPanel({ ctx, stack, selectedIds }: PathfinderPanelProps) {
   // `ctx` is a stable, getter-backed object for the life of the Editor (see
   // Editor.tsx's ctx useMemo), so one runner per panel instance is enough —
   // it is what carries the dispatch sequence number across clicks, letting
@@ -85,8 +85,8 @@ export function PathfinderPanel({ ctx, doc, selectedIds }: PathfinderPanelProps)
 
   // The same committed tree this render's `selectedIds` was resolved
   // against (both come from Editor's own commit-triggered render — see the
-  // `doc` prop's comment) — never lags a commit, unlike ctx.doc.
-  const eligibleCount = resolvePathfinderInputs(doc.layers, selectedIds).length;
+  // `stack` prop's comment) — never lags a commit, unlike ctx.doc.
+  const eligibleCount = resolvePathfinderInputs(stack, selectedIds).length;
 
   // Dispatches in flight, across all ten buttons — the whole row is disabled
   // while any is pending, mainly to cover the first (slowest) click, which

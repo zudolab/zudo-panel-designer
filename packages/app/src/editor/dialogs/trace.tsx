@@ -13,8 +13,11 @@ import {
   insertPcbNode,
   pcbLayerRoleForColor,
   rotatePoint,
+  stackForSide,
+  withStackForSide,
   type DocState,
   type ImageLayer,
+  type PanelSide,
   type PathLayer,
   type PathPoint,
 } from '@zpd/core';
@@ -60,12 +63,16 @@ export function bakeImageRotation(traced: PathLayer[], layer: ImageLayer): PathL
 // moves the source into hidden Copper design-reference storage, then routes
 // each traced vector to the physical material inferred from its palette fill.
 // The all-or-nothing local build keeps the user-visible operation atomic.
+// Side-scoped (#233): the whole swap happens within `side`'s stack — the
+// traced source lives there, so its vectors land there too.
 export function insertTracedPaths(
   doc: DocState,
+  side: PanelSide,
   source: ImageLayer,
   traced: PathLayer[],
 ): DocState {
-  const withoutSource = deletePcbNodeById(doc.layers, source.id);
+  const stack = stackForSide(doc, side);
+  const withoutSource = deletePcbNodeById(stack, source.id);
   let layers = insertPcbNode(withoutSource, 'copper', { ...source, hidden: true });
   if (layers === withoutSource) return doc;
   for (const path of traced) {
@@ -75,7 +82,7 @@ export function insertTracedPaths(
     if (inserted === layers) return doc;
     layers = inserted;
   }
-  return { ...doc, layers };
+  return withStackForSide(doc, side, layers);
 }
 
 interface TraceDialogProps {
@@ -154,7 +161,7 @@ function TraceDialog({ props, close, ctx }: DialogProps<TraceDialogProps>) {
     if (traced.length === 0) return;
     // one commit = one undo entry: hide the source raster, insert the traced
     // vectors into their mapped material containers, select the first
-    ctx.commit(insertTracedPaths(ctx.doc, layer, traced));
+    ctx.commit(insertTracedPaths(ctx.doc, ctx.activeSide, layer, traced));
     ctx.select(traced[0].id);
     close();
   };
