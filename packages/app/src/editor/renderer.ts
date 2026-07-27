@@ -67,8 +67,8 @@ export interface RenderExtras {
   material?: PcbMaterial;
   // The derived template-hole set for this doc — panelHoles(doc.format,
   // doc.panelHp) (#227), canonical front-view fabrication coordinates. The
-  // Wave-5 hole composer (#237) draws each hole's drill interior (punched to
-  // the workspace background) and its catalog `opening` stadium ring;
+  // Wave-5 hole composer (#237) draws each hole's drill interior (filled with
+  // the workspace background color) and its catalog `opening` stadium ring;
   // holeDisplayCx above supplies the back-view x mirror. Optional, defaulting
   // to [], so pre-#237 callers/tests paint no holes at all.
   holes?: readonly PanelHole[];
@@ -712,7 +712,7 @@ const editorMaskSheetFactory: MaskSheetFactory = (widthPx, heightPx) => {
 
 // Wave-5 template-hole composer context (#237): what paintInvertedPanelStack
 // needs to draw each hole's copper-ring injection, mask-ring punch, and
-// drill-interior punch alongside the existing composite. `holes` is empty for
+// drill-interior fill alongside the existing composite. `holes` is empty for
 // every pre-#237 caller/test, so every hole-painting step below is then a
 // no-op loop and the composite is byte-identical to before.
 interface TemplateHoleContext {
@@ -722,25 +722,48 @@ interface TemplateHoleContext {
   readonly panelWidthMm: number;
 }
 
-// Unconditional destination-out punch of every hole's stadium (ring or drill,
-// per `lengthFor`) into whatever surface `ctx` currently targets — the same
-// "alpha is what punches" technique mask-sheet.ts's paintMaskPunches uses for
-// layer-authored openings, reused here for fabrication-derived ones. `ctx`'s
-// ambient transform already maps mm -> its target device pixels; callers
-// supply it pre-transformed (mirrors paintMaskPunches' contract).
-function punchPanelHoleStadiums(
-  ctx: CanvasRenderingContext2D,
-  holeCtx: TemplateHoleContext,
-  lengthFor: (hole: PanelHole) => number,
-  widthFor: (hole: PanelHole) => number,
-): void {
+// Unconditional destination-out punch of every hole's `opening` ring stadium
+// into whatever surface `ctx` currently targets — the same "alpha is what
+// punches" technique mask-sheet.ts's paintMaskPunches uses for layer-authored
+// openings, reused here for fabrication-derived ones. `ctx`'s ambient
+// transform already maps mm -> its target device pixels; callers supply it
+// pre-transformed (mirrors paintMaskPunches' contract). ONLY valid on a
+// SEPARATE compositing surface (the mask sheet, drawImage'd onto the main
+// canvas after) — see paintDrillInteriors below for why the drill interior
+// can't reuse this same erase technique directly on the main canvas.
+function punchHoleOpeningRings(ctx: CanvasRenderingContext2D, holeCtx: TemplateHoleContext): void {
   if (holeCtx.holes.length === 0) return;
   ctx.save();
   ctx.globalCompositeOperation = 'destination-out';
   ctx.fillStyle = '#000000';
   for (const hole of holeCtx.holes) {
     const cx = holeDisplayCx(hole.cx, holeCtx.side, holeCtx.panelWidthMm);
-    tracePanelHoleStadium(ctx, cx, hole.cy, widthFor(hole), lengthFor(hole));
+    tracePanelHoleStadium(ctx, cx, hole.cy, hole.opening.width, hole.opening.length);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Paints each hole's DRILL interior with the workspace background color — a
+// POSITIVE fill, not a destination-out erase (fixed after codex review flagged
+// the original erase approach as wrong). A canvas is a flat raster with no
+// "layers" to reveal by erasing: the WORKSPACE_BG fillRect painted at the top
+// of renderScene, at these SAME pixel coordinates, was already fully
+// overwritten (source-over, opaque) by the panel composite painted since —
+// there is nothing left "underneath" for destination-out to expose. Erasing
+// here would zero the pixels to fully transparent, showing whatever sits
+// BEHIND the <canvas> DOM element (the page shell), not the workspace color.
+// A direct positive fill is the only way to reproduce that color at this
+// point in the paint. Material-agnostic on purpose — the drill is a physical
+// cut regardless of fr4/alumi.
+function paintDrillInteriors(ctx: CanvasRenderingContext2D, holeCtx: TemplateHoleContext): void {
+  if (holeCtx.holes.length === 0) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = WORKSPACE_BG;
+  for (const hole of holeCtx.holes) {
+    const cx = holeDisplayCx(hole.cx, holeCtx.side, holeCtx.panelWidthMm);
+    tracePanelHoleStadium(ctx, cx, hole.cy, hole.drillDiameter, holeDrillLengthMm(hole));
     ctx.fill();
   }
   ctx.restore();
@@ -752,11 +775,11 @@ function punchPanelHoleStadiums(
 // hole's opening-ring punch) → silkscreen positively → ALL image layers from
 // every container as a design-aid overlay (images never punch; an in-z-order
 // copper image would vanish under a full sheet) → finally each hole's drill
-// interior, punched straight through the WHOLE composite just built (deeper
-// than the mask sheet, which only ever reveals copper/substrate) down to the
-// workspace background painted before the panel this frame. Runs entirely
-// inside the caller's panel clip — see the disjoint-pass note at the call
-// site.
+// interior, positively filled with the workspace background color (see
+// paintDrillInteriors — NOT a destination-out punch, unlike the mask-ring
+// punch above: this runs on the MAIN canvas, which has no separate surface
+// left to reveal by erasing). Runs entirely inside the caller's panel clip —
+// see the disjoint-pass note at the call site.
 function paintInvertedPanelStack(
   ctx: CanvasRenderingContext2D,
   slices: PcbLayerSlices,
@@ -820,12 +843,7 @@ function paintInvertedPanelStack(
     // user's own mask artwork (epic #226 decisions 11/12: fabrication data,
     // not artwork) — reuses the exact destination-out technique the layer
     // punch above just used, on the same sheet.
-    punchPanelHoleStadiums(
-      sheet.ctx,
-      holeCtx,
-      (hole) => hole.opening.length,
-      (hole) => hole.opening.width,
-    );
+    punchHoleOpeningRings(sheet.ctx, holeCtx);
     // Drawn viewport-aligned in CSS-px space (the ambient dpr transform maps
     // it back onto the sheet's own device pixels), inside the panel clip.
     ctx.drawImage(sheet.canvas, 0, 0, canvasPxW / dpr, canvasPxH / dpr);
@@ -842,15 +860,14 @@ function paintInvertedPanelStack(
     }
   });
 
-  // Punch each hole's drill interior straight through the WHOLE composite
-  // just painted — deeper than the mask-sheet punches above, which only ever
-  // reveal copper or substrate: this erases all the way down to the
-  // workspace background painted before the panel earlier this frame, so the
-  // hole interior reads as a true cut regardless of material or artwork. Runs
-  // LAST (after silkscreen/images) on purpose — a real drill physically
-  // removes whatever was printed over it.
+  // Paint each hole's drill interior in the workspace background color, on
+  // top of the WHOLE composite just built — deeper than the mask-sheet
+  // punches above, which only ever reveal copper or substrate: this reads as
+  // a true cut regardless of material or artwork. Runs LAST (after
+  // silkscreen/images) on purpose — a real drill physically removes whatever
+  // was printed over it.
   inMmSpace(() => {
-    punchPanelHoleStadiums(ctx, holeCtx, holeDrillLengthMm, (hole) => hole.drillDiameter);
+    paintDrillInteriors(ctx, holeCtx);
   });
 }
 

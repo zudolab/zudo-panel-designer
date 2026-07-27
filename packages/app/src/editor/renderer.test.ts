@@ -1849,7 +1849,7 @@ describe('renderScene — Wave-5 template-hole composer (#237)', () => {
     expect(arcCalls(renderWithHoles([]))).toHaveLength(0);
   });
 
-  it('FR-4: traces both the ring (opening) and drill-interior stadiums, injects gold, and punches at least the ring + drill (destination-out)', () => {
+  it('FR-4: traces both the ring (opening) and drill-interior stadiums, injects gold, and punches the ring (destination-out)', () => {
     const calls = renderWithHoles([ROUND_HOLE], { material: 'fr4' });
     const arcs = arcCalls(calls);
     expect(arcs.some((c) => c.args[2] === ROUND_HOLE.opening.width / 2)).toBe(true);
@@ -1857,8 +1857,11 @@ describe('renderScene — Wave-5 template-hole composer (#237)', () => {
     // the copper-ring injection (mirrors gerber/holes.ts's injections.copper
     // and preview/surface-maps.ts's paintHoleRingCopper) paints gold
     expect(goldFillSets(calls).length).toBeGreaterThan(0);
-    // the base mask punch + the ring punch + the drill punch: >= 2 attributable to holes
-    expect(destinationOutSets(calls).length).toBeGreaterThanOrEqual(2);
+    // exactly 2 destination-out sets in this fixture: the always-present base
+    // mask punch (fires even with zero user mask layers) plus the ring punch.
+    // The drill interior is a POSITIVE fill (see the dedicated test below), so
+    // it must NOT add a third.
+    expect(destinationOutSets(calls)).toHaveLength(2);
   });
 
   it("alumi: traces the same ring + drill stadiums but never injects a gold fill — its ring exposes the material-aware substrate instead", () => {
@@ -1867,6 +1870,30 @@ describe('renderScene — Wave-5 template-hole composer (#237)', () => {
     expect(arcs.some((c) => c.args[2] === ROUND_HOLE.opening.width / 2)).toBe(true);
     expect(arcs.some((c) => c.args[2] === ROUND_HOLE.drillDiameter / 2)).toBe(true);
     expect(goldFillSets(calls)).toHaveLength(0);
+  });
+
+  // Codex review (base/material-holes diff) caught the original implementation
+  // erasing the drill interior via destination-out on the MAIN canvas — a flat
+  // raster has no "layer underneath" left to reveal that way once the panel
+  // composite has opaquely overwritten those pixels this frame; the erase
+  // actually zeroed them to fully transparent (showing whatever sits BEHIND
+  // the <canvas> element, not the workspace background). Fixed to a positive
+  // fill — this test pins the fix by inspecting the calls immediately
+  // preceding the drill's arc trace.
+  it('paints the drill interior via a POSITIVE fill (source-over) with the workspace background color, not a destination-out erase', () => {
+    const WORKSPACE_BG_HEX = '#26282c'; // mirrors renderer.ts's private WORKSPACE_BG constant
+    const calls = renderWithHoles([ROUND_HOLE], { material: 'fr4' });
+    const drillArcIndex = calls.findIndex(
+      (c) => c.method === 'arc' && c.args[2] === ROUND_HOLE.drillDiameter / 2,
+    );
+    expect(drillArcIndex).toBeGreaterThan(-1);
+    const before = calls.slice(0, drillArcIndex);
+    const lastCompositeModeSet = before
+      .filter((c) => c.method === 'set:globalCompositeOperation')
+      .at(-1);
+    const lastFillStyleSet = before.filter((c) => c.method === 'set:fillStyle').at(-1);
+    expect(lastCompositeModeSet?.args[0]).toBe('source-over');
+    expect(lastFillStyleSet?.args[0]).toBe(WORKSPACE_BG_HEX);
   });
 
   it('front view traces the ring/drill at the CANONICAL cx — no mirror', () => {
