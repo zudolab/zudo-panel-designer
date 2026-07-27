@@ -69,9 +69,14 @@ test('@smoke movable pattern: click-selects, drag off-panel keeps intersection +
   // dot presence/absence is deterministic:
   // - STRIP: on-panel band the +40mm drag will UNCOVER (demo layers start at
   //   x 8 / y 14, and the moved square's left edge lands at ~6.2 — the strip
-  //   stays clear of the selection chrome drawn along that edge).
+  //   stays clear of the selection chrome drawn along that edge). Also clear
+  //   of the 12hp/3U panel's own top-left template screw hole (panelHoles():
+  //   cx 10.16, opening half-length 5.54 -> mask opening starts at x ~4.62),
+  //   which #237 now punches into the composer itself — stripB.x used to
+  //   reach 4.8 (grazing that opening's edge) back when holes were fab-only
+  //   and never painted here.
   const stripA = { x: 0.8, y: 3 };
-  const stripB = { x: 4.8, y: 12 };
+  const stripB = { x: 3.6, y: 12 };
   // - GUTTER: right of the panel, beyond the ORIGINAL square's right edge
   //   (~94.7) but inside the MOVED square — and >32px from the panel edge so
   //   the drop-shadow blur (renderer.ts shadowBlur 24) can't bleed into it.

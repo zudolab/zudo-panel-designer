@@ -71,7 +71,8 @@ test('@smoke text tool places a layer and loads the Orbitron font', async ({ pag
   expect(placed?.type).toBe('text');
 
   // Font <select> is the last <select> once a text layer's inspector is
-  // showing — the panel-size <select> in the Panel section is always first.
+  // showing — the Panel section's format/size/material selects always come
+  // first, in that DOM order.
   await page.getByRole('combobox').last().selectOption('Orbitron');
 
   // self-hosted @fontsource/orbitron — no external font network involved.
