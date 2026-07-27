@@ -216,6 +216,10 @@ interface SurfaceMapPaintTarget {
   readonly slices: PcbLayerSlices;
   readonly holes: readonly PanelHole[];
   readonly maskSheetFactory: MaskSheetFactory;
+  // True only for the BACK face: its layer stack is authored in back-view doc
+  // space and must cross into the canvas's canonical space (see
+  // withArtworkSpace). Holes are canonical already and never take this path.
+  readonly artworkIsBackView: boolean;
   readonly signal: AbortSignal;
 }
 
@@ -272,6 +276,43 @@ function enterPanelSpace(
   target.clip();
 }
 
+// Runs `paint` in the coordinate space the given face's LAYER STACK is
+// authored in, leaving the canvas canonical.
+//
+// `doc.backLayers` is authored directly in BACK-VIEW doc space (#233: layer
+// content is never mirrored for display, only template holes are), while
+// these canvases are canonical fabrication space by contract
+// (contracts.PREVIEW_BACK_FACE_ORIENTATION) — the two differ by exactly the
+// `x → widthMm − x` reflection. Crossing it here is the paint-side twin of
+// gerber/back-extract.ts's `mirrorInput`, which mirrors the same stack once at
+// the export boundary; without it the preview's back artwork would land
+// mirrored against both the composer's Back view and the exported `.GBL`.
+//
+// The reflection is applied to the whole artwork pass rather than to layer
+// data, so shapes, paths, patterns, and glyph runs all cross identically —
+// and back silkscreen text is mirrored in canonical space exactly as it is on
+// a real board, reading correctly again once the back face is viewed from
+// behind. Screw holes never come through here: `panelHoles()` is already
+// canonical for both faces.
+function withArtworkSpace(
+  ctx: CanvasRenderingContext2D,
+  target: SurfaceMapPaintTarget,
+  paint: () => void,
+): void {
+  if (!target.artworkIsBackView) {
+    paint();
+    return;
+  }
+  ctx.save();
+  ctx.translate(target.widthMm, 0);
+  ctx.scale(-1, 1);
+  try {
+    paint();
+  } finally {
+    ctx.restore();
+  }
+}
+
 // Fills the shared scratch sheet with `fillStyle` and punches every visible
 // mask leaf out of it. `punchColorFor` only needs opacity — alpha is what
 // punches (see mask-sheet.ts).
@@ -292,7 +333,9 @@ function punchedMaskSheet(
   sheetCtx.fillRect(0, 0, canvas.width, canvas.height);
   sheetCtx.save();
   sheetCtx.setTransform(canvas.width / widthMm, 0, 0, canvas.height / heightMm, 0, 0);
-  paintMaskPunches(sheetCtx, slices.solderMask, { colorFor: punchColorFor });
+  withArtworkSpace(sheetCtx, paintTarget, () => {
+    paintMaskPunches(sheetCtx, slices.solderMask, { colorFor: punchColorFor });
+  });
   // The screw-hole openings are fabrication data, not artwork: they punch on
   // both faces and both materials, independent of what the user drew.
   punchHoleOpenings(sheetCtx, holes);
@@ -319,9 +362,11 @@ function paintSurfaceMap(
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   enterPanelSpace(ctx, canvas, widthMm, heightMm);
-  paintCopperCoverage(ctx, slices.copper, {
-    color: surfaceMapColorForPalette(mapName, 1),
-    signal,
+  withArtworkSpace(ctx, paintTarget, () => {
+    paintCopperCoverage(ctx, slices.copper, {
+      color: surfaceMapColorForPalette(mapName, 1),
+      signal,
+    });
   });
   // FR-4 screw holes are PTH (epic decision 11): the copper ring under the
   // mask opening is what makes the exposed ring read gold. Alumi is NPTH —
@@ -342,15 +387,17 @@ function paintSurfaceMap(
   }
 
   enterPanelSpace(ctx, canvas, widthMm, heightMm);
-  paintSliceLayers(
-    ctx,
-    slices.silkscreen,
-    {
-      colorFor: (color) => surfaceMapColorForPalette(mapName, color),
-      loadingTextAlpha: 1,
-    },
-    signal,
-  );
+  withArtworkSpace(ctx, paintTarget, () => {
+    paintSliceLayers(
+      ctx,
+      slices.silkscreen,
+      {
+        colorFor: (color) => surfaceMapColorForPalette(mapName, color),
+        loadingTextAlpha: 1,
+      },
+      signal,
+    );
+  });
   ctx.restore();
 }
 
@@ -370,7 +417,9 @@ function paintHeightMap(paintTarget: SurfaceMapPaintTarget): void {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   enterPanelSpace(ctx, canvas, widthMm, heightMm);
-  paintCopperCoverage(ctx, slices.copper, { color: PREVIEW_HEIGHT_COPPER_COLOR, signal });
+  withArtworkSpace(ctx, paintTarget, () => {
+    paintCopperCoverage(ctx, slices.copper, { color: PREVIEW_HEIGHT_COPPER_COLOR, signal });
+  });
   // The FR-4 ring is real copper, so it raises the surface exactly like
   // artwork copper does (source-over: overlap with artwork stays one copper
   // thickness, never additive).
@@ -513,6 +562,7 @@ export function createPreviewSurfaceMapGenerator(
 
       const paintFaceMaps = (
         faceSlices: PcbLayerSlices,
+        artworkIsBackView: boolean,
       ): Record<PreviewSurfaceMapName, PreviewCanvasSource> => {
         const canvases = {} as Record<PreviewSurfaceMapName, PreviewCanvasSource>;
         for (const mapName of PREVIEW_SURFACE_MAP_NAMES) {
@@ -529,6 +579,7 @@ export function createPreviewSurfaceMapGenerator(
             slices: faceSlices,
             holes,
             maskSheetFactory,
+            artworkIsBackView,
             signal: input.ticket.signal,
           };
           if (mapName === 'height') paintHeightMap(paintTarget);
@@ -541,8 +592,11 @@ export function createPreviewSurfaceMapGenerator(
       // Both faces paint in canonical fabrication coordinates; the back
       // face's display-side x mirror lives in the texture sampling contract
       // (contracts.PREVIEW_BACK_FACE_ORIENTATION), never in the canvases.
-      const canvases = paintFaceMaps(slices);
-      const backCanvases = backSlices ? paintFaceMaps(backSlices) : null;
+      // Reaching canonical costs the back face one reflection of its own
+      // artwork, because `doc.backLayers` is authored in back-view doc space
+      // (see withArtworkSpace); its holes are canonical already.
+      const canvases = paintFaceMaps(slices, false);
+      const backCanvases = backSlices ? paintFaceMaps(backSlices, true) : null;
 
       throwIfAborted(input.ticket.signal);
       const snapshot = createPreviewSurfaceSnapshot({
