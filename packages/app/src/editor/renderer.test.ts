@@ -11,10 +11,14 @@ import {
   mergeBboxes,
   PALETTE,
   PCB_SUBSTRATE,
+  PCB_SUBSTRATE_ALUMI,
   rotatedRectAABB,
   type ImageLayer,
   type Layer,
+  type PanelHole,
+  type PanelSide,
   type PatternLayer,
+  type PcbMaterial,
   type Rect,
   type ShapeLayer,
   type TextLayer,
@@ -237,7 +241,12 @@ describe('renderScene inverted solder-mask composition (#179, supersedes the #16
   }
 
   function renderSampled(
-    variant: { hiddenMask?: boolean; hiddenSilk?: boolean; emptyMask?: boolean } = {},
+    variant: {
+      hiddenMask?: boolean;
+      hiddenSilk?: boolean;
+      emptyMask?: boolean;
+      material?: PcbMaterial;
+    } = {},
   ) {
     const stack = createPcbLayerStack({
       copper: [shape('copper', 2, 2, { width: 30, height: 20, color: 0 }), imageLeaf('img-cu', 2)],
@@ -327,6 +336,7 @@ describe('renderScene inverted solder-mask composition (#179, supersedes the #16
           showNodes: false,
           showOutsidePanel: false,
           requestRepaint: vi.fn(),
+          material: variant.material,
         },
       );
     } finally {
@@ -383,6 +393,19 @@ describe('renderScene inverted solder-mask composition (#179, supersedes the #16
       silk: PALETTE[1].hex,
       imageSilk: PALETTE[0].hex,
     });
+  });
+
+  // #237 item 2: substrate fill selects substrateForMaterial(doc.material) —
+  // metallic gray for alumi, the classic FR4 tan otherwise. `bare` (an
+  // opening over nothing) is the sample point that reads the base fill
+  // straight through, unmixed with copper or silkscreen.
+  it('alumi doc: an opening over nothing reads the metallic gray substrate, not FR4 tan (#237)', () => {
+    expect(renderSampled({ material: 'alumi' }).openingOverNothing).toBe(PCB_SUBSTRATE_ALUMI.hex);
+  });
+
+  it('fr4 doc (material omitted, matching every pre-#237 caller): substrate stays the classic tan fill', () => {
+    expect(renderSampled().openingOverNothing).toBe(PCB_SUBSTRATE.hex);
+    expect(renderSampled({ material: 'fr4' }).openingOverNothing).toBe(PCB_SUBSTRATE.hex);
   });
 });
 
@@ -1716,5 +1739,177 @@ describe('holeDisplayCx (#233)', () => {
     expect(holeDisplayCx(2.5, 'back', 40.3)).toBeCloseTo(37.8, 10);
     // A centered hole stays centered when the panel flips.
     expect(holeDisplayCx(20.15, 'back', 40.3)).toBeCloseTo(20.15, 10);
+  });
+});
+
+// #237 item 3: the derived template holes, punched through the composed
+// stack, with the catalog `opening` stadium ring around each. The pixel-
+// sampling harness the inverted-mask block above uses (SamplePath2D) only
+// understands moveTo/bezierCurveTo paths, not the arc()-built stadium this
+// feature paints — so this block verifies the CONTRACT at the canvas-call
+// level instead: which shapes get traced, at what radius, with what fill/
+// composite state, and at what x on each view side. Pixel-level proof is
+// Wave 6's job (visual verification + PR screenshots per the issue).
+describe('renderScene — Wave-5 template-hole composer (#237)', () => {
+  interface RecordedCall {
+    method: string;
+    args: unknown[];
+  }
+
+  // Records every ctx method CALL and every property SET (as `set:<prop>`)
+  // — enough to assert "arc() was traced at radius R" or "fillStyle was set
+  // to gold" without needing a real Canvas2D (unavailable in jsdom).
+  function spyContext(): { calls: RecordedCall[]; ctx: CanvasRenderingContext2D } {
+    const calls: RecordedCall[] = [];
+    const store: Record<string, unknown> = {};
+    const ctx = new Proxy(store, {
+      get: (t, p: string) => {
+        if (p in t) return t[p];
+        if (p === 'measureText') return () => ({ width: 0 });
+        return (...args: unknown[]) => {
+          calls.push({ method: p, args });
+        };
+      },
+      set: (t, p: string, v) => {
+        t[p] = v;
+        calls.push({ method: `set:${p}`, args: [v] });
+        return true;
+      },
+    }) as unknown as CanvasRenderingContext2D;
+    return { calls, ctx };
+  }
+
+  // A ROUND hole collapses tracePanelHoleStadium's flat span to zero (width
+  // === length), so both its ring and drill arcs center EXACTLY on (cx, cy)
+  // — the simplest fixture for asserting arc() args directly.
+  const ROUND_HOLE: PanelHole = {
+    cx: 12,
+    cy: 3,
+    shape: 'round',
+    drillDiameter: 3.2,
+    opening: { width: 4.0, length: 4.0 },
+  };
+  const PANEL_WIDTH_MM = 40;
+  const CAM: Camera = { pxPerMm: 1, offsetX: 0, offsetY: 0 };
+
+  // acquireMaskSheet caches its allocation by (factory identity, width,
+  // height) at MODULE scope (mask-sheet.ts) — a fixed canvas size shared
+  // across this block's own tests would hand every test AFTER the first a
+  // stale sheet ctx from an earlier test, not this one's spy. A fresh,
+  // never-repeated size per call guarantees a cache MISS -> fresh allocation
+  // resolved via THIS test's stub, every time.
+  let nextCanvasSize = 40;
+
+  function renderWithHoles(
+    holes: readonly PanelHole[],
+    options: { material?: PcbMaterial; side?: PanelSide } = {},
+  ): RecordedCall[] {
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    const { calls, ctx } = spyContext();
+    // One shared spy answers BOTH the main canvas and the offscreen mask
+    // sheet — simplest way to observe hole-painting calls on either surface
+    // without caring which one issued them.
+    HTMLCanvasElement.prototype.getContext = (() =>
+      ctx) as unknown as typeof HTMLCanvasElement.prototype.getContext;
+    try {
+      const canvas = document.createElement('canvas');
+      const size = nextCanvasSize++;
+      canvas.width = size;
+      canvas.height = size;
+      const stack = createPcbLayerStack({});
+      renderScene(
+        canvas,
+        { layers: stack },
+        { widthMm: PANEL_WIDTH_MM, heightMm: 40 },
+        CAM,
+        {
+          selectedIds: [],
+          images: new Map(),
+          showNodes: false,
+          showOutsidePanel: false,
+          requestRepaint: vi.fn(),
+          holes,
+          material: options.material,
+          side: options.side,
+        },
+      );
+    } finally {
+      HTMLCanvasElement.prototype.getContext = originalGetContext;
+    }
+    return calls;
+  }
+
+  const arcCalls = (calls: RecordedCall[]) => calls.filter((c) => c.method === 'arc');
+  const destinationOutSets = (calls: RecordedCall[]) =>
+    calls.filter((c) => c.method === 'set:globalCompositeOperation' && c.args[0] === 'destination-out');
+  const goldFillSets = (calls: RecordedCall[]) =>
+    calls.filter((c) => c.method === 'set:fillStyle' && c.args[0] === PALETTE[1].hex);
+
+  it('an empty doc with no holes traces no hole geometry at all (backward compatible)', () => {
+    expect(arcCalls(renderWithHoles([]))).toHaveLength(0);
+  });
+
+  it('FR-4: traces both the ring (opening) and drill-interior stadiums, injects gold, and punches the ring (destination-out)', () => {
+    const calls = renderWithHoles([ROUND_HOLE], { material: 'fr4' });
+    const arcs = arcCalls(calls);
+    expect(arcs.some((c) => c.args[2] === ROUND_HOLE.opening.width / 2)).toBe(true);
+    expect(arcs.some((c) => c.args[2] === ROUND_HOLE.drillDiameter / 2)).toBe(true);
+    // the copper-ring injection (mirrors gerber/holes.ts's injections.copper
+    // and preview/surface-maps.ts's paintHoleRingCopper) paints gold
+    expect(goldFillSets(calls).length).toBeGreaterThan(0);
+    // exactly 2 destination-out sets in this fixture: the always-present base
+    // mask punch (fires even with zero user mask layers) plus the ring punch.
+    // The drill interior is a POSITIVE fill (see the dedicated test below), so
+    // it must NOT add a third.
+    expect(destinationOutSets(calls)).toHaveLength(2);
+  });
+
+  it("alumi: traces the same ring + drill stadiums but never injects a gold fill — its ring exposes the material-aware substrate instead", () => {
+    const calls = renderWithHoles([ROUND_HOLE], { material: 'alumi' });
+    const arcs = arcCalls(calls);
+    expect(arcs.some((c) => c.args[2] === ROUND_HOLE.opening.width / 2)).toBe(true);
+    expect(arcs.some((c) => c.args[2] === ROUND_HOLE.drillDiameter / 2)).toBe(true);
+    expect(goldFillSets(calls)).toHaveLength(0);
+  });
+
+  // Codex review (base/material-holes diff) caught the original implementation
+  // erasing the drill interior via destination-out on the MAIN canvas — a flat
+  // raster has no "layer underneath" left to reveal that way once the panel
+  // composite has opaquely overwritten those pixels this frame; the erase
+  // actually zeroed them to fully transparent (showing whatever sits BEHIND
+  // the <canvas> element, not the workspace background). Fixed to a positive
+  // fill — this test pins the fix by inspecting the calls immediately
+  // preceding the drill's arc trace.
+  it('paints the drill interior via a POSITIVE fill (source-over) with the workspace background color, not a destination-out erase', () => {
+    const WORKSPACE_BG_HEX = '#26282c'; // mirrors renderer.ts's private WORKSPACE_BG constant
+    const calls = renderWithHoles([ROUND_HOLE], { material: 'fr4' });
+    const drillArcIndex = calls.findIndex(
+      (c) => c.method === 'arc' && c.args[2] === ROUND_HOLE.drillDiameter / 2,
+    );
+    expect(drillArcIndex).toBeGreaterThan(-1);
+    const before = calls.slice(0, drillArcIndex);
+    const lastCompositeModeSet = before
+      .filter((c) => c.method === 'set:globalCompositeOperation')
+      .at(-1);
+    const lastFillStyleSet = before.filter((c) => c.method === 'set:fillStyle').at(-1);
+    expect(lastCompositeModeSet?.args[0]).toBe('source-over');
+    expect(lastFillStyleSet?.args[0]).toBe(WORKSPACE_BG_HEX);
+  });
+
+  it('front view traces the ring/drill at the CANONICAL cx — no mirror', () => {
+    const xs = arcCalls(renderWithHoles([ROUND_HOLE], { material: 'fr4', side: 'front' })).map(
+      (c) => c.args[0] as number,
+    );
+    expect(xs.length).toBeGreaterThan(0);
+    expect(xs.every((x) => Math.abs(x - ROUND_HOLE.cx) < 1e-9)).toBe(true);
+  });
+
+  it('back view mirrors hole DISPLAY x to (panelWidthMm - cx) — the #233 canonical-coordinate contract', () => {
+    const xs = arcCalls(renderWithHoles([ROUND_HOLE], { material: 'fr4', side: 'back' })).map(
+      (c) => c.args[0] as number,
+    );
+    const expectedX = PANEL_WIDTH_MM - ROUND_HOLE.cx;
+    expect(xs.length).toBeGreaterThan(0);
+    expect(xs.every((x) => Math.abs(x - expectedX) < 1e-9)).toBe(true);
   });
 });
