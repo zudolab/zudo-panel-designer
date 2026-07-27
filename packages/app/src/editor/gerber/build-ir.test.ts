@@ -155,10 +155,39 @@ describe('GerberIr contract (Decision 0)', () => {
     });
   });
 
-  it('back layers are empty stubs until #236 fills the extraction seam', async () => {
-    const ir = ok(await build(doc()));
-    const backRegions = ir.layers.filter((l) => l.role.startsWith('b-')).map((l) => l.regions);
-    expect(backRegions).toEqual([[], [], []]);
+  it('projects doc.backLayers through the #236 seam — mirrored artwork plus hole fabrication', async () => {
+    const state: DocState = {
+      ...doc(),
+      backLayers: [
+        createPcbLayerContainer('back', 'copper', []),
+        createPcbLayerContainer('back', 'solder-mask', []),
+        createPcbLayerContainer('back', 'silkscreen', [
+          rect({ id: 'bs', x: 5, y: 10, width: 10, height: 5, color: 2 }),
+        ]),
+      ],
+    };
+    const ir = ok(await build(state));
+    const byRole = new Map(ir.layers.map((l) => [l.role, l]));
+    // Back artwork lands X-mirrored into front-view doc space (Decision 13):
+    // authored back-view x ∈ [5, 15] reads as [WIDTH − 15, WIDTH − 5].
+    const silk = byRole.get('b-silkscreen')!;
+    expect(silk.regions).toHaveLength(1);
+    expect(bounds(silk.regions[0].outer)).toEqual([WIDTH - 15, 10, WIDTH - 5, 15]);
+    // Screw-hole fabrication from the canonical template coordinates
+    // (Decisions 11/12): opening stadiums on the back mask, copper stadiums on
+    // the FR-4 back copper. 3U-16hp carries four slots.
+    expect(byRole.get('b-solder-mask')!.regions).toHaveLength(4);
+    expect(byRole.get('b-copper')!.regions).toHaveLength(4);
+  });
+
+  it('fills the alumi B.Mask with the screw-hole openings only (Decision 12)', async () => {
+    const ir = ok(await build({ ...doc(), material: 'alumi' }));
+    const mask = ir.layers.find((l) => l.role === 'b-solder-mask')!;
+    expect(mask.regions).toHaveLength(4);
+    for (const region of mask.regions) {
+      expect(polygonSignedArea(region.outer)).toBeGreaterThan(0);
+      expect(region.holes).toEqual([]);
+    }
   });
 
   it('keeps geometry in DOCUMENT space, +y down, un-flipped', async () => {
