@@ -10,6 +10,7 @@ import {
   type ColorIndex,
   type DocState,
   type Layer,
+  type PanelHole,
   type PcbLayerSlices,
   type PcbMaterial,
 } from '@zpd/core';
@@ -213,8 +214,49 @@ interface SurfaceMapPaintTarget {
   readonly heightMm: number;
   readonly material: PcbMaterial;
   readonly slices: PcbLayerSlices;
+  readonly holes: readonly PanelHole[];
   readonly maskSheetFactory: MaskSheetFactory;
   readonly signal: AbortSignal;
+}
+
+// Screw-hole fabrication injected into every face's map set (#234, epic #226
+// decisions 11/12): each catalog hole opens the solder mask with its
+// `opening` stadium on both materials, and FR-4 additionally lays a copper
+// stadium of the same shape under the punch so the exposed annular ring
+// reads as the plated (PTH) gold barrel's ring; alumi's NPTH openings expose
+// the shining substrate instead. Canonical catalog coordinates serve both
+// faces unchanged — the back face's x mirror lives in the sampling contract
+// (contracts.PREVIEW_BACK_FACE_ORIENTATION), never in the paint.
+function fillHoleOpeningStadiums(ctx: CanvasRenderingContext2D, holes: readonly PanelHole[]): void {
+  for (const hole of holes) {
+    const radius = hole.opening.width / 2;
+    // A round hole's square opening (width === length) collapses the flat
+    // span to zero and the stadium degrades to a pure circle.
+    const halfSpan = Math.max(0, (hole.opening.length - hole.opening.width) / 2);
+    ctx.beginPath();
+    ctx.arc(hole.cx + halfSpan, hole.cy, radius, -Math.PI / 2, Math.PI / 2, false);
+    ctx.arc(hole.cx - halfSpan, hole.cy, radius, Math.PI / 2, (3 * Math.PI) / 2, false);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function paintHoleRingCopper(
+  ctx: CanvasRenderingContext2D,
+  holes: readonly PanelHole[],
+  color: string,
+): void {
+  ctx.fillStyle = color;
+  fillHoleOpeningStadiums(ctx, holes);
+}
+
+function punchHoleOpenings(ctx: CanvasRenderingContext2D, holes: readonly PanelHole[]): void {
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  // Alpha is what punches (mask-sheet contract); the hue never lands.
+  ctx.fillStyle = '#000000';
+  fillHoleOpeningStadiums(ctx, holes);
+  ctx.restore();
 }
 
 function enterPanelSpace(
@@ -238,7 +280,7 @@ function punchedMaskSheet(
   fillStyle: string,
   punchColorFor: (color: ColorIndex) => string,
 ): PreviewCanvasSource {
-  const { canvas, widthMm, heightMm, slices, maskSheetFactory } = paintTarget;
+  const { canvas, widthMm, heightMm, slices, holes, maskSheetFactory } = paintTarget;
   const sheet = acquireMaskSheet(maskSheetFactory, canvas.width, canvas.height);
   const sheetCtx = sheet.ctx;
   sheetCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -251,6 +293,9 @@ function punchedMaskSheet(
   sheetCtx.save();
   sheetCtx.setTransform(canvas.width / widthMm, 0, 0, canvas.height / heightMm, 0, 0);
   paintMaskPunches(sheetCtx, slices.solderMask, { colorFor: punchColorFor });
+  // The screw-hole openings are fabrication data, not artwork: they punch on
+  // both faces and both materials, independent of what the user drew.
+  punchHoleOpenings(sheetCtx, holes);
   sheetCtx.restore();
   return sheet.canvas;
 }
@@ -263,7 +308,7 @@ function paintSurfaceMap(
   paintTarget: SurfaceMapPaintTarget,
   mapName: MaterialSurfaceMapName,
 ): void {
-  const { canvas, widthMm, heightMm, material, slices, signal } = paintTarget;
+  const { canvas, widthMm, heightMm, material, slices, holes, signal } = paintTarget;
   const ctx = canvas2dContext(canvas);
   throwIfAborted(signal);
 
@@ -278,6 +323,12 @@ function paintSurfaceMap(
     color: surfaceMapColorForPalette(mapName, 1),
     signal,
   });
+  // FR-4 screw holes are PTH (epic decision 11): the copper ring under the
+  // mask opening is what makes the exposed ring read gold. Alumi is NPTH —
+  // no ring, its opening exposes bare substrate.
+  if (material === 'fr4') {
+    paintHoleRingCopper(ctx, holes, surfaceMapColorForPalette(mapName, 1));
+  }
   ctx.restore();
 
   // Hidden mask container means NO sheet at all — bare copper on substrate —
@@ -308,7 +359,7 @@ function paintSurfaceMap(
 // draping over copper stacks both thicknesses (epic #176). Silkscreen never
 // paints here — its ink adds no meaningful height.
 function paintHeightMap(paintTarget: SurfaceMapPaintTarget): void {
-  const { canvas, widthMm, heightMm, slices, signal } = paintTarget;
+  const { canvas, widthMm, heightMm, material, slices, holes, signal } = paintTarget;
   const ctx = canvas2dContext(canvas);
   throwIfAborted(signal);
 
@@ -320,6 +371,10 @@ function paintHeightMap(paintTarget: SurfaceMapPaintTarget): void {
 
   enterPanelSpace(ctx, canvas, widthMm, heightMm);
   paintCopperCoverage(ctx, slices.copper, { color: PREVIEW_HEIGHT_COPPER_COLOR, signal });
+  // The FR-4 ring is real copper, so it raises the surface exactly like
+  // artwork copper does (source-over: overlap with artwork stays one copper
+  // thickness, never additive).
+  if (material === 'fr4') paintHoleRingCopper(ctx, holes, PREVIEW_HEIGHT_COPPER_COLOR);
   ctx.restore();
 
   // Hidden mask container adds no mask thickness anywhere; an empty visible
@@ -416,6 +471,10 @@ export function createPreviewSurfaceMapGenerator(
 
       const widthMm = panelWidthMm(input.doc.panelHp);
       const heightMm = panelHeightMm(input.doc.format);
+      // The golden screw-hole catalog, derived from (format, hp) — painted
+      // into every face's maps below and carried on the snapshot for the
+      // geometry cut.
+      const holes = panelHoles(input.doc.format, input.doc.panelHp);
       const rasterSize = choosePreviewRasterSize({
         widthMm,
         heightMm,
@@ -468,6 +527,7 @@ export function createPreviewSurfaceMapGenerator(
             heightMm,
             material: input.doc.material,
             slices: faceSlices,
+            holes,
             maskSheetFactory,
             signal: input.ticket.signal,
           };
@@ -491,7 +551,7 @@ export function createPreviewSurfaceMapGenerator(
         widthMm,
         heightMm,
         thicknessMm: PANEL_THICKNESS_MM,
-        holes: panelHoles(input.doc.format, input.doc.panelHp),
+        holes,
         rasterSize,
         canvases,
         backCanvases,
