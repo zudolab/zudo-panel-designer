@@ -1050,9 +1050,10 @@ hits, `G00`/`M15`/`G01`/`M16` routed slots (the ordered reference sets' exact
 idiom), with the Y flip through `coordinate-frame.ts` (Decision 1). A
 `DrillSlot`'s `start`/`end` are the endpoint CENTRES of the routed span, which
 for a template slot is `slotLength − drillDiameter` long — NOT the finished
-overall stadium length. Until #235 lands, `drillFileText` REFUSES (throws) on
-non-empty drill content: silently emitting a plausible header-only file for
-real holes is exactly the failure mode Decision 8 exists to prevent.
+overall stadium length. #235 implements this in `gerber/excellon.ts` (a pure
+emitter parallel to `writer.ts`), which still REFUSES (throws) on drill
+content that references a tool absent from the tool table: silently dropping
+drill content is exactly the failure mode Decision 8 exists to prevent.
 
 **Hole artwork is injected, not extracted.** `injectHoleFabrication(...)`
 (`gerber/holes.ts`) returns, per layer role, regions build-ir APPENDS after
@@ -1170,8 +1171,8 @@ Consequences, pinned by tests:
     an independent viewer on an asymmetric design.
 11. **Screw holes**: derived from the template catalog per `(format, hp)`,
     never stored; FR-4 plated (`PTH.drl`), alumi non-plated (`NPTH.drl`); mask
-    openings and FR-4 copper rings are appended injections, and header-only
-    drill files refuse non-empty content until #235 lands.
+    openings and FR-4 copper rings are appended injections, and the Excellon
+    emitter refuses content that references a tool absent from its table.
 12. **Alumi back**: `.GBS` with screw-hole openings only — no B.Cu, no B.Silk,
     bare-metal back; FR-4 ships the full editable back trio.
 13. **Back X mirror**: `x → widthMm − x`, applied once in doc space at the
