@@ -17,7 +17,7 @@
 // move gesture's grid step is 0.1mm. Dropping the guide at an off-0.1mm x and
 // asserting the rect's right edge lands on that value to 0.01mm precision is a
 // landing grid-snapping alone cannot produce.
-import { PANEL_HEIGHT_MM } from '@zpd/core';
+import { panelHeightMm } from '@zpd/core';
 import { expect, test } from '@playwright/test';
 import { bridge, openEditor, toScreenPoint } from './helpers';
 
@@ -32,7 +32,7 @@ test('@smoke dragging a layer near a guide snaps its edge onto the guide (#53 + 
   // demo-rect's right edge (32) so a rightward drag can reach it, and so the
   // landing is distinguishable from a pure 0.1mm grid snap.
   const guideTargetXMm = 40.37;
-  const drop = await toScreenPoint(page, { x: guideTargetXMm, y: PANEL_HEIGHT_MM / 2 });
+  const drop = await toScreenPoint(page, { x: guideTargetXMm, y: panelHeightMm('3U') / 2 });
   const rulerBox = await page.getByTestId('ruler-v').boundingBox();
   if (!rulerBox) throw new Error('ruler-v not visible');
   await page.mouse.move(rulerBox.x + rulerBox.width / 2, rulerBox.y + rulerBox.height / 2);

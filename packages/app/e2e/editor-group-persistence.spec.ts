@@ -27,7 +27,7 @@ async function click(page: Page, mm: { x: number; y: number }, modifiers: string
   for (const key of [...modifiers].reverse()) await page.keyboard.up(key);
 }
 
-test('@smoke export -> import a grouped doc round-trips intact at v5', async ({ page }) => {
+test('@smoke export -> import a grouped doc round-trips intact at v6', async ({ page }) => {
   await openEditor(page);
   // Groups cannot span fixed materials. Rect + Text are both ordinary
   // Silkscreen children, selected through the real Layers UI.
@@ -41,7 +41,7 @@ test('@smoke export -> import a grouped doc round-trips intact at v5', async ({ 
   expect(group.children.map((c) => c.id)).toEqual(['demo-rect', 'demo-text']);
 
   const exported = await bridge(page).serialize();
-  expect(exported.version).toBe(5);
+  expect(exported.version).toBe(6);
   const docBefore = await bridge(page).getDoc();
 
   const tmpPath = path.join(__dirname, '..', 'test-results', 'group-export-roundtrip.json');
@@ -94,10 +94,10 @@ test('@smoke a pre-existing v3 fixture migrates into the v5 fixed material stack
     { id: 'legacy-silkscreen', material: 'silkscreen' },
   ]);
 
-  // Re-serializing the migrated doc emits the canonical v5 physical stack,
+  // Re-serializing the migrated doc emits the canonical v6 physical stack,
   // never the legacy flat v3 shape.
   const reserialized = await bridge(page).serialize();
-  expect(reserialized.version).toBe(5);
+  expect(reserialized.version).toBe(6);
   expect((await bridge(page).getPcbLayerStack()).map((root) => root.role)).toEqual([
     'copper',
     'solder-mask',

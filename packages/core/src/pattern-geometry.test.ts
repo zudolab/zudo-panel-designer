@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
+import { panelWidthMm } from './panel-sizes';
+import { panelHeightMm } from './panel-templates';
 import { patternCoverGeometry } from './pattern-geometry';
 
 describe('patternCoverGeometry', () => {
   it('side = the larger panel dimension, centered (12HP: 128.5mm square)', () => {
     const widthMm = panelWidthMm(12); // 60.6
-    const geo = patternCoverGeometry({ widthMm, heightMm: PANEL_HEIGHT_MM });
-    expect(geo.size).toBe(PANEL_HEIGHT_MM);
-    expect(geo.x).toBe((widthMm - PANEL_HEIGHT_MM) / 2);
+    const heightMm = panelHeightMm('3U');
+    const geo = patternCoverGeometry({ widthMm, heightMm });
+    expect(geo.size).toBe(heightMm);
+    expect(geo.x).toBe((widthMm - heightMm) / 2);
     expect(geo.y).toBe(0);
   });
 
@@ -21,13 +23,14 @@ describe('patternCoverGeometry', () => {
   });
 
   it('the square fully covers the panel for every spec-table HP', () => {
+    const heightMm = panelHeightMm('3U');
     for (const hp of [1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 20]) {
       const widthMm = panelWidthMm(hp);
-      const { x, y, size } = patternCoverGeometry({ widthMm, heightMm: PANEL_HEIGHT_MM });
+      const { x, y, size } = patternCoverGeometry({ widthMm, heightMm });
       expect(x).toBeLessThanOrEqual(0);
       expect(y).toBeLessThanOrEqual(0);
       expect(x + size).toBeGreaterThanOrEqual(widthMm);
-      expect(y + size).toBeGreaterThanOrEqual(PANEL_HEIGHT_MM);
+      expect(y + size).toBeGreaterThanOrEqual(heightMm);
     }
   });
 });

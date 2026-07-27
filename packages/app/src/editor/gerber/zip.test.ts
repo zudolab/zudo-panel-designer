@@ -146,8 +146,10 @@ describe('gerberZipBytes — a document with shape + path + text + pattern layer
 });
 
 describe('gerberZipFilename', () => {
-  it("matches download.ts's zpd-panel-<hp>hp.json pattern (Decision 2.2)", () => {
-    expect(gerberZipFilename(12)).toBe('zpd-panel-12hp-gerber.zip');
+  it('encodes format, hp, and material via the shared filename helper (#229)', () => {
+    expect(gerberZipFilename({ format: '3U', panelHp: 12, material: 'fr4' })).toBe(
+      'zpd-panel-3U-12hp-fr4-gerber.zip',
+    );
   });
 });
 

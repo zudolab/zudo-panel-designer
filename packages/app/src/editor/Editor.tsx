@@ -17,7 +17,7 @@ import {
 } from 'react';
 import {
   mapPcbLeavesById,
-  PANEL_HEIGHT_MM,
+  panelHeightMm,
   panelWidthMm,
   stackForSide,
   translatePathLayer,
@@ -118,8 +118,8 @@ export function Editor() {
   const [fitScale, setFitScale] = useState(4);
 
   const panel: PanelDims = useMemo(
-    () => ({ widthMm: panelWidthMm(doc.panelHp), heightMm: PANEL_HEIGHT_MM }),
-    [doc.panelHp],
+    () => ({ widthMm: panelWidthMm(doc.panelHp), heightMm: panelHeightMm(doc.format) }),
+    [doc.panelHp, doc.format],
   );
   // Normalized against the TREE (#151): selectedIds may hold group ids, which
   // a flat projection would wrongly drop as stale.
@@ -438,10 +438,12 @@ export function Editor() {
 
   const measured = canvasSize.w > 0;
   useEffect(() => {
-    // first measure and every panel-size change re-fits (fitView identity
-    // changes with panel.widthMm, so panelHp changes re-run this)
+    // first measure and every panel-size change re-fits: panelHp changes
+    // panel.widthMm, format changes panel.heightMm (panelHeightMm(format)) —
+    // both need a re-fit even though fitView's own identity stays stable
+    // (it reads panelRef, not the closed-over panel).
     if (measured) fitView();
-  }, [measured, doc.panelHp, fitView]);
+  }, [measured, doc.panelHp, doc.format, fitView]);
 
   // --- image asset loading -----------------------------------------------
   useEffect(() => {

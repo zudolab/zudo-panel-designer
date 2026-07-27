@@ -1,11 +1,12 @@
 import {
   createDefaultDoc,
   createPcbLayerContainer,
-  PANEL_HEIGHT_MM,
+  panelHeightMm,
   panelWidthMm,
   type DocState,
   type ImageLayer,
   type LayerNode,
+  type PanelFormat,
   type PathLayer,
   type PatternLayer,
   type PcbLayerStack,
@@ -23,6 +24,7 @@ import { setCuratedFontFileLoaderForTests } from './text-fonts';
 
 const HP = 16;
 const WIDTH = panelWidthMm(HP); // 80.9
+const PANEL_HEIGHT_MM = panelHeightMm('3U'); // 128.5
 
 let engine: BooleanEngine;
 beforeAll(async () => {
@@ -35,14 +37,24 @@ beforeAll(async () => {
 
 function doc(
   children: Partial<Record<'copper' | 'solder-mask' | 'silkscreen', LayerNode[]>> = {},
-  options: { readonly maskHidden?: boolean; readonly panelHp?: number } = {},
+  options: {
+    readonly maskHidden?: boolean;
+    readonly panelHp?: number;
+    readonly format?: PanelFormat;
+  } = {},
 ): DocState {
   const layers: PcbLayerStack = [
     createPcbLayerContainer('copper', children.copper ?? []),
     createPcbLayerContainer('solder-mask', children['solder-mask'] ?? [], options.maskHidden),
     createPcbLayerContainer('silkscreen', children.silkscreen ?? []),
   ];
-  return { ...createDefaultDoc(), panelHp: options.panelHp ?? HP, layers, guides: [] };
+  return {
+    ...createDefaultDoc(),
+    panelHp: options.panelHp ?? HP,
+    format: options.format ?? '3U',
+    layers,
+    guides: [],
+  };
 }
 
 function rect(over: Partial<ShapeLayer> & { id: string }): ShapeLayer {
@@ -106,6 +118,12 @@ describe('GerberIr contract (Decision 0)', () => {
     const ir = ok(await build(doc()));
     expect(ir.panel).toEqual({ hp: HP, widthMm: 80.9, heightMm: PANEL_HEIGHT_MM });
     expect(ir.panel.heightMm).toBe(128.5);
+  });
+
+  it('derives the panel height from the document format, not a fixed 3U constant (#229)', async () => {
+    const ir = ok(await build(doc({}, { panelHp: 8, format: '1U' })));
+    expect(ir.panel.heightMm).toBe(panelHeightMm('1U'));
+    expect(ir.panel.heightMm).toBe(39.65);
   });
 
   it('keeps geometry in DOCUMENT space, +y down, un-flipped', async () => {

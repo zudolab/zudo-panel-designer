@@ -1,6 +1,6 @@
 import {
   PALETTE,
-  PANEL_HEIGHT_MM,
+  panelHeightMm,
   PANEL_THICKNESS_MM,
   PCB_SUBSTRATE,
   panelWidthMm,
@@ -111,7 +111,7 @@ export interface PreviewSurfaceMapGeneratorOptions {
 }
 
 export interface PreviewSurfaceGenerationInput {
-  readonly doc: Pick<DocState, 'panelHp' | 'layers'>;
+  readonly doc: Pick<DocState, 'panelHp' | 'format' | 'layers'>;
   readonly ticket: PreviewGenerationTicket;
   readonly maximumTextureSizePx: number;
   readonly preferredPixelsPerMm?: number;
@@ -375,7 +375,7 @@ export function createPreviewSurfaceMapGenerator(
       throwIfAborted(input.ticket.signal);
 
       const widthMm = panelWidthMm(input.doc.panelHp);
-      const heightMm = PANEL_HEIGHT_MM;
+      const heightMm = panelHeightMm(input.doc.format);
       const rasterSize = choosePreviewRasterSize({
         widthMm,
         heightMm,

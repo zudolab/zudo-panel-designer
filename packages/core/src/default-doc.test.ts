@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDefaultDoc } from './default-doc';
-import { PANEL_HEIGHT_MM, panelWidthMm } from './panel-sizes';
+import { panelWidthMm } from './panel-sizes';
+import { panelHeightMm } from './panel-templates';
 import { patternCoverGeometry } from './pattern-geometry';
 
 describe('createDefaultDoc', () => {
@@ -32,7 +33,7 @@ describe('createDefaultDoc', () => {
     const [layer] = createDefaultDoc().layers[0].children;
     if (!layer || 'kind' in layer || layer.type !== 'pattern') throw new Error('unreachable');
     expect({ x: layer.x, y: layer.y, size: layer.size }).toEqual(
-      patternCoverGeometry({ widthMm: panelWidthMm(12), heightMm: PANEL_HEIGHT_MM }),
+      patternCoverGeometry({ widthMm: panelWidthMm(12), heightMm: panelHeightMm('3U') }),
     );
   });
 
@@ -42,7 +43,7 @@ describe('createDefaultDoc', () => {
     const [layer] = doc.layers[0].children;
     if (!layer || 'kind' in layer || layer.type !== 'pattern') throw new Error('unreachable');
     expect({ x: layer.x, y: layer.y, size: layer.size }).toEqual(
-      patternCoverGeometry({ widthMm: panelWidthMm(20), heightMm: PANEL_HEIGHT_MM }),
+      patternCoverGeometry({ widthMm: panelWidthMm(20), heightMm: panelHeightMm('3U') }),
     );
   });
 

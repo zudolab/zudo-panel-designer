@@ -18,11 +18,10 @@ import {
   type GerberEmitOptions,
 } from './writer';
 
-/** Matches `download.ts`'s `zpd-panel-<hp>hp.json`. */
-export function gerberZipFilename(hp: number): string {
-  return `zpd-panel-${hp}hp-gerber.zip`;
-}
-
+// The outer zip filename is the shared download-filename helper's (#229) —
+// kept in its own module so the gerber contract sub-issue (#231) and this one
+// can each land without fighting over the same function body.
+export { gerberZipFilename } from '../filename';
 
 /**
  * File→function mapping, panel dimensions, and the artwork-only statement

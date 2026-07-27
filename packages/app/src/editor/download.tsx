@@ -8,12 +8,13 @@
 // and gerber/zip.test.ts), and only the Blob/anchor mechanics below are
 // shared between the two DOM shells.
 import type { ReactNode } from 'react';
-import { PANEL_HEIGHT_MM, panelWidthMm, serializePanelConfig, type DocState } from '@zpd/core';
+import { panelHeightMm, panelWidthMm, serializePanelConfig, type DocState } from '@zpd/core';
 // package.json's `version` field, read at build time via TS's resolveJsonModule
 // — the same string writer.ts's %TF.GenerationSoftware,...*% attribute needs
 // (Decision 3.3), with no separate version constant to keep in sync by hand.
 import packageJson from '../../package.json';
 import { confirmDialog } from './components/confirm-dialog-api';
+import { panelConfigFilename } from './filename';
 // The whole Gerber pipeline is behind `await import(...)` below, never a static
 // import. It is reachable from the header (and therefore from the app entry),
 // so a static import drags build-ir + extract + stroker + flatten + regions +
@@ -46,13 +47,12 @@ function triggerDownload(blob: Blob, filename: string): void {
 export function downloadPanelConfig(doc: DocState): void {
   triggerDownload(
     new Blob([panelConfigJson(doc)], { type: 'application/json' }),
-    `zpd-panel-${doc.panelHp}hp.json`,
+    panelConfigFilename(doc),
   );
 }
 
 export type GerberDownloadResult =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly refusals: readonly GerberRefusal[] };
+  { readonly ok: true } | { readonly ok: false; readonly refusals: readonly GerberRefusal[] };
 
 function gerberEmitOptionsNow(): GerberEmitOptions {
   // Decision 3.3: TF.CreationDate is an explicit parameter of the pure writer,
@@ -74,7 +74,7 @@ export async function downloadGerberZip(doc: DocState): Promise<GerberDownloadRe
   const result = await buildGerberIr(doc);
   if (!result.ok) return result;
   const bytes = gerberZipBytes(result.ir, gerberEmitOptionsNow());
-  triggerDownload(new Blob([bytes], { type: 'application/zip' }), gerberZipFilename(doc.panelHp));
+  triggerDownload(new Blob([bytes], { type: 'application/zip' }), gerberZipFilename(doc));
   return { ok: true };
 }
 
@@ -127,9 +127,10 @@ function refusalListNode(refusals: readonly GerberRefusal[]): ReactNode {
  */
 export async function exportGerberZip(doc: DocState): Promise<void> {
   const widthMm = panelWidthMm(doc.panelHp);
+  const heightMm = panelHeightMm(doc.format);
   const confirmed = await confirmDialog({
     title: 'Export Gerber (.zip)',
-    message: `${GERBER_ARTWORK_ONLY_STATEMENT} Panel: ${doc.panelHp}HP, ${widthMm} × ${PANEL_HEIGHT_MM} mm.`,
+    message: `${GERBER_ARTWORK_ONLY_STATEMENT} Panel: ${doc.panelHp}HP, ${widthMm} × ${heightMm} mm.`,
     confirmLabel: 'Export .zip',
     cancelLabel: 'Cancel',
   });
