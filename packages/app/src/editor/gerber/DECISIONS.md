@@ -8,6 +8,13 @@ this document wins and the other text is stale.
 Downstream sub-issues bound by this record: #209 (geometry IR), #210 (RS-274X
 writer), #211 (pattern recorder), #212 (text outliner), #215 (zip + export UI).
 
+**Revised by the material-holes epic #226, sub #231.** The export grew from
+artwork-only to fabrication output: per-material file sets, back-side files,
+and Excellon drill data for the panel screw holes. Decisions 0, 1, 2, 3 and 4
+are revised in place; Decisions 11–13 are new. Additionally bound: #235
+(Excellon drill + hole/ring injection — fills `holes.ts`), #236 (back-side
+extraction + packaging — fills `back-extract.ts`).
+
 ## Binding scope steer from the requester
 
 > "as the circuit, this does not work at all. but this is all right. just make
@@ -15,6 +22,10 @@ writer), #211 (pattern recorder), #212 (text outliner), #215 (zip + export UI).
 
 Copper is a **decorative design element, not a functional circuit.** No nets, no
 pads, no DRC, no component drill data. Everything below follows from that.
+
+The #231 revision does not loosen the steer: the drill files carry ONLY the
+panel template's own screw holes (Decision 11), never component holes, and the
+copper — front or back — is still artwork, not nets.
 
 ---
 
@@ -24,6 +35,11 @@ This is the load-bearing deliverable. #210 builds against **hand-authored
 fixtures** of this contract and must never need to read #209's implementation.
 The types below are the contract; #209 creates them at
 `packages/app/src/editor/gerber/ir.ts` and every other sub-issue imports them.
+
+The #231 revision extends the same contract with back-side roles, a
+per-material layer list, and the Excellon drill IR that #235 and #236 fill in
+parallel — neither may need to change a shape here. If a downstream sub-issue
+must change one of these shapes to do its job, #231 failed.
 
 ```ts
 // packages/app/src/editor/gerber/ir.ts
@@ -62,7 +78,22 @@ export interface IrRegion {
   readonly holes: readonly IrRing[];
 }
 
-export type IrLayerRole = 'copper' | 'solder-mask' | 'silkscreen' | 'outline';
+/**
+ * Front roles, back roles (`b-` prefix), and the profile. Back-role geometry
+ * is ALREADY X-mirrored into canonical fabrication coordinates (front view,
+ * doc space) when it reaches an `IrLayer` — the mirror happens exactly once,
+ * at the build-IR boundary, never in the writer (Decision 13).
+ */
+export type IrLayerRole =
+  | 'copper'
+  | 'solder-mask'
+  | 'silkscreen'
+  | 'b-copper'
+  | 'b-solder-mask'
+  | 'b-silkscreen'
+  | 'outline';
+
+export type BackLayerRole = Extract<IrLayerRole, `b-${string}`>;
 
 export interface IrLayer {
   readonly role: IrLayerRole;
@@ -94,17 +125,92 @@ export interface IrLayer {
 }
 
 export interface IrPanel {
+  readonly format: PanelFormat;
   readonly hp: number;
   /** panelWidthMm(hp) — always a PANEL_SIZES table value (Decision 8). */
   readonly widthMm: number;
-  /** PANEL_HEIGHT_MM = 128.5, the Y-flip constant. */
+  /** panelHeightMm(format) — the Y-flip constant (39.65 for 1U, 128.5 for 3U). */
   readonly heightMm: number;
 }
 
+/**
+ * Declarative role metadata, pinned by Decision 3.1's attribute table. Every
+ * builder of an `IrLayer` (build-ir, #235's injections, #236's back
+ * extraction, fixtures) reads the value from here so the table has one owner.
+ */
+export const ROLE_FILE_POLARITY: Record<IrLayerRole, IrLayer['filePolarity']>;
+
+/**
+ * Which back files a material ships (Decision 12): FR-4 has a real editable
+ * back; alumi is a B.Mask carrying only the screw-hole openings.
+ */
+export const MATERIAL_BACK_ROLES: Record<PcbMaterial, readonly BackLayerRole[]>;
+// fr4:   ['b-copper', 'b-solder-mask', 'b-silkscreen']
+// alumi: ['b-solder-mask']
+
+/**
+ * The exact `GerberIr.layers` role list per material, in emission order:
+ * front, back, outline. The zip manifest follows it entry for entry.
+ */
+export const MATERIAL_LAYER_ROLES: Record<PcbMaterial, readonly IrLayerRole[]>;
+// fr4:   ['copper', 'solder-mask', 'silkscreen',
+//         'b-copper', 'b-solder-mask', 'b-silkscreen', 'outline']
+// alumi: ['copper', 'solder-mask', 'silkscreen', 'b-solder-mask', 'outline']
+
 export interface GerberIr {
+  readonly material: PcbMaterial;
   readonly panel: IrPanel;
-  /** Exactly 4 entries, in this order: copper, solder-mask, silkscreen, outline. */
-  readonly layers: readonly [IrLayer, IrLayer, IrLayer, IrLayer];
+  /** One entry per MATERIAL_LAYER_ROLES[material], in that order. */
+  readonly layers: readonly IrLayer[];
+  /** Both drill files, always — one side is empty per material (Decision 11). */
+  readonly drill: DrillIr;
+}
+
+// ─── Excellon drill IR (Decision 11) — same DOCUMENT-space mm as above ──────
+
+/** Per-FILE split in Excellon: two files, two headers — never a per-hit flag. */
+export type DrillPlating = 'pth' | 'npth';
+
+export interface DrillTool {
+  /** Excellon tool number: `T<code>` in the tool table and the body. 1-based. */
+  readonly code: number;
+  /** Drill diameter in mm — the `C` parameter, e.g. `T1C3.200`. */
+  readonly diameterMm: number;
+}
+
+/** One round hole: a plain `X…Y…` stroke of the selected tool. */
+export interface DrillHit {
+  /** References DrillTool.code within the same file. */
+  readonly tool: number;
+  /** Hole centre, doc space mm. */
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * One routed slot (`G00` start, `M15` plunge, `G01` end, `M16` retract — the
+ * ordered reference sets' exact idiom). `start`/`end` are the endpoint
+ * CENTRES of the routed span: `slotLength − drillDiameter` long, NOT the
+ * finished overall stadium length (panel-templates.ts).
+ */
+export interface DrillSlot {
+  readonly tool: number;
+  readonly start: IrPoint;
+  readonly end: IrPoint;
+}
+
+export interface DrillFileIr {
+  readonly plating: DrillPlating;
+  /** Tool table in `code` order. Empty ⇒ the file is emitted header-only. */
+  readonly tools: readonly DrillTool[];
+  readonly hits: readonly DrillHit[];
+  readonly slots: readonly DrillSlot[];
+}
+
+/** Both files, always present; the empty side is emitted header-only. */
+export interface DrillIr {
+  readonly pth: DrillFileIr;
+  readonly npth: DrillFileIr;
 }
 ```
 
@@ -217,9 +323,10 @@ block the export.
 
 ### 0.5 What the IR deliberately does not carry
 
-No apertures, no nets, no pads, no drill data, no per-object colour, no layer
-names, no Gerber syntax. Aperture choice, attribute strings, number formatting
-and the Y flip are all writer concerns.
+No apertures, no nets, no pads, no component drill data (the `DrillIr` pair
+carries only the panel screw holes, Decision 11), no per-object colour, no
+layer names, no Gerber syntax. Aperture choice, attribute strings, number
+formatting and the Y flip are all writer concerns.
 
 ---
 
@@ -231,7 +338,7 @@ bottom-left.
 
 ```
 gerberX = docX
-gerberY = PANEL_HEIGHT_MM − docY      // PANEL_HEIGHT_MM = 128.5
+gerberY = panelHeightMm(format) − docY      // 39.65 for 1U, 128.5 for 3U
 ```
 
 **Applied exactly once, at one named boundary:**
@@ -251,8 +358,17 @@ Binding rules:
   twice is exactly as wrong.
 - Pinned unit test: `toGerberPoint({ x: 0, y: 0 }, 128.5)` → `{ x: 0, y: 128.5 }`,
   and `toGerberPoint({ x: 0, y: 128.5 }, 128.5)` → `{ x: 0, y: 0 }`.
-- The panel occupies Gerber `x ∈ [0, panelWidthMm(hp)]`, `y ∈ [0, 128.5]`. All
-  emitted coordinates are non-negative (guaranteed by the clip, Decision 7).
+- The panel occupies Gerber `x ∈ [0, panelWidthMm(hp)]`,
+  `y ∈ [0, panelHeightMm(format)]`. All emitted coordinates are non-negative
+  (guaranteed by the clip, Decision 7).
+- The Excellon drill writer (#235) flips through the SAME
+  `coordinate-frame.ts` boundary — drill IR coordinates are document-space mm
+  like every other IR coordinate, and `holes.ts` never computes the flip
+  itself.
+- The back-side X mirror (Decision 13) is a DIFFERENT, build-IR-side
+  transform. It does not change this rule: back layers reach the writer
+  already in front-view doc space and get the same single Y flip as front
+  layers.
 
 **No Gerber-level transforms.** All rotation, mirroring and scaling is baked
 into coordinates in document space during extraction. The writer never emits
@@ -265,37 +381,60 @@ adding a Gerber-level rotation would double-transform.
 
 ---
 
-## Decision 2 — Fileset scope: artwork + outline only
+## Decision 2 — Fileset scope: per-material fabrication set
+
+(Revised by #231. The original decision was "artwork + outline only, no drill
+data, no bottom side"; the material-holes epic #226 retired that scope.)
 
 ### 2.1 Files
 
-| File | Content | X2 `TF.FileFunction` |
-|---|---|---|
-| `.GTL` | Top copper | `Copper,L1,Top` |
-| `.GTS` | Top solder mask | `Soldermask,Top` |
-| `.GTO` | Top silkscreen / legend | `Legend,Top` |
-| `.GKO` | Board outline (profile) | `Profile,NP` |
+| File | Content | X2 `TF.FileFunction` | FR-4 | alumi |
+|---|---|---|---|---|
+| `.GTL` | Top copper | `Copper,L1,Top` | yes | yes |
+| `.GTS` | Top solder mask | `Soldermask,Top` | yes | yes |
+| `.GTO` | Top silkscreen / legend | `Legend,Top` | yes | yes |
+| `.GBL` | Bottom copper | `Copper,L2,Bot` | yes | — |
+| `.GBS` | Bottom solder mask | `Soldermask,Bot` | yes | yes* |
+| `.GBO` | Bottom silkscreen / legend | `Legend,Bot` | yes | — |
+| `.GKO` | Board outline (profile) | `Profile,NP` | yes | yes |
+| `-PTH.drl` | Plated screw-hole drill | `Plated,1,2,PTH` (Excellon, Decision 11) | content | empty |
+| `-NPTH.drl` | Non-plated screw-hole drill | `NonPlated,1,2,NPTH` (Excellon, Decision 11) | empty | content |
 
-**No Excellon drill file. No mounting-hole geometry. No bottom-side files. No
-paste layer.** The document model carries zero hole/drill data and zero
-bottom-side content, and the requester's steer puts electrical and mechanical
-completeness out of scope.
+\* alumi's `.GBS` carries the screw-hole openings ONLY (Decision 12).
 
-All four files are **always written**, even when empty. Omitting a file is
-another ambiguity a fab has to guess at; an empty-but-present file with a
-correct `TF.FileFunction` is unambiguous. (Read Decision 4 before concluding
-that an empty `.GTS` is harmless — it is meaningful, not neutral.)
+The Gerber layer files follow `MATERIAL_LAYER_ROLES[material]` entry for
+entry, in its order: front, back, outline. `Copper,L1,Top` / `Copper,L2,Bot`
+together declare the two-layer stackup — the layer numbers ARE the
+declaration; X2 has no separate stackup attribute at this level.
+
+Still out of scope: component holes, paste layers, anything electrical. The
+drill pair carries only the panel template's screw holes.
+
+Every file in the material's manifest is **always written**, even when empty.
+Omitting a file is another ambiguity a fab has to guess at; an empty-but-
+present file with a correct `TF.FileFunction` is unambiguous. This now covers
+the drill pair too: the material's unused side ships header-only (Decision
+11), exactly like the ordered reference sets did. (Read Decision 4 before
+concluding that an empty `.GTS` is harmless — it is meaningful, not neutral.)
 
 ### 2.2 Filenames
 
-Matching `download.ts`'s existing `zpd-panel-${doc.panelHp}hp.json`:
+Inner files keep `download.ts`'s `zpd-panel-${doc.panelHp}hp` stem; the zip
+filename gains format and material now that both vary (#229's shared
+download-filename helper takes over the construction when it lands —
+whichever side merges second reconciles):
 
 ```
-zpd-panel-<hp>hp-gerber.zip
+zpd-panel-<format>-<hp>hp-<material>-gerber.zip   e.g. zpd-panel-3u-12hp-fr4-gerber.zip
 ├── zpd-panel-<hp>hp.GTL
 ├── zpd-panel-<hp>hp.GTS
 ├── zpd-panel-<hp>hp.GTO
+├── zpd-panel-<hp>hp.GBL        (FR-4 only)
+├── zpd-panel-<hp>hp.GBS
+├── zpd-panel-<hp>hp.GBO        (FR-4 only)
 ├── zpd-panel-<hp>hp.GKO
+├── zpd-panel-<hp>hp-PTH.drl
+├── zpd-panel-<hp>hp-NPTH.drl
 └── README.txt
 ```
 
@@ -306,21 +445,31 @@ zpd-panel-<hp>hp-gerber.zip
 filled region on a profile layer is ambiguous about which side of the boundary
 is board; the profile is a cut path and must read as one.
 
-### 2.4 The limitation is surfaced in the app, not only in the zip
+### 2.4 The scope statement is surfaced in the app, not only in the zip
 
-Binding on #215. The export UI states, **before the download happens**:
+Binding on #215; wording revised by #231 (the artwork-only statement retired
+with the drill/back-side scope change). The export UI states, **before the
+download happens**:
 
-> This export contains artwork only — copper, solder mask, silkscreen, and the
-> board outline. It contains no drill file and no mounting-hole geometry. It is
-> artwork for an already-specified Takazudo blank panel, not a standalone
-> orderable board.
+> This export contains fabrication data for a Takazudo blank panel: copper,
+> solder mask, silkscreen, the board outline, and Excellon drill files for the
+> panel screw holes (FR-4 panels also carry back-side files). The copper is
+> decorative artwork, not a functional circuit. Hole and back-side support is
+> still landing across the material-holes epic, so drill and back-side content
+> may be incomplete in this build.
+
+The constant is `GERBER_EXPORT_SCOPE_STATEMENT` (renamed from
+`GERBER_ARTWORK_ONLY_STATEMENT`; the `artwork-only-statement.ts` module
+filename is deliberately kept to avoid import churn across the lazy/static
+boundary). The final sentence is an honest interim caveat — the epic's closing
+integration sub-issue (#238) removes it once drill and back content are real.
 
 The same text goes in `README.txt` inside the zip *as well*, but the in-app
 statement is the real protection: fabs routinely ignore instructions bundled in
 a zip, and nobody reads a README before uploading to an automated quoting form.
 
-The file itself also carries it, so it survives being separated from both the
-zip and the UI — see `TF.Part` in Decision 3.2.
+The file itself also carries the decorative-copper caveat, so it survives being
+separated from both the zip and the UI — see `TF.Part` in Decision 3.3.
 
 ---
 
@@ -329,15 +478,25 @@ zip and the UI — see `TF.Part` in Decision 3.2.
 ### 3.1 Per-file attributes (exact strings)
 
 ```
-Copper       %TF.FileFunction,Copper,L1,Top*%
-             %TF.FilePolarity,Positive*%
-Solder mask  %TF.FileFunction,Soldermask,Top*%
-             %TF.FilePolarity,Negative*%
-Silkscreen   %TF.FileFunction,Legend,Top*%
-             %TF.FilePolarity,Positive*%
-Outline      %TF.FileFunction,Profile,NP*%
-             (no TF.FilePolarity — IrLayer.filePolarity is null for 'outline')
+Copper         %TF.FileFunction,Copper,L1,Top*%
+               %TF.FilePolarity,Positive*%
+Solder mask    %TF.FileFunction,Soldermask,Top*%
+               %TF.FilePolarity,Negative*%
+Silkscreen     %TF.FileFunction,Legend,Top*%
+               %TF.FilePolarity,Positive*%
+B.Copper       %TF.FileFunction,Copper,L2,Bot*%
+               %TF.FilePolarity,Positive*%
+B.Solder mask  %TF.FileFunction,Soldermask,Bot*%
+               %TF.FilePolarity,Negative*%
+B.Silkscreen   %TF.FileFunction,Legend,Bot*%
+               %TF.FilePolarity,Positive*%
+Outline        %TF.FileFunction,Profile,NP*%
+               (no TF.FilePolarity — IrLayer.filePolarity is null for 'outline')
 ```
+
+`ir.ts`'s `ROLE_FILE_POLARITY` is the one code owner of this polarity table —
+build-ir, #235's injections, #236's back extraction and the fixtures all read
+it rather than restating the values.
 
 The outline file emits **no** `TF.FilePolarity`. File polarity is not meaningful
 for a Profile, and #209/#210 build independently, so the omission has to be
@@ -382,21 +541,23 @@ nobody would find it.
 ```
 %TF.GenerationSoftware,zudolab,zudo-panel-designer,<pkgVersion>*%
 %TF.CreationDate,<ISO-8601 with timezone>*%
-%TF.Part,Other,Decorative front panel artwork - no drill data*%
+%TF.Part,Other,Decorative front panel - copper is artwork not a circuit*%
 %TF.SameCoordinates*%
 ```
 
-- `TF.Part,Other,…` puts the artwork-only limitation **inside every file**, so
+- `TF.Part,Other,…` puts the decorative-copper caveat **inside every file**, so
   it survives the file being separated from both the zip's `README.txt` and the
   app's export UI. This is an addition beyond what #207's body listed, for the
-  same reason #207 insisted the limitation appear in the UI.
+  same reason #207 insisted the limitation appear in the UI. (#231 retired the
+  original `…artwork - no drill data` wording — the export ships Excellon
+  drill files now, but the copper is still artwork, not nets.)
 - `TF.CreationDate` is **an explicit parameter of the pure emitter**, never read
   from `Date.now()` inside it. `download.ts` splits pure `panelConfigJson` from
   DOM `downloadPanelConfig` precisely so the exact output string is assertable;
   an ambient timestamp would destroy that for the Gerber writer. Tests inject a
   fixed date.
-- `TF.SameCoordinates` asserts all four files share one origin — one line, and
-  the direct guard against a per-file origin mistake. If the independent
+- `TF.SameCoordinates` asserts all emitted files share one origin — one line,
+  and the direct guard against a per-file origin mistake. If the independent
   validator of Decision 10 rejects the no-identifier form, drop the attribute
   and record the deviation in a code comment; do not invent an identifier.
 
@@ -492,8 +653,8 @@ hidden.** Not a warning, not a refusal.
   nothing → fab covers the whole panel in mask".
 
 The full-panel opening region is the **clipped board outline**: the rectangle
-`(0,0)–(panelWidthMm(hp), 128.5)` in doc space, subject to the same clip as
-everything else (Decision 7).
+`(0,0)–(panelWidthMm(hp), panelHeightMm(format))` in doc space, subject to the
+same clip as everything else (Decision 7).
 
 Accepted tradeoff, stated explicitly: mask registration tolerance means a
 mask-opening that stops exactly at the profile can leave a hairline of mask at
@@ -502,6 +663,13 @@ is routed away, the artwork is decorative, and a bleed would be the only piece
 of geometry in the entire export that violates Decision 7's single clip rule.
 
 This table is a required test matrix for #209/#210 — all three rows.
+
+The same matrix governs the FR-4 **back** mask container (`b-solder-mask`,
+`.GBS`) once #236 projects `doc.backLayers` through it — an empty back mask
+still means full coverage, which is also why the #231 stub's zero-region back
+mask is the correct physical default for an untouched back. The alumi `.GBS`
+is NOT this matrix: it carries Decision 12's screw-hole openings only, and
+those arrive as #235 injections, not extraction.
 
 ---
 
@@ -697,6 +865,11 @@ export interface GerberRefusal {
 }
 ```
 
+A build-IR seam (#236's back extraction) reports refusals through `ir.ts`'s
+`RefusalSink` into the SAME collection — it runs before the refusal gate, so
+back-side problems land in the one shared dialog and a seam never builds its
+own `GerberRefusal[]`.
+
 All refusals are collected and reported **together** — a user with three
 untraced images and one bad font should see one dialog, not four sequential
 ones.
@@ -830,16 +1003,148 @@ because they are the two failures that scrap boards:
 
 ---
 
+## Decision 11 — Panel screw holes: derived, PTH on FR-4, NPTH on alumi
+
+(New in #231; implemented by #235.)
+
+**Holes are derived, not stored.** Every document gets the template holes for
+its `(format, hp)` from `panelHoles(format, hp)`
+(`core/src/panel-templates.ts`) at export time. The document model carries no
+hole data; free-form user-placed holes are a future extension. The template
+coordinates are already canonical fabrication coords — front view, doc space —
+so #235 never mirrors or flips anything itself.
+
+**Plating is per material, and it is a per-FILE split.**
+
+- **FR-4 screw holes are plated (PTH).** Copper beside an unplated hole edge
+  trips fab DRC, and plating puts the HASL finish on the barrel too — exactly
+  the requested "gold around the hole".
+- **Alumi screw holes are non-plated (NPTH)**, per the ordered reference data.
+- Excellon expresses plating as two files with two `TF.FileFunction` headers
+  (`Plated,1,2,PTH` / `NonPlated,1,2,NPTH`), never a per-hit flag — hence
+  `DrillIr`'s `pth`/`npth` pair, and exactly one side ever has content for a
+  given material.
+
+**Both drill files are always emitted**; the empty side ships header-only,
+byte-modelled on the ordered reference sets:
+
+```
+M48
+; #@! TF.CreationDate,<ISO-8601 with timezone>
+; #@! TF.GenerationSoftware,zudolab,zudo-panel-designer,<pkgVersion>
+; #@! TF.FileFunction,Plated,1,2,PTH        (or NonPlated,1,2,NPTH)
+FMAT,2
+METRIC
+%
+G90
+G05
+M30
+```
+
+LF-terminated ASCII, same discipline as the Gerber bodies (Decision 3.4).
+Filenames share `gerberFileSet`'s stem: `zpd-panel-<hp>hp-PTH.drl` /
+`zpd-panel-<hp>hp-NPTH.drl` (Decision 2.2).
+
+**Body emission is #235's** — tool table (`T<code>C<diameter>`), `X…Y…` round
+hits, `G00`/`M15`/`G01`/`M16` routed slots (the ordered reference sets' exact
+idiom), with the Y flip through `coordinate-frame.ts` (Decision 1). A
+`DrillSlot`'s `start`/`end` are the endpoint CENTRES of the routed span, which
+for a template slot is `slotLength − drillDiameter` long — NOT the finished
+overall stadium length. Until #235 lands, `drillFileText` REFUSES (throws) on
+non-empty drill content: silently emitting a plausible header-only file for
+real holes is exactly the failure mode Decision 8 exists to prevent.
+
+**Hole artwork is injected, not extracted.** `injectHoleFabrication(...)`
+(`gerber/holes.ts`) returns, per layer role, regions build-ir APPENDS after
+the artwork union+clip: mask openings on `solder-mask`/`b-solder-mask` (both
+materials), copper rings on `copper`/`b-copper` (FR-4 only). Appended regions
+follow Decision 0's ring rules and paint after the artwork — safe, because a
+ring region whose hole is the drill barrel only ever `%LPC*%`-clears copper
+that is drilled away regardless. The #231 stub returns no injections and an
+empty drill pair; the zip already ships the full per-material manifest with
+that stub content.
+
+---
+
+## Decision 12 — Alumi back convention: B.Mask openings only, bare metal
+
+(New in #231; epic #226 decision 2. Implemented across #235/#236.)
+
+**The alumi export replicates the ordered reference convention**: its back
+file set is `.GBS` alone, carrying ONLY the screw-hole mask openings — that
+exact data produced bare-metal backs on the real orders. No `.GBL`, no `.GBO`
+for alumi: aluminum-core boards have no back copper or legend to design, and
+shipping empty ones would invite the fab to ask. The app and preview show the
+alumi back as bare metal (#232's preview contract).
+
+FR-4 ships the full back trio (`b-copper`, `b-solder-mask`, `b-silkscreen`) —
+a real, user-editable back (`doc.backLayers`, projected by #236).
+
+`ir.ts` pins both role lists as data with one owner:
+
+- `MATERIAL_BACK_ROLES` — fr4: `['b-copper', 'b-solder-mask',
+  'b-silkscreen']`; alumi: `['b-solder-mask']`.
+- `MATERIAL_LAYER_ROLES` — front, back, outline; `GerberIr.layers` carries one
+  entry per role in that order, and the zip manifest follows it entry for
+  entry (Decision 2.1).
+
+The alumi `b-solder-mask` layer stays EMPTY at extraction permanently: its
+screw-hole openings are #235's injections (Decision 11), not #236's
+extraction. `extractBackLayers` returns it with zero regions even after #236
+is done.
+
+---
+
+## Decision 13 — Back-side X mirror: once, in doc space, at the build-IR boundary
+
+(New in #231; implemented by #236. FABRICATION-CRITICAL, same class as
+Decision 1.)
+
+The IR's canonical fabrication frame is **front view, doc space** for every
+layer, back roles included. Back-side content is authored as seen from the
+BACK (`doc.backLayers`); projecting it into the front-view frame requires an X
+mirror:
+
+```
+x → panel.widthMm − x        // in doc space, y untouched
+```
+
+**Applied exactly once, inside `extractBackLayers` (`gerber/back-extract.ts`),
+at the build-IR boundary — never in the writer.** By the time a `b-*`
+`IrLayer` exists, its regions are already mirrored; the writer treats a back
+layer byte-for-byte like its front counterpart and applies only the same
+single Y flip every layer gets (Decision 1). A writer-side mirror would
+double-transform — the back of every board mirrored into scrap, the exact
+failure mode Decision 1 guards against on the Y axis.
+
+Consequences, pinned by tests:
+
+- `test-ir.ts`'s `BACK_COPPER_LAYER` deliberately reuses `COPPER_LAYER`'s
+  asymmetric regions, and `writer.test.ts` asserts the emitted operations are
+  byte-identical — any writer-side mirror or flip fails that fixture.
+- #235's hole injections never mirror: template hole coordinates are already
+  front-view canonical (Decision 11), valid for front and back roles alike.
+- Winding survives: an X mirror alone would invert signed area, so #236
+  re-normalises to Decision 0.2's winding (positive outers) as part of
+  extraction — mirrored regions still satisfy the same ring rules as front
+  regions.
+
+---
+
 ## Summary — one line each
 
 0. **IR contract**: flattened polygon rings in document mm (y-down), `IrRegion
-   {outer, holes}` grouped into 4 ordered `IrLayer`s, outer rings positive
-   signed area, disjoint and outer-before-contained, unsupported layers signalled
-   by a typed `IrLayerResult` discriminated union.
-1. **Y flip**: `gerberY = 128.5 − docY`, applied once in
+   {outer, holes}` grouped into `MATERIAL_LAYER_ROLES[material]`-ordered
+   `IrLayer`s plus a `DrillIr` pair, outer rings positive signed area, disjoint
+   and outer-before-contained, unsupported layers signalled by a typed
+   `IrLayerResult` discriminated union.
+1. **Y flip**: `gerberY = panelHeightMm(format) − docY`, applied once in
    `gerber/coordinate-frame.ts` and nowhere else; no Gerber-level transforms.
-2. **Fileset**: `.GTL`/`.GTS`/`.GTO`/`.GKO` only, always written, no drill data;
-   the artwork-only limitation appears in the export UI before download.
+2. **Fileset**: the per-material manifest — FR-4
+   `.GTL`/`.GTS`/`.GTO`/`.GBL`/`.GBS`/`.GBO`/`.GKO`, alumi
+   `.GTL`/`.GTS`/`.GTO`/`.GBS`/`.GKO`, plus both drill files — always written,
+   empty side header-only; the export-scope statement appears in the export UI
+   before download.
 3. **Attributes**: exact X2 strings as listed; solder mask is uncomplemented
    geometry in a `Negative`-polarity file; the outline file emits no
    `TF.FilePolarity` at all; creation date is injected, not ambient.
@@ -863,3 +1168,11 @@ because they are the two failures that scrap boards:
 10. **Oracles**: third-party parser in CI + two raster diffs (IR-vs-editor for
     the extractor, plotted-Gerber-vs-editor for the writer) + one human check in
     an independent viewer on an asymmetric design.
+11. **Screw holes**: derived from the template catalog per `(format, hp)`,
+    never stored; FR-4 plated (`PTH.drl`), alumi non-plated (`NPTH.drl`); mask
+    openings and FR-4 copper rings are appended injections, and header-only
+    drill files refuse non-empty content until #235 lands.
+12. **Alumi back**: `.GBS` with screw-hole openings only — no B.Cu, no B.Silk,
+    bare-metal back; FR-4 ships the full editable back trio.
+13. **Back X mirror**: `x → widthMm − x`, applied once in doc space at the
+    build-IR boundary (`back-extract.ts`), never in the writer.

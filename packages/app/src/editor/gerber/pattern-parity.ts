@@ -33,7 +33,7 @@ import {
 } from './raster-oracle';
 import { DEFAULT_IR_TOLERANCE } from './tolerance';
 
-const PANEL: IrPanel = { hp: 16, widthMm: 80.9, heightMm: 128.5 };
+const PANEL: IrPanel = { format: '3U', hp: 16, widthMm: 80.9, heightMm: 128.5 };
 
 /** Control-flow marker for `recorderOnly`; never surfaces as a union error. */
 class SkipUnion extends Error {}

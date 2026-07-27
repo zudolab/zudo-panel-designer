@@ -24,7 +24,7 @@ export interface GerberEmitOptions {
   readonly softwareVersion: string;
 }
 
-export type GerberFileExtension = '.GTL' | '.GTS' | '.GTO' | '.GKO';
+export type GerberFileExtension = '.GTL' | '.GTS' | '.GTO' | '.GBL' | '.GBS' | '.GBO' | '.GKO';
 
 export interface GerberFile {
   readonly role: IrLayerRole;
@@ -47,6 +47,9 @@ interface RoleSpec {
 }
 
 const ROLE_SPEC: Record<IrLayerRole, RoleSpec> = {
+  // L1/L2 declare the two-layer stackup: front copper is the top of it, back
+  // copper the bottom. The layer numbers are the declaration — X2 has no
+  // separate stackup attribute at this level.
   copper: { extension: '.GTL', fileFunction: 'Copper,L1,Top', label: 'top copper' },
   'solder-mask': {
     extension: '.GTS',
@@ -54,6 +57,13 @@ const ROLE_SPEC: Record<IrLayerRole, RoleSpec> = {
     label: 'top solder mask',
   },
   silkscreen: { extension: '.GTO', fileFunction: 'Legend,Top', label: 'top silkscreen' },
+  'b-copper': { extension: '.GBL', fileFunction: 'Copper,L2,Bot', label: 'bottom copper' },
+  'b-solder-mask': {
+    extension: '.GBS',
+    fileFunction: 'Soldermask,Bot',
+    label: 'bottom solder mask',
+  },
+  'b-silkscreen': { extension: '.GBO', fileFunction: 'Legend,Bot', label: 'bottom silkscreen' },
   outline: { extension: '.GKO', fileFunction: 'Profile,NP', label: 'board outline profile' },
 };
 
@@ -149,7 +159,7 @@ function strokedContourLines(region: IrRegion, panelHeightMm: number): string[] 
 function headerLines(layer: IrLayer, panel: IrPanel, options: GerberEmitOptions): string[] {
   const spec = ROLE_SPEC[layer.role];
   const lines = [
-    `G04 ${GERBER_SOFTWARE_APPLICATION} ${panel.hp}HP panel - ${spec.label}*`,
+    `G04 ${GERBER_SOFTWARE_APPLICATION} ${panel.format} ${panel.hp}HP panel - ${spec.label}*`,
     '%FSLAX46Y46*%',
     '%MOMM*%',
     `%TF.FileFunction,${spec.fileFunction}*%`,
@@ -162,10 +172,12 @@ function headerLines(layer: IrLayer, panel: IrPanel, options: GerberEmitOptions)
   lines.push(
     `%TF.GenerationSoftware,${GERBER_SOFTWARE_VENDOR},${GERBER_SOFTWARE_APPLICATION},${options.softwareVersion}*%`,
     `%TF.CreationDate,${options.creationDate}*%`,
-    // Carries the artwork-only limitation INSIDE every file, so it survives the
-    // file being separated from both the zip README and the export UI.
-    '%TF.Part,Other,Decorative front panel artwork - no drill data*%',
-    // Asserts all four files share one origin. Decision 3.3 says to drop this
+    // Carries the decorative-copper caveat INSIDE every file, so it survives
+    // the file being separated from both the zip README and the export UI.
+    // The old "no drill data" wording retired with #231: the export ships
+    // Excellon drill files now, but the copper is still artwork, not nets.
+    '%TF.Part,Other,Decorative front panel - copper is artwork not a circuit*%',
+    // Asserts all emitted files share one origin. Decision 3.3 says to drop this
     // if an independent validator rejects the no-identifier form; neither
     // third-party parser in writer-oracle.test.ts does — both treat it as a
     // well-formed extended command they simply do not interpret — so it stays.
@@ -200,14 +212,12 @@ export function gerberLayerText(
 }
 
 /**
- * All four files, always — an absent file is another ambiguity a fab has to
- * guess at, and an empty `.GTS` is meaningful rather than neutral (Decision 4).
+ * Every file in the material's role list (MATERIAL_LAYER_ROLES order), always
+ * — an absent file is another ambiguity a fab has to guess at, and an empty
+ * `.GTS` is meaningful rather than neutral (Decision 4).
  */
-export function gerberFileSet(
-  ir: GerberIr,
-  options: GerberEmitOptions,
-): readonly [GerberFile, GerberFile, GerberFile, GerberFile] {
-  const files = ir.layers.map((layer): GerberFile => {
+export function gerberFileSet(ir: GerberIr, options: GerberEmitOptions): readonly GerberFile[] {
+  return ir.layers.map((layer): GerberFile => {
     const { extension } = ROLE_SPEC[layer.role];
     return {
       role: layer.role,
@@ -216,5 +226,4 @@ export function gerberFileSet(
       text: gerberLayerText(layer, ir.panel, options),
     };
   });
-  return [files[0], files[1], files[2], files[3]];
 }

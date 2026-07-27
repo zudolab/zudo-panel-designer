@@ -1,14 +1,18 @@
 /**
- * Gerber geometry IR — the canonical contract (epic #204, sub #209).
+ * Gerber geometry IR — the canonical contract (epic #204, sub #209; revised
+ * for fabrication output by the material-holes epic #226, sub #231).
  *
  * This file IS the contract pinned by `DECISIONS.md` Decision 0. The RS-274X
  * writer (#210) builds against hand-authored fixtures of these types and must
  * never need to read the extractor's implementation, so the shapes below are
  * copied from that decision record field-for-field. Changing one is a
- * cross-sub-issue break, not a refactor.
+ * cross-sub-issue break, not a refactor. The #231 revision extends the same
+ * contract with back-side roles, a per-material layer list, and the Excellon
+ * drill IR that #235 (drill + hole/ring injection) and #236 (back-side
+ * extraction) fill in parallel — neither may need to change a shape here.
  */
 
-import type { Layer } from '@zpd/core';
+import type { Layer, PanelFormat, PcbMaterial } from '@zpd/core';
 import type { BooleanEngine, KernelInput } from '../geometry-kernel';
 import type { IrTolerance } from './tolerance';
 
@@ -46,7 +50,22 @@ export interface IrRegion {
   readonly holes: readonly IrRing[];
 }
 
-export type IrLayerRole = 'copper' | 'solder-mask' | 'silkscreen' | 'outline';
+/**
+ * Front roles, back roles (`b-` prefix), and the profile. Back-role geometry
+ * is ALREADY X-mirrored into canonical fabrication coordinates (front view,
+ * doc space) when it reaches an `IrLayer` — the mirror happens exactly once,
+ * at the build-IR boundary, never in the writer (Decision 13).
+ */
+export type IrLayerRole =
+  | 'copper'
+  | 'solder-mask'
+  | 'silkscreen'
+  | 'b-copper'
+  | 'b-solder-mask'
+  | 'b-silkscreen'
+  | 'outline';
+
+export type BackLayerRole = Extract<IrLayerRole, `b-${string}`>;
 
 export interface IrLayer {
   readonly role: IrLayerRole;
@@ -75,17 +94,123 @@ export interface IrLayer {
 }
 
 export interface IrPanel {
+  readonly format: PanelFormat;
   readonly hp: number;
   /** panelWidthMm(hp) — always a PANEL_SIZES table value (Decision 8). */
   readonly widthMm: number;
-  /** panelHeightMm(doc.format) — the format-derived Y-flip constant. */
+  /** panelHeightMm(doc.format) — the format-derived Y-flip constant (39.65 for 1U, 128.5 for 3U). */
   readonly heightMm: number;
 }
 
+/**
+ * Declarative role metadata, pinned by Decision 3.1's attribute table. The
+ * writer copies `filePolarity` from the layer, but every builder of an
+ * `IrLayer` (build-ir, #235's injections, #236's back extraction, fixtures)
+ * reads the value from here so the table has one owner.
+ */
+export const ROLE_FILE_POLARITY: Record<IrLayerRole, IrLayer['filePolarity']> = {
+  copper: 'positive',
+  // Negative polarity is DECLARATIVE. The geometry stays uncomplemented.
+  'solder-mask': 'negative',
+  silkscreen: 'positive',
+  'b-copper': 'positive',
+  'b-solder-mask': 'negative',
+  'b-silkscreen': 'positive',
+  outline: null,
+};
+
+const FRONT_ROLES = ['copper', 'solder-mask', 'silkscreen'] as const;
+
+/**
+ * Which back files a material ships (Decision 12): FR-4 has a real editable
+ * back; alumi replicates the ordered-reference convention — a B.Mask carrying
+ * ONLY the screw-hole openings (that exact data produced bare-metal backs on
+ * the real orders), no B.Cu and no B.Silk.
+ */
+export const MATERIAL_BACK_ROLES: Record<PcbMaterial, readonly BackLayerRole[]> = {
+  fr4: ['b-copper', 'b-solder-mask', 'b-silkscreen'],
+  alumi: ['b-solder-mask'],
+};
+
+/**
+ * The exact `GerberIr.layers` role list per material, in emission order:
+ * front, back, outline. `buildGerberIr` produces layers in this order and the
+ * zip's per-material manifest follows it entry for entry (Decision 2.1).
+ */
+export const MATERIAL_LAYER_ROLES: Record<PcbMaterial, readonly IrLayerRole[]> = {
+  fr4: [...FRONT_ROLES, ...MATERIAL_BACK_ROLES.fr4, 'outline'],
+  alumi: [...FRONT_ROLES, ...MATERIAL_BACK_ROLES.alumi, 'outline'],
+};
+
 export interface GerberIr {
+  readonly material: PcbMaterial;
   readonly panel: IrPanel;
-  /** Exactly 4 entries, in this order: copper, solder-mask, silkscreen, outline. */
-  readonly layers: readonly [IrLayer, IrLayer, IrLayer, IrLayer];
+  /** One entry per MATERIAL_LAYER_ROLES[material], in that order. */
+  readonly layers: readonly IrLayer[];
+  /** Both drill files, always — one side is empty per material (Decision 11). */
+  readonly drill: DrillIr;
+}
+
+// ─── Excellon drill IR (Decision 11) ────────────────────────────────────────
+//
+// The drill-side sibling of the polygon IR above: what `PTH.drl` / `NPTH.drl`
+// carry, kept in the same DOCUMENT-space millimetres as every other IR
+// coordinate. The Excellon writer flips to the shared bottom-left origin via
+// `coordinate-frame.ts` exactly like the Gerber writer — never here.
+
+/**
+ * Plated vs non-plated, which is a per-FILE split in Excellon (two files, two
+ * `TF.FileFunction` headers), not a per-hit flag. FR-4 screw holes are PTH,
+ * alumi screw holes are NPTH (Decision 11) — so exactly one of a document's
+ * two drill files ever has content.
+ */
+export type DrillPlating = 'pth' | 'npth';
+
+export interface DrillTool {
+  /** Excellon tool number: `T<code>` in the tool table and the body. 1-based. */
+  readonly code: number;
+  /** Drill diameter in mm — the `C` parameter, e.g. `T1C3.200`. */
+  readonly diameterMm: number;
+}
+
+/** One round hole: a plain `X…Y…` stroke of the selected tool. */
+export interface DrillHit {
+  /** References DrillTool.code within the same file. */
+  readonly tool: number;
+  /** Hole centre, doc space mm. */
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * One routed slot (`G00` to start, `M15` plunge, `G01` to end, `M16` retract
+ * — the ordered reference sets' exact idiom). `start`/`end` are the endpoint
+ * CENTRES of the routed span: for a template slot that span is
+ * `slotLength − drillDiameter` long (panel-templates.ts), NOT the finished
+ * overall stadium length.
+ */
+export interface DrillSlot {
+  readonly tool: number;
+  readonly start: IrPoint;
+  readonly end: IrPoint;
+}
+
+export interface DrillFileIr {
+  readonly plating: DrillPlating;
+  /** Tool table in `code` order. Empty ⇒ the file is emitted header-only. */
+  readonly tools: readonly DrillTool[];
+  readonly hits: readonly DrillHit[];
+  readonly slots: readonly DrillSlot[];
+}
+
+/**
+ * Both files, always present (an absent drill file is an ambiguity a fab has
+ * to guess at, same rule as the Gerber file set). The empty side is emitted
+ * header-only, matching the ordered reference sets.
+ */
+export interface DrillIr {
+  readonly pth: DrillFileIr;
+  readonly npth: DrillFileIr;
 }
 
 // ─── Per-layer extraction hand-off (Decision 0.4) ───────────────────────────
@@ -218,4 +343,14 @@ export interface GerberRefusal {
   readonly message: string;
   /** Empty for document-level refusals such as 'unlisted-panel-hp'. */
   readonly layers: readonly { readonly id: string; readonly name: string }[];
+}
+
+/**
+ * What a build-IR seam (#236's back extraction) is handed to report refusals
+ * INTO the one shared collection — Decision 8 requires every refusal in a
+ * single dialog, so a seam never builds its own `GerberRefusal[]`.
+ * `buildGerberIr`'s internal collector satisfies this structurally.
+ */
+export interface RefusalSink {
+  add(code: GerberRefusalCode, layer?: { readonly id: string; readonly name: string }): void;
 }

@@ -26,8 +26,8 @@
  */
 
 import {
-  panelHeightMm,
   PANEL_SIZES,
+  panelHeightMm,
   panelWidthMm,
   projectPcbLayerSlices,
   type DocState,
@@ -35,7 +35,9 @@ import {
 } from '@zpd/core';
 import type { BooleanEngine, KernelInput, KernelRing } from '../geometry-kernel';
 import { createBooleanEngine } from '../geometry-kernel';
+import { extractBackLayers } from './back-extract';
 import { BUILTIN_GEOMETRY_SOURCES } from './extract';
+import { injectHoleFabrication } from './holes';
 import { createPatternGeometrySource } from './pattern-source';
 import { UNION_UNRELIABLE_PATTERN_IDS } from './pattern-union-unreliable.generated';
 import type {
@@ -45,12 +47,12 @@ import type {
   IrExtractContext,
   IrLayer,
   IrLayerCubicResult,
-  IrLayerRole,
   IrPanel,
   IrRegion,
   IrUnsupportedReason,
   LayerGeometrySource,
 } from './ir';
+import { ROLE_FILE_POLARITY } from './ir';
 import { polygonToRing, rectToRing } from './primitives';
 import { countRegionVertices, ringsToRegions } from './regions';
 import {
@@ -60,17 +62,11 @@ import {
   type IrTolerance,
 } from './tolerance';
 
-type MaterialRole = Exclude<IrLayerRole, 'outline'>;
+// The FRONT extraction roles only — back roles go through the #236 seam
+// (`extractBackLayers`), which owns its own projection of `doc.backLayers`.
+type FrontMaterialRole = 'copper' | 'solder-mask' | 'silkscreen';
 
-const MATERIAL_ROLES: readonly MaterialRole[] = ['copper', 'solder-mask', 'silkscreen'];
-
-const FILE_POLARITY: Record<IrLayerRole, IrLayer['filePolarity']> = {
-  copper: 'positive',
-  // Negative polarity is DECLARATIVE. The geometry stays uncomplemented.
-  'solder-mask': 'negative',
-  silkscreen: 'positive',
-  outline: null,
-};
+const MATERIAL_ROLES: readonly FrontMaterialRole[] = ['copper', 'solder-mask', 'silkscreen'];
 
 /** Reasons that mean "another extractor owns this", not "this is an error". */
 const HANDOFF_REASONS: ReadonlySet<IrUnsupportedReason> = new Set(['pattern-layer', 'text-layer']);
@@ -259,6 +255,7 @@ export async function buildGerberIr(
     refusals.add('unlisted-panel-hp');
   }
   const panel: IrPanel = {
+    format: doc.format,
     hp: doc.panelHp,
     widthMm: panelWidthMm(doc.panelHp),
     heightMm: panelHeightMm(doc.format),
@@ -268,7 +265,7 @@ export async function buildGerberIr(
   const slices = projectPcbLayerSlices(doc.layers);
   const engine = options.engine ?? (await createBooleanEngine());
 
-  const inputsByRole = new Map<MaterialRole, KernelInput[]>();
+  const inputsByRole = new Map<FrontMaterialRole, KernelInput[]>();
   for (const role of MATERIAL_ROLES) {
     const ctx: IrExtractContext = { panel, role, engine, tolerance };
     const inputs: KernelInput[] = [];
@@ -330,34 +327,52 @@ export async function buildGerberIr(
     inputsByRole.set(role, inputs);
   }
 
+  // The #236 seam runs BEFORE the refusal gate so back-side problems land in
+  // the same collected dialog as front ones (Decision 8: one dialog, never a
+  // sequence). Its output is already X-mirrored into front-view doc space
+  // (Decision 13) — from here on a back layer is just another layer.
+  const backLayers = await extractBackLayers(
+    { doc, panel, engine, sources, tolerance, limits },
+    refusals,
+  );
+
   if (!refusals.empty) return { ok: false, refusals: refusals.build() };
 
   const materialLayers: IrLayer[] = [];
-  let vertices = 0;
   for (const role of MATERIAL_ROLES) {
     const rings = unionAndClip(engine, inputsByRole.get(role) ?? [], profile);
-    const regions = ringsToRegions(rings, tolerance);
-    vertices += countRegionVertices(regions);
     materialLayers.push({
       role,
-      filePolarity: FILE_POLARITY[role],
+      filePolarity: ROLE_FILE_POLARITY[role],
       renderAs: 'filled-region',
-      regions,
+      regions: ringsToRegions(rings, tolerance),
     });
   }
 
   // The outline IS the clip boundary, so it is not itself clipped, and it is a
   // cut path rather than a fill — a filled region on a profile layer is
   // ambiguous about which side is board (Decision 2.3).
-  const outlineRegions = ringsToRegions([profile], tolerance);
-  vertices += countRegionVertices(outlineRegions);
   const outline: IrLayer = {
     role: 'outline',
-    filePolarity: FILE_POLARITY.outline,
+    filePolarity: ROLE_FILE_POLARITY.outline,
     renderAs: 'stroked-contour',
-    regions: outlineRegions,
+    regions: ringsToRegions([profile], tolerance),
   };
 
+  // The #235 seam: screw-hole drill data plus the mask/copper injections,
+  // APPENDED after the artwork regions so a ring's `%LPC*%` barrel clears
+  // paint after everything beneath it (holes.ts documents why that is safe).
+  const fabrication = injectHoleFabrication({ material: doc.material, panel, tolerance });
+  const layers: IrLayer[] = [...materialLayers, ...backLayers, outline].map((layer) => {
+    const injected = fabrication.injections[layer.role];
+    if (!injected || injected.length === 0) return layer;
+    return { ...layer, regions: [...layer.regions, ...injected] };
+  });
+
+  // Counted over the final assembly — back layers and injections included —
+  // so the Decision 8 ceiling means what it says across the whole IR.
+  let vertices = 0;
+  for (const layer of layers) vertices += countRegionVertices(layer.regions);
   if (vertices > limits.maxTotalVertices) {
     refusals.add('complexity-overrun');
     return { ok: false, refusals: refusals.build() };
@@ -365,9 +380,6 @@ export async function buildGerberIr(
 
   return {
     ok: true,
-    ir: {
-      panel,
-      layers: [materialLayers[0], materialLayers[1], materialLayers[2], outline],
-    },
+    ir: { material: doc.material, panel, layers, drill: fabrication.drill },
   };
 }

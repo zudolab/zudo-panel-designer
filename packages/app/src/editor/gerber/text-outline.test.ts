@@ -64,7 +64,7 @@ beforeAll(async () => {
   setCuratedFontFileLoaderForTests(loadTestFontFile);
   engine = await createBooleanEngine();
   ctx = {
-    panel: { hp: HP, widthMm: panelWidthMm(HP), heightMm: panelHeightMm('3U') },
+    panel: { format: '3U', hp: HP, widthMm: panelWidthMm(HP), heightMm: panelHeightMm('3U') },
     role: 'silkscreen',
     engine,
     tolerance: DEFAULT_IR_TOLERANCE,

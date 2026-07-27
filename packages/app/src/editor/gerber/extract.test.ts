@@ -21,7 +21,7 @@ let ctx: IrExtractContext;
 beforeAll(async () => {
   engine = await createBooleanEngine();
   ctx = {
-    panel: { hp: 16, widthMm: 80.9, heightMm: 128.5 },
+    panel: { format: '3U', hp: 16, widthMm: 80.9, heightMm: 128.5 },
     role: 'copper',
     engine,
     tolerance: TOL,

@@ -21,7 +21,10 @@ import { panelConfigFilename } from './filename';
 // the pattern recorder + the writer + fflate into the MAIN chunk, parsed on
 // every page load for a feature that only runs on an export click. Type-only
 // imports are fine — they erase.
-import { GERBER_ARTWORK_ONLY_STATEMENT } from './gerber/artwork-only-statement';
+import {
+  GERBER_EXPORT_SCOPE_STATEMENT,
+  PCB_MATERIAL_LABEL,
+} from './gerber/artwork-only-statement';
 import type { GerberRefusal } from './gerber/ir';
 import type { GerberEmitOptions } from './gerber/writer';
 import { toastError, toastSuccess } from './registry/toasts';
@@ -100,11 +103,11 @@ function refusalListNode(refusals: readonly GerberRefusal[]): ReactNode {
 /**
  * The user-facing Gerber export flow (#215) both the header button and the
  * "Download Gerber (.zip)" palette command call — a confirm gate stating
- * Decision 2.4's artwork-only limitation BEFORE the download happens, then
+ * Decision 2.4's export-scope statement BEFORE the download happens, then
  * `downloadGerberZip`, then — if `buildGerberIr` refused — a dialog naming
  * EVERY refusal together (Decision 8: never a console warning, never a silent
  * skip). Reuses confirm-dialog.tsx (via its imperative `confirmDialog()`
- * helper) for both steps rather than a bespoke dialog: the artwork-only
+ * helper) for both steps rather than a bespoke dialog: the export-scope
  * notice is exactly what that component is for — a message the user must see
  * before an action proceeds — and the refusal list is the same primitive with
  * `children` standing in for a free-form body, so there is a single owner of
@@ -130,7 +133,7 @@ export async function exportGerberZip(doc: DocState): Promise<void> {
   const heightMm = panelHeightMm(doc.format);
   const confirmed = await confirmDialog({
     title: 'Export Gerber (.zip)',
-    message: `${GERBER_ARTWORK_ONLY_STATEMENT} Panel: ${doc.panelHp}HP, ${widthMm} × ${heightMm} mm.`,
+    message: `${GERBER_EXPORT_SCOPE_STATEMENT} Panel: ${doc.format} ${doc.panelHp}HP, ${widthMm} × ${heightMm} mm, ${PCB_MATERIAL_LABEL[doc.material]}.`,
     confirmLabel: 'Export .zip',
     cancelLabel: 'Cancel',
   });
