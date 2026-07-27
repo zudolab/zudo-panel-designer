@@ -94,6 +94,10 @@ function createCtx(fixture: DocFixture, selectedIds: readonly string[] = []) {
     get flatLayers() {
       return projectFlatLayers(currentDoc.layers);
     },
+    activeSide: 'front' as const,
+    get activeStack() {
+      return currentDoc.layers;
+    },
     camera: { pxPerMm: 1, offsetX: 0, offsetY: 0 },
     panel: { widthMm: 60, heightMm: 128.5 },
     toMm: (p: Pt) => p,

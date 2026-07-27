@@ -275,7 +275,7 @@ describe('insertTracedPaths — material partitioning (#167)', () => {
       guides: [],
       layers: createPcbLayerStack({ copper: [IMAGE_LAYER] }),
     };
-    const next = insertTracedPaths(doc, IMAGE_LAYER, [
+    const next = insertTracedPaths(doc, 'front', IMAGE_LAYER, [
       tracedPath('gold'),
       { ...tracedPath('white'), fill: 2 },
     ]);

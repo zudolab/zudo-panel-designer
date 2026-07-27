@@ -104,6 +104,12 @@ function createTestHost(
     get mutationEpoch() {
       return state.epoch;
     },
+    // Front-pinned like the editor's default: activeStack reads through the
+    // same lagging `visible.doc` as `doc`, mirroring ToolContext's contract.
+    activeSide: 'front',
+    get activeStack() {
+      return visible.doc.layers;
+    },
     commit(next) {
       state.epoch += 1;
       state.history = commitHistory(state.history, next);

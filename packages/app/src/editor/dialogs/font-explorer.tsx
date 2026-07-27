@@ -11,7 +11,7 @@
 // hover-preview/commit session (its own source marks it optional — click to
 // commit is the supported path).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { mapPcbLeavesById, type TextLayer } from '@zpd/core';
+import { mapPcbLeavesById, withStackForSide, type TextLayer } from '@zpd/core';
 import { registerDialog } from '../registry/dialogs';
 import { ensureFont, isFontLoaded } from '../fonts';
 import { loadGoogleFont } from '../google-font-loader';
@@ -169,10 +169,10 @@ function FontExplorerDialog({ props, close, ctx }: DialogProps<FontExplorerProps
         return;
       }
       // Recursive write (#150): the text leaf may be nested inside a group.
-      const nextLayers = mapPcbLeavesById(ctx.doc.layers, [layer.id], (l) =>
+      const nextLayers = mapPcbLeavesById(ctx.activeStack, [layer.id], (l) =>
         l.type === 'text' ? { ...l, fontFamily: family } : l,
       );
-      ctx.commit({ ...ctx.doc, layers: nextLayers });
+      ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextLayers));
       // Start the exact-sample request now. Canonical text geometry owns the
       // one readiness repaint, avoiding a dialog + renderer double callback.
       void ensureFont(family, (layer as TextLayer).content);

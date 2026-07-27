@@ -81,6 +81,10 @@ describe('rotated text uses canonical loaded bounds for alignment (#111)', () =>
       panel: { widthMm: 100, heightMm: 100 },
       commit,
       requestRepaint: vi.fn(),
+      activeSide: 'front',
+      get activeStack() {
+        return (this as unknown as ToolContext).doc.layers;
+      },
     } as unknown as ToolContext;
 
     reconcileTextGeometry(projectFlatLayers(doc.layers));

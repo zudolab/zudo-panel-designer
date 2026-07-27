@@ -81,7 +81,7 @@ describe('InspectorHost onChange (#150)', () => {
       }),
     };
     const { ctx, commit } = stubCtx(doc);
-    render(<InspectorHost ctx={ctx} doc={doc} layer={leaf} selectedIds={['deep']} />);
+    render(<InspectorHost ctx={ctx} doc={doc} activeSide="front" layer={leaf} selectedIds={['deep']} />);
     expect(screen.getByTestId('mock-shape-inspector')).toBeTruthy();
 
     lastInspectorProps().onChange({ x: 42, color: 2 });
@@ -108,7 +108,7 @@ describe('InspectorHost onChange (#150)', () => {
       layers: createPcbLayerStack({ copper: [group('g', [leaf])] }),
     };
     const { ctx, commit, replace } = stubCtx(doc);
-    render(<InspectorHost ctx={ctx} doc={doc} layer={leaf} selectedIds={['deep']} />);
+    render(<InspectorHost ctx={ctx} doc={doc} activeSide="front" layer={leaf} selectedIds={['deep']} />);
 
     lastInspectorProps().onChange({ width: 33 }, { commit: false });
 
@@ -136,7 +136,7 @@ describe('InspectorHost onChange (#150)', () => {
     const { ctx, commit } = stubCtx(staleDoc);
 
     render(
-      <InspectorHost ctx={ctx} doc={committedDoc} layer={movedLeaf} selectedIds={['moving']} />,
+      <InspectorHost ctx={ctx} doc={committedDoc} activeSide="front" layer={movedLeaf} selectedIds={['moving']} />,
     );
 
     expect(lastInspectorProps().materialRole).toBe('silkscreen');

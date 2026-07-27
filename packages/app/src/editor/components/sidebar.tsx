@@ -2,7 +2,14 @@
 // host — all in a scrolling inner stack. The Help panel (#36) is a
 // non-scrolling footer BELOW that stack: always visible, never scrolled below
 // the fold, even when the panel stack above overflows.
-import { panelHeightMm, PANEL_SIZES, type DocState, type Layer } from '@zpd/core';
+import {
+  panelHeightMm,
+  PANEL_SIZES,
+  stackForSide,
+  type DocState,
+  type Layer,
+  type PanelSide,
+} from '@zpd/core';
 import type { ToolContext } from '../types';
 import { AlignPanel } from './align-panel';
 import { CollapsibleSection } from './collapsible-section';
@@ -19,6 +26,10 @@ export interface SidebarProps {
   // doc-prop comment); also drives the panel-size select's displayed value so
   // it never lags a commit by one render.
   doc: DocState;
+  // Which face is being edited (#233), as committed Editor state — paired
+  // with `doc` so render-time reads derive the SAME side/stack the commit
+  // that produced this render did.
+  activeSide: PanelSide;
   selectedIds: readonly string[];
   selectedLayer: Layer | null;
   activeToolId: string;
@@ -31,6 +42,7 @@ export interface SidebarProps {
 export function Sidebar({
   ctx,
   doc,
+  activeSide,
   selectedIds,
   selectedLayer,
   activeToolId,
@@ -39,6 +51,10 @@ export function Sidebar({
   showGuides,
   onShowGuidesChange,
 }: SidebarProps) {
+  // The committed render-time stack of the ACTIVE side (#233) — what the
+  // layer list and the selection-driven panels below read instead of
+  // doc.layers.
+  const sideStack = stackForSide(doc, activeSide);
   return (
     <aside className="flex w-72 flex-col border-l border-neutral-800 bg-neutral-900">
       <div className="flex flex-1 flex-col gap-3 overflow-y-auto overscroll-contain p-3">
@@ -83,7 +99,7 @@ export function Sidebar({
         </CollapsibleSection>
 
         <CollapsibleSection title="Layers" keepMounted>
-          <LayerList ctx={ctx} stack={doc.layers} selectedIds={selectedIds} />
+          <LayerList ctx={ctx} stack={sideStack} selectedIds={selectedIds} />
         </CollapsibleSection>
 
         <CollapsibleSection title="Align & Distribute">
@@ -94,7 +110,7 @@ export function Sidebar({
             shown (with per-button disabled state) once something is. */}
         {selectedIds.length >= 1 && (
           <CollapsibleSection title="Pathfinder">
-            <PathfinderPanel ctx={ctx} doc={doc} selectedIds={selectedIds} />
+            <PathfinderPanel ctx={ctx} stack={sideStack} selectedIds={selectedIds} />
           </CollapsibleSection>
         )}
 
@@ -105,8 +121,19 @@ export function Sidebar({
             {/* Combined (multi/group) selections only (#157) — renders
                 nothing for a single-leaf or all-non-rotatable selection, so
                 it composes ahead of InspectorHost without an empty gap. */}
-            <RotateSelectionPanel ctx={ctx} doc={doc} selectedIds={selectedIds} />
-            <InspectorHost ctx={ctx} doc={doc} layer={selectedLayer} selectedIds={selectedIds} />
+            <RotateSelectionPanel
+              ctx={ctx}
+              doc={doc}
+              activeSide={activeSide}
+              selectedIds={selectedIds}
+            />
+            <InspectorHost
+              ctx={ctx}
+              doc={doc}
+              activeSide={activeSide}
+              layer={selectedLayer}
+              selectedIds={selectedIds}
+            />
           </div>
         </CollapsibleSection>
       </div>
@@ -114,6 +141,10 @@ export function Sidebar({
       <div className="shrink-0 border-t border-neutral-800 p-3">
         <CollapsibleSection title="Help" defaultOpen={false}>
           <HelpPanel activeToolId={activeToolId} />
+          <p className="mt-2 border-t border-neutral-800 pt-2 text-[11px] text-neutral-500">
+            The Front/Back tabs above the canvas pick which panel face you edit — the other
+            face&rsquo;s layers are hidden while you work, never deleted.
+          </p>
         </CollapsibleSection>
       </div>
     </aside>

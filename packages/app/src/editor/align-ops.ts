@@ -21,12 +21,13 @@ import {
   normalizeRect,
   rotatedRectAABB,
   translatePathLayer,
+  withStackForSide,
   type AlignRect,
   type AlignType,
   type DistributeAxis,
-  type DocState,
   type Layer,
   type PatternLayer,
+  type PcbLayerStack,
 } from '@zpd/core';
 import { projectFlatLayers } from './flat-projection';
 import { resolveSelectionLeaves } from './selection-resolve';
@@ -75,16 +76,21 @@ function hasGeometry(layer: NonPatternLayer): boolean {
   return layer.points.length > 0 || (layer.extraSubpaths ?? []).some((sub) => sub.length > 0);
 }
 
-export function eligibleLayers(doc: DocState, selectedIds: readonly string[]): NonPatternLayer[] {
+// Takes the stack (not the whole doc) since #233: callers pass the ACTIVE
+// side's stack, so align/distribute eligibility never sees hidden-side leaves.
+export function eligibleLayers(
+  stack: PcbLayerStack,
+  selectedIds: readonly string[],
+): NonPatternLayer[] {
   // projectFlatLayers, not an ad-hoc flatten: reconcileTextGeometry treats
   // array identity as document-incarnation state (#150).
-  const layers = projectFlatLayers(doc.layers);
+  const layers = projectFlatLayers(stack);
   reconcileTextGeometry(layers);
   // Group-aware expansion (#151): a selected group id aligns its EDITABLE
   // descendant leaves (hidden — intrinsic or ancestor-folded — excluded, per
   // the shared "ops act on expanded editable leaves" rule). Identity for a
   // group-free, fully visible selection.
-  const editable = new Set(resolveSelectionLeaves(doc.layers, selectedIds, layers).editableLeafIds);
+  const editable = new Set(resolveSelectionLeaves(stack, selectedIds, layers).editableLeafIds);
   return layers.filter(
     (l): l is NonPatternLayer => editable.has(l.id) && l.type !== 'pattern' && hasGeometry(l),
   );
@@ -128,30 +134,34 @@ function applyResults(
   }
   if (patches.size === 0) return;
   // Recursive write (#150): patched leaves land wherever they sit in the
-  // tree — a flat root map would no-op for group-nested targets.
-  ctx.commit({
-    ...ctx.doc,
-    layers: mapPcbLeavesById(ctx.doc.layers, [...patches.keys()], (l) => {
-      const patch = patches.get(l.id);
-      return patch ? ({ ...l, ...patch } as Layer) : l;
-    }),
-  });
+  // tree — a flat root map would no-op for group-nested targets. Side-scoped
+  // (#233): writes land on the ACTIVE side's stack.
+  ctx.commit(
+    withStackForSide(
+      ctx.doc,
+      ctx.activeSide,
+      mapPcbLeavesById(ctx.activeStack, [...patches.keys()], (l) => {
+        const patch = patches.get(l.id);
+        return patch ? ({ ...l, ...patch } as Layer) : l;
+      }),
+    ),
+  );
 }
 
 export function canAlign(
-  doc: DocState,
+  stack: PcbLayerStack,
   selectedIds: readonly string[],
   reference: Reference,
 ): boolean {
-  return eligibleLayers(doc, selectedIds).length >= minCount('align', reference);
+  return eligibleLayers(stack, selectedIds).length >= minCount('align', reference);
 }
 
 export function canDistribute(
-  doc: DocState,
+  stack: PcbLayerStack,
   selectedIds: readonly string[],
   reference: Reference,
 ): boolean {
-  return eligibleLayers(doc, selectedIds).length >= minCount('distribute', reference);
+  return eligibleLayers(stack, selectedIds).length >= minCount('distribute', reference);
 }
 
 export function applyAlign(
@@ -161,7 +171,7 @@ export function applyAlign(
   reference: Reference,
 ): void {
   reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
-  const targets = eligibleLayers(ctx.doc, selectedIds);
+  const targets = eligibleLayers(ctx.activeStack, selectedIds);
   applyResults(
     ctx,
     targets,
@@ -180,7 +190,7 @@ export function applyDistribute(
   reference: Reference,
 ): void {
   reconcileTextGeometry(ctx.flatLayers, ctx.requestRepaint);
-  const targets = eligibleLayers(ctx.doc, selectedIds);
+  const targets = eligibleLayers(ctx.activeStack, selectedIds);
   applyResults(
     ctx,
     targets,

@@ -3,7 +3,7 @@
 // panel), ONE commit, select the new layer. Extracted from add-actions/
 // add-image.ts (behavior-identical) so the clipboard-paste and drop-import
 // subs can share it instead of re-deriving the scale-to-fit math.
-import { mintId, snapToGrid, type ImageLayer } from '@zpd/core';
+import { mintId, snapToGrid, withStackForSide, type ImageLayer } from '@zpd/core';
 import { insertNewNodeRelativeToSelection } from './insert-relative';
 import type { ToolContext } from './types';
 
@@ -35,16 +35,16 @@ export function importImageFile(file: File, ctx: ToolContext): Promise<void> {
           height: snapToGrid(probe.naturalHeight * scale),
         };
         const nextLayers = insertNewNodeRelativeToSelection(
-          ctx.doc.layers,
+          ctx.activeStack,
           ctx.selectedIds,
           layer,
           DEFAULT_ROLE,
         );
-        if (nextLayers === ctx.doc.layers) {
+        if (nextLayers === ctx.activeStack) {
           resolve(); // refused: commit/select nothing (#191)
           return;
         }
-        ctx.commit({ ...ctx.doc, layers: nextLayers });
+        ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextLayers));
         ctx.select(layer.id);
         resolve();
       };

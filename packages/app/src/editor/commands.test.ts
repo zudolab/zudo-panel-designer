@@ -82,6 +82,10 @@ function stubCtx(overrides: ToolFixtureOverrides = {}): ToolContext {
     closeDialog: vi.fn(),
     ...overrides,
     ...(overrides.doc ? { doc: canonicalDoc(overrides.doc) } : {}),
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return withLiveFlatLayers(ctx);
 }

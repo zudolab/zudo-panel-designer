@@ -47,6 +47,10 @@ function stubCtx() {
     commit,
     select,
     selectIds,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   Object.defineProperty(ctx, 'flatLayers', {
     get: () => projectFlatLayers(ctx.doc.layers),
@@ -131,6 +135,10 @@ function multiCtx(selectedIds: readonly string[]) {
     commit,
     select: vi.fn(),
     selectIds,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return {
     ctx,
@@ -199,6 +207,10 @@ describe('LayerList multi-select', () => {
       commit: vi.fn(),
       select: vi.fn(),
       selectIds,
+      activeSide: 'front',
+      get activeStack() {
+        return (this as unknown as ToolContext).doc.layers;
+      },
     } as unknown as ToolContext;
     render(<LayerList ctx={ctx} selectedIds={['G']} />);
 
@@ -351,6 +363,9 @@ describe('LayerList keyboard access', () => {
     currentCtx = {
       ...ctx,
       doc: nextDoc,
+      // The spread snapshots stubCtx's live activeStack getter — re-point it
+      // at the post-delete stack alongside doc/flatLayers.
+      activeStack: nextDoc.layers,
       flatLayers: projectFlatLayers(nextDoc.layers),
     } as ToolContext;
     rerender(<LayerList ctx={currentCtx} selectedIds={[]} />);
@@ -386,6 +401,10 @@ function nodeTreeCtx(layers: LayerNode[]) {
     commit,
     select: vi.fn(),
     selectIds,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return {
     ctx,
@@ -845,6 +864,10 @@ function fullStackCtx(config: {
     commit,
     select: vi.fn(),
     selectIds,
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return {
     ctx,

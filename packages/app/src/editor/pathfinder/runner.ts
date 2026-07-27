@@ -32,7 +32,7 @@
  *    is no longer the latest is dropped. This is what makes the user's most
  *    recent click win when two ops are in flight at once (and what makes a
  *    double-click apply once, not twice).
- *  - STATE. `doc.layers` identity plus the selection ids, captured at dispatch.
+ *  - STATE. The active side's stack identity plus the selection ids, captured at dispatch.
  *    Every core tree op returns a fresh stack on change and the SAME reference
  *    on a no-op, so reference equality is an exact "the geometry these inputs
  *    came from is still the document" test. It names WHICH of the two moved,
@@ -51,14 +51,14 @@
  * The epoch is deliberately COARSE: it counts mutations without describing
  * them, so it cannot tell a guide drag from a layer edit. Against a host that
  * provides one, ANY document or selection mutation landing during the await
- * cancels the op — including one that left `doc.layers` alone. That is the
+ * cancels the op — including one that left the active stack alone. That is the
  * intended trade: a Path Finder op is cheap and repeatable, reverting a user's
  * edit is not, and the window being traded away is the few milliseconds a
  * boolean takes. (A host that leaves the epoch constant still gets the STATE
  * semantics, where a guides-only edit does not cancel.)
  */
 
-import type { DocState, PcbLayerStack } from '@zpd/core';
+import { withStackForSide, type DocState, type PanelSide, type PcbLayerStack } from '@zpd/core';
 import { createBooleanEngine, type BooleanEngine } from '../geometry-kernel';
 import { applyPathfinderOp, canApplyPathfinderOp } from './dispatch';
 import { applyPathfinderResult } from './mutation';
@@ -79,6 +79,13 @@ export interface PathfinderHost {
   readonly doc: DocState;
   readonly selectedIds: readonly string[];
   readonly mutationEpoch: number;
+  // Side scoping (#233): ops read/write the ACTIVE side's stack, never
+  // doc.layers by name. `activeStack` must be a live read like `doc`
+  // (stackForSide over the same committed doc); a side switch mid-await is
+  // caught by the guards below — it clears the selection, which both bumps
+  // the epoch and changes the ids.
+  readonly activeSide: PanelSide;
+  readonly activeStack: PcbLayerStack;
   commit(next: DocState): void;
   selectIds(ids: readonly string[]): void;
 }
@@ -99,7 +106,7 @@ export interface PathfinderRevision {
 export function pathfinderRevision(host: PathfinderHost): PathfinderRevision {
   return {
     epoch: host.mutationEpoch,
-    layers: host.doc.layers,
+    layers: host.activeStack,
     selectedIds: [...host.selectedIds],
   };
 }
@@ -193,7 +200,7 @@ export function createPathfinderRunner(
     dispatchSeq += 1;
     const seq = dispatchSeq;
 
-    const inputs = resolvePathfinderInputs(host.doc.layers, host.selectedIds);
+    const inputs = resolvePathfinderInputs(host.activeStack, host.selectedIds);
     if (!canApplyPathfinderOp(op, inputs.length)) {
       return { status: 'no-op', op, reason: 'insufficient-inputs' };
     }
@@ -224,14 +231,14 @@ export function createPathfinderRunner(
       return { status: 'no-op', op, reason: 'empty-result' };
     }
 
-    const applied = applyPathfinderResult(host.doc.layers, op, result, consumedIds);
+    const applied = applyPathfinderResult(host.activeStack, op, result, consumedIds);
     if (applied === null) return { status: 'no-op', op, reason: 'not-applicable' };
 
     // ONE commit: the new group, the consumed inputs and the pruned groups are
     // a single full-document snapshot, so one undo reverts the whole shape
     // change. Selection is Editor state, not DocState — selecting the result
     // afterwards adds no second undo entry.
-    host.commit({ ...host.doc, layers: applied.stack });
+    host.commit(withStackForSide(host.doc, host.activeSide, applied.stack));
     host.selectIds(applied.selectionIds);
     return {
       status: 'applied',

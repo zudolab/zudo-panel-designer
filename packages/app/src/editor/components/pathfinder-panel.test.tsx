@@ -63,6 +63,10 @@ function makeHarness(layers: LayerNode[], selectedIds: readonly string[]) {
       epoch += 1;
       selection = ids;
     },
+    activeSide: 'front',
+    get activeStack() {
+      return (this as unknown as ToolContext).doc.layers;
+    },
   } as unknown as ToolContext;
   return { ctx, getHistory: () => history };
 }
@@ -74,7 +78,7 @@ function isDisabled(el: HTMLElement): boolean {
 describe('PathfinderPanel — button rows', () => {
   it('renders "Shape Modes:" and "Pathfinders:" labels with one button per op', () => {
     const { ctx } = makeHarness([rect('a', 0, 0), rect('b', 5, 5)], ['a', 'b']);
-    render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={['a', 'b']} />);
+    render(<PathfinderPanel ctx={ctx} stack={ctx.doc.layers} selectedIds={['a', 'b']} />);
 
     expect(screen.getByText('Shape Modes:')).toBeTruthy();
     expect(screen.getByText('Pathfinders:')).toBeTruthy();
@@ -97,7 +101,7 @@ describe('PathfinderPanel — button rows', () => {
 describe('PathfinderPanel — enable/disable per the min-input table (#208)', () => {
   it('every op is disabled with zero eligible leaves', () => {
     const { ctx } = makeHarness([], []);
-    render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={[]} />);
+    render(<PathfinderPanel ctx={ctx} stack={ctx.doc.layers} selectedIds={[]} />);
     for (const op of PATHFINDER_OPS) {
       expect(isDisabled(screen.getByRole('button', { name: PATHFINDER_OP_LABELS[op] }))).toBe(true);
     }
@@ -105,7 +109,7 @@ describe('PathfinderPanel — enable/disable per the min-input table (#208)', ()
 
   it('divide and outline enable at ONE eligible leaf; the other eight stay disabled', () => {
     const { ctx } = makeHarness([rect('a', 0, 0)], ['a']);
-    render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={['a']} />);
+    render(<PathfinderPanel ctx={ctx} stack={ctx.doc.layers} selectedIds={['a']} />);
     for (const op of PATHFINDER_OPS) {
       const enabled = op === 'divide' || op === 'outline';
       expect(isDisabled(screen.getByRole('button', { name: PATHFINDER_OP_LABELS[op] }))).toBe(
@@ -116,7 +120,7 @@ describe('PathfinderPanel — enable/disable per the min-input table (#208)', ()
 
   it('all ten ops enable at two eligible leaves', () => {
     const { ctx } = makeHarness([rect('a', 0, 0), rect('b', 5, 5)], ['a', 'b']);
-    render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={['a', 'b']} />);
+    render(<PathfinderPanel ctx={ctx} stack={ctx.doc.layers} selectedIds={['a', 'b']} />);
     for (const op of PATHFINDER_OPS) {
       expect(isDisabled(screen.getByRole('button', { name: PATHFINDER_OP_LABELS[op] }))).toBe(
         false,
@@ -137,7 +141,7 @@ describe('PathfinderPanel — enable/disable per the min-input table (#208)', ()
       size: 128.5,
     };
     const { ctx } = makeHarness([rect('a', 0, 0), pattern], ['a', 'p']);
-    render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={['a', 'p']} />);
+    render(<PathfinderPanel ctx={ctx} stack={ctx.doc.layers} selectedIds={['a', 'p']} />);
     // 2 selected total, but only 1 eligible (pattern excluded) -> unite (needs 2) stays disabled.
     expect(isDisabled(screen.getByRole('button', { name: 'Unite' }))).toBe(true);
     // ...while divide (needs only 1) is enabled.
@@ -180,9 +184,13 @@ describe('PathfinderPanel — enable/disable per the min-input table (#208)', ()
       },
       commit: () => {},
       selectIds: () => {},
+      activeSide: 'front',
+      get activeStack() {
+        return (this as unknown as ToolContext).doc.layers;
+      },
     } as unknown as ToolContext;
 
-    render(<PathfinderPanel ctx={ctx} doc={freshDoc} selectedIds={['r1', 'r2']} />);
+    render(<PathfinderPanel ctx={ctx} stack={freshDoc.layers} selectedIds={['r1', 'r2']} />);
 
     // If gating incorrectly read ctx.doc (empty tree), every button — even
     // Divide/Outline (min 1) — would be disabled. Reading the `doc` prop
@@ -200,7 +208,7 @@ describe('PathfinderPanel — wired to the real runner (not a hand-rolled dispat
     'clicking %s commits exactly once through createPathfinderRunner',
     async (op) => {
       const { ctx, getHistory } = makeHarness([rect('a', 0, 0), rect('b', 5, 5)], ['a', 'b']);
-      render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={['a', 'b']} />);
+      render(<PathfinderPanel ctx={ctx} stack={ctx.doc.layers} selectedIds={['a', 'b']} />);
 
       fireEvent.click(screen.getByRole('button', { name: PATHFINDER_OP_LABELS[op] }));
 
@@ -214,7 +222,7 @@ describe('PathfinderPanel — wired to the real runner (not a hand-rolled dispat
 
   it('a disabled button does not dispatch (no commit) — under-minimum selection', async () => {
     const { ctx, getHistory } = makeHarness([rect('a', 0, 0)], ['a']);
-    render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={['a']} />);
+    render(<PathfinderPanel ctx={ctx} stack={ctx.doc.layers} selectedIds={['a']} />);
 
     const uniteBtn = screen.getByRole('button', { name: 'Unite' });
     expect(isDisabled(uniteBtn)).toBe(true);
@@ -228,7 +236,7 @@ describe('PathfinderPanel — wired to the real runner (not a hand-rolled dispat
   it('a click that produces an empty result (no-op) surfaces a toast instead of silently doing nothing', async () => {
     // Two disjoint rects, far apart — Intersect's true result is empty.
     const { ctx, getHistory } = makeHarness([rect('a', 0, 0), rect('b', 1000, 1000)], ['a', 'b']);
-    render(<PathfinderPanel ctx={ctx} doc={ctx.doc} selectedIds={['a', 'b']} />);
+    render(<PathfinderPanel ctx={ctx} stack={ctx.doc.layers} selectedIds={['a', 'b']} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Intersect' }));
 

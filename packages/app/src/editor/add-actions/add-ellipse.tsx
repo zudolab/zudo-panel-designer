@@ -1,4 +1,4 @@
-import { mintId, pcbLayerDefinition, snapToGrid, type ShapeLayer } from '@zpd/core';
+import { mintId, pcbLayerDefinition, snapToGrid, withStackForSide, type ShapeLayer } from '@zpd/core';
 import { Ellipse } from '../components/icons';
 import { registerAddAction } from '../registry/add-actions';
 import { insertNewNodeRelativeToSelection } from '../insert-relative';
@@ -25,13 +25,13 @@ registerAddAction({
       color: pcbLayerDefinition(DEFAULT_ROLE).color,
     };
     const nextLayers = insertNewNodeRelativeToSelection(
-      ctx.doc.layers,
+      ctx.activeStack,
       ctx.selectedIds,
       layer,
       DEFAULT_ROLE,
     );
-    if (nextLayers === ctx.doc.layers) return; // refused: commit/select nothing (#191)
-    ctx.commit({ ...ctx.doc, layers: nextLayers });
+    if (nextLayers === ctx.activeStack) return; // refused: commit/select nothing (#191)
+    ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextLayers));
     ctx.select(layer.id);
   },
 });

@@ -2,7 +2,7 @@
 // point, then hand off to select so the freshly placed text is immediately
 // draggable/resizable/editable — same "create, select, done" shape as
 // add-rect.ts's toolbar action, just driven by a canvas click instead.
-import { mintId, pcbLayerDefinition, type TextLayer } from '@zpd/core';
+import { mintId, pcbLayerDefinition, withStackForSide, type TextLayer } from '@zpd/core';
 import { registerTool } from '../registry/tools';
 import { Text } from '../components/icons';
 import { DEFAULT_FONT_FAMILY, ensureFont } from '../fonts';
@@ -38,13 +38,13 @@ registerTool({
       color: pcbLayerDefinition(DEFAULT_ROLE).color,
     };
     const nextLayers = insertNewNodeRelativeToSelection(
-      ctx.doc.layers,
+      ctx.activeStack,
       ctx.selectedIds,
       layer,
       DEFAULT_ROLE,
     );
-    if (nextLayers === ctx.doc.layers) return; // refused: commit/select nothing (#191)
-    ctx.commit({ ...ctx.doc, layers: nextLayers });
+    if (nextLayers === ctx.activeStack) return; // refused: commit/select nothing (#191)
+    ctx.commit(withStackForSide(ctx.doc, ctx.activeSide, nextLayers));
     ctx.setActiveTool('select');
     ctx.select(layer.id);
     // The renderer's canonical geometry owns readiness invalidation.
