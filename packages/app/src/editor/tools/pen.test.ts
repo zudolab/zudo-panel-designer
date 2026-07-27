@@ -144,6 +144,12 @@ function makeHarness(onActiveToolChange?: (id: string) => void) {
       activeToolId = id;
       onActiveToolChange?.(id);
     },
+    activeSide: 'front',
+    get activeStack() {
+      return history.present.layers;
+    },
+    setActiveSide: () => {},
+    clearToolDraft: () => {},
     requestRepaint: () => {
       repaintCalls += 1;
     },

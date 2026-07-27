@@ -43,6 +43,8 @@ function stubCtx(overrides: Partial<CommandContext> = {}): CommandContext {
     selectIds: vi.fn(),
     setCamera: vi.fn(),
     setActiveTool: vi.fn(),
+    setActiveSide: vi.fn(),
+    clearToolDraft: vi.fn(),
     requestRepaint: vi.fn(),
     evictImageCache: vi.fn(),
     openDialog: vi.fn(),

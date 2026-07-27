@@ -19,9 +19,11 @@ import {
   mapPcbLeavesById,
   PANEL_HEIGHT_MM,
   panelWidthMm,
+  stackForSide,
   translatePathLayer,
   type DocState,
   type Layer,
+  type PanelSide,
 } from '@zpd/core';
 import { projectFlatLayers } from './flat-projection';
 import { fit, project, unproject, zoomAt, type Camera } from './camera';
@@ -100,6 +102,12 @@ export function Editor() {
   // (view-only state; see showOutsidePanel above). When OFF, guides neither
   // render nor accept drag interaction.
   const [showGuides, setShowGuides] = useState(true);
+  // Which panel face is being edited (#230) — default front, not persisted
+  // (view-only state; see showOutsidePanel above). Mutate ONLY through
+  // ctx.setActiveSide: an actual switch clears the selection and any
+  // in-progress tool draft. No UI consumes this yet — the Front/Back tab
+  // switcher and the side-aware editor migration land in #233.
+  const [activeSide, setActiveSideState] = useState<PanelSide>('front');
   const [, setAssetVersion] = useState(0); // bump repaints when an image loads
   const [, setRepaintNonce] = useState(0); // tools ask for repaints via ctx
 
@@ -148,6 +156,14 @@ export function Editor() {
   const rawSelectedIdsRef = useRef(rawSelectedIds);
   const panelRef = useRef(panel);
   const showGuidesRef = useRef(showGuides);
+  // activeSide's ref is ALSO written eagerly by ctx.setActiveSide (not only
+  // in the passive resync below): setActiveSide's same-side no-op guard reads
+  // it, and a switch-then-switch-back within one handler must not no-op
+  // against a stale value. The passive resync then rewrites the same value.
+  const activeSideRef = useRef(activeSide);
+  // For ctx.clearToolDraft (#230): the ctx object is built once, so it reads
+  // the active tool id through a ref like every other live read.
+  const activeToolIdRef = useRef(activeToolId);
   // canvasSize as a ref too (issue #76): lets zoomStep below stay a STABLE
   // callback (empty deps) instead of recreated every resize — see zoomStep.
   const canvasSizeRef = useRef(canvasSize);
@@ -158,6 +174,8 @@ export function Editor() {
     rawSelectedIdsRef.current = rawSelectedIds;
     panelRef.current = panel;
     showGuidesRef.current = showGuides;
+    activeSideRef.current = activeSide;
+    activeToolIdRef.current = activeToolId;
     canvasSizeRef.current = canvasSize;
   });
 
@@ -190,9 +208,11 @@ export function Editor() {
   // own wheel handler (below) keeps handling in-app zoom unchanged.
   useEffect(() => installBrowserZoomGuard(), []);
 
-  // Built once — all mutators are stable, all reads go through refs.
-  const ctx = useMemo<ToolContext>(
-    () => ({
+  // Built once — all mutators are stable, all reads go through refs. A
+  // statement body (not a bare object literal) so setActiveSide /
+  // clearToolDraft can hand the context itself to the tool lifecycle hooks.
+  const ctx = useMemo<ToolContext>(() => {
+    const context: ToolContext = {
       get doc() {
         return docRef.current;
       },
@@ -215,6 +235,12 @@ export function Editor() {
       get flatLayers() {
         return projectFlatLayers(docRef.current.layers);
       },
+      get activeSide() {
+        return activeSideRef.current;
+      },
+      get activeStack() {
+        return stackForSide(docRef.current, activeSideRef.current);
+      },
       get mutationEpoch() {
         // Sum of two independently monotonic counters, so it changes whenever
         // either half does. Only inequality is ever read from it.
@@ -235,25 +261,48 @@ export function Editor() {
       setCamera: (next) =>
         setCameraState((prev) => (typeof next === 'function' ? (prev ? next(prev) : prev) : next)),
       setActiveTool: setActiveToolId,
+      setActiveSide: (side) => {
+        // Same-side is a strict no-op — must not clear selection/drafts.
+        if (activeSideRef.current === side) return;
+        // Eager ref write (see activeSideRef's declaration): the guard above
+        // and any read within this same handler need the fresh side now, not
+        // after the passive resync.
+        activeSideRef.current = side;
+        setActiveSideState(side);
+        // Lifecycle (#230): the old side's selection points into a stack the
+        // editor is no longer showing, and an in-progress draft was drawn
+        // against it. Clearing the selection also bumps the selection epoch,
+        // so async actions observe the switch via ctx.mutationEpoch.
+        setRawSelectedIds([]);
+        context.clearToolDraft();
+      },
+      clearToolDraft: () => {
+        // The deactivate/activate cycle IS the draft-discard contract every
+        // tool already implements for tool switches (see prevToolRef effect
+        // below); cycling the same tool discards the draft and nothing else.
+        const tool = getTool(activeToolIdRef.current);
+        tool?.onDeactivate?.(context);
+        tool?.onActivate?.(context);
+      },
       requestRepaint: () => setRepaintNonce((n) => n + 1),
       evictImageCache: (layers) => reconcileImageCache(imagesRef.current, layers),
       openDialog,
       closeDialog,
-    }),
-    [
-      commit,
-      replace,
-      reset,
-      beginGesture,
-      abortGesture,
-      undo,
-      redo,
-      readMutationEpoch,
-      readSelectedId,
-      readSelectedIds,
-      setRawSelectedIds,
-    ],
-  );
+    };
+    return context;
+  }, [
+    commit,
+    replace,
+    reset,
+    beginGesture,
+    abortGesture,
+    undo,
+    redo,
+    readMutationEpoch,
+    readSelectedId,
+    readSelectedIds,
+    setRawSelectedIds,
+  ]);
 
   // Clipboard (#74): Cmd/Ctrl+C/X/D/A (wired into the keydown fallback below)
   // plus its own self-contained window `paste` listener — the SOLE Cmd/Ctrl+V
@@ -346,6 +395,12 @@ export function Editor() {
       get flatLayers() {
         return ctx.flatLayers;
       },
+      get activeSide() {
+        return ctx.activeSide;
+      },
+      get activeStack() {
+        return ctx.activeStack;
+      },
       get mutationEpoch() {
         return ctx.mutationEpoch;
       },
@@ -362,6 +417,8 @@ export function Editor() {
       selectIds: ctx.selectIds,
       setCamera: ctx.setCamera,
       setActiveTool: ctx.setActiveTool,
+      setActiveSide: ctx.setActiveSide,
+      clearToolDraft: ctx.clearToolDraft,
       requestRepaint: ctx.requestRepaint,
       evictImageCache: ctx.evictImageCache,
       openDialog: ctx.openDialog,

@@ -113,6 +113,12 @@ export type PcbLayerRole = 'copper' | 'solder-mask' | 'silkscreen';
 // only the structural container ids encode it.
 export type PcbLayerSide = 'front' | 'back';
 
+// The editor-facing side selection ("which face am I viewing/editing").
+// Deliberately an alias of PcbLayerSide — one 'front' | 'back' vocabulary
+// shared by layer containers and editor state, never two drifting unions.
+// See panel-side.ts for the doc-level accessors keyed by this type.
+export type PanelSide = PcbLayerSide;
+
 // Front containers keep their original (pre-back-stack) ids; back containers
 // insert the side so the six structural ids never collide across stacks.
 export type PcbLayerContainerId<R extends PcbLayerRole = PcbLayerRole> =
@@ -145,7 +151,8 @@ export type GuideOrientation = 'horizontal' | 'vertical';
 // - 'horizontal' is a horizontal line at y = position (spans the panel width)
 // - 'vertical'   is a vertical line at x = position (spans the panel height)
 // position is mm in document space. Hidden guides render faintly (ruler UI, #54)
-// and never participate in snapping (#55).
+// and never participate in snapping (#55). Guides are side-agnostic: ONE
+// shared set, visible on both panel faces (material-holes epic decision, #230).
 export interface Guide {
   id: string;
   orientation: GuideOrientation;
