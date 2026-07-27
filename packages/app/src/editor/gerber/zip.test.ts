@@ -209,6 +209,90 @@ describe('gerberZipBytes — a document with shape + path + text + pattern layer
   });
 });
 
+// #236's acceptance: what each material's back files actually CONTAIN, from a
+// real document through the real pipeline — not the hand-authored fixtures.
+describe('per-material back content matrix (#236)', () => {
+  function backRect(id: string): ShapeLayer {
+    // Back-view x ∈ [45.3, 55.3] on the 80.9 mm panel mirrors to canonical
+    // [25.6, 35.6] — the nanometre coordinate tokens asserted below.
+    return {
+      id,
+      name: id,
+      type: 'shape',
+      shape: 'rect',
+      x: 45.3,
+      y: 2,
+      width: 10,
+      height: 4,
+      color: 2,
+    };
+  }
+
+  function matrixDoc(
+    material: DocState['material'],
+    back: Partial<Record<'copper' | 'solder-mask' | 'silkscreen', ShapeLayer[]>> = {},
+  ): DocState {
+    return {
+      ...createDefaultDoc(),
+      material,
+      panelHp: HP,
+      layers: [
+        createPcbLayerContainer('copper', []),
+        createPcbLayerContainer('solder-mask', []),
+        createPcbLayerContainer('silkscreen', []),
+      ],
+      backLayers: [
+        createPcbLayerContainer('back', 'copper', back.copper ?? []),
+        createPcbLayerContainer('back', 'solder-mask', back['solder-mask'] ?? []),
+        createPcbLayerContainer('back', 'silkscreen', back.silkscreen ?? []),
+      ],
+      guides: [],
+    };
+  }
+
+  async function zipText(state: DocState): Promise<Map<string, string>> {
+    const result = await buildGerberIr(state, { engine });
+    if (!result.ok) throw new Error(`refused: ${result.refusals.map((r) => r.code).join(', ')}`);
+    const unzipped = unzipSync(gerberZipBytes(result.ir, OPTIONS));
+    return new Map(Object.entries(unzipped).map(([name, bytes]) => [name, strFromU8(bytes)]));
+  }
+
+  it('FR-4 without back artwork: .GBL/.GBS carry the hole fabrication, .GBO is present but empty', async () => {
+    const entries = await zipText(matrixDoc('fr4'));
+    expect(entries.get(`zpd-panel-${HP}hp.GBS`)).toContain('G36*');
+    expect(entries.get(`zpd-panel-${HP}hp.GBL`)).toContain('G36*');
+    const gbo = entries.get(`zpd-panel-${HP}hp.GBO`);
+    expect(gbo).toBeDefined();
+    expect(gbo).not.toContain('G36*');
+  });
+
+  it('FR-4 with back artwork: the back files carry it, X-mirrored into canonical coordinates', async () => {
+    const entries = await zipText(
+      matrixDoc('fr4', { silkscreen: [backRect('bs')], copper: [backRect('bc')] }),
+    );
+    for (const extension of ['GBO', 'GBL']) {
+      const text = entries.get(`zpd-panel-${HP}hp.${extension}`)!;
+      expect(text).toContain('X25600000');
+      expect(text).toContain('X35600000');
+      // Not at the authored back-view coordinate — that would be a zero/double
+      // mirror (45.3 mm → X45300000).
+      expect(text).not.toContain('X45300000');
+    }
+  });
+
+  it('alumi: no .GBL/.GBO at all, and .GBS carries the openings only — back artwork is ignored', async () => {
+    const withArtwork = await zipText(
+      matrixDoc('alumi', { silkscreen: [backRect('bs')], copper: [backRect('bc')] }),
+    );
+    const names = [...withArtwork.keys()];
+    expect(names).not.toContain(`zpd-panel-${HP}hp.GBL`);
+    expect(names).not.toContain(`zpd-panel-${HP}hp.GBO`);
+    const bare = await zipText(matrixDoc('alumi'));
+    expect(withArtwork.get(`zpd-panel-${HP}hp.GBS`)).toContain('G36*');
+    expect(withArtwork.get(`zpd-panel-${HP}hp.GBS`)).toBe(bare.get(`zpd-panel-${HP}hp.GBS`));
+  });
+});
+
 describe('gerberZipFilename', () => {
   it('encodes format, hp, and material via the shared filename helper (#229)', () => {
     expect(gerberZipFilename({ format: '3U', panelHp: 12, material: 'fr4' })).toBe(

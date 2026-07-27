@@ -167,13 +167,45 @@ describe('GerberIr contract (Decision 0)', () => {
     expect(ir.drill.npth.slots).toHaveLength(4);
   });
 
-  it('back layers stay empty on this branch — #236 owns back extraction AND back hole artwork', async () => {
-    // #235's injections are FRONT-only: back-extract.ts derives the back
-    // screw-hole regions from panelHoles() itself, so an injection here too
-    // would double every back hole at the merge.
-    const ir = ok(await build(doc()));
-    const backRegions = ir.layers.filter((l) => l.role.startsWith('b-')).map((l) => l.regions);
-    expect(backRegions).toEqual([[], [], []]);
+  // #235's branch also carried a 'back layers stay empty on this branch' test.
+  // It was true only in isolation — #236 populates those roles — so it was
+  // dropped at the merge rather than kept and weakened. Its intent (prove the
+  // two seams don't BOTH inject and double every back hole) is covered more
+  // strictly by the region counts below: if #235's front-only injections
+  // regressed to include back roles, these would read 8, not 4.
+  it('projects doc.backLayers through the #236 seam — mirrored artwork plus hole fabrication', async () => {
+    const state: DocState = {
+      ...doc(),
+      backLayers: [
+        createPcbLayerContainer('back', 'copper', []),
+        createPcbLayerContainer('back', 'solder-mask', []),
+        createPcbLayerContainer('back', 'silkscreen', [
+          rect({ id: 'bs', x: 5, y: 10, width: 10, height: 5, color: 2 }),
+        ]),
+      ],
+    };
+    const ir = ok(await build(state));
+    const byRole = new Map(ir.layers.map((l) => [l.role, l]));
+    // Back artwork lands X-mirrored into front-view doc space (Decision 13):
+    // authored back-view x ∈ [5, 15] reads as [WIDTH − 15, WIDTH − 5].
+    const silk = byRole.get('b-silkscreen')!;
+    expect(silk.regions).toHaveLength(1);
+    expect(bounds(silk.regions[0].outer)).toEqual([WIDTH - 15, 10, WIDTH - 5, 15]);
+    // Screw-hole fabrication from the canonical template coordinates
+    // (Decisions 11/12): opening stadiums on the back mask, copper stadiums on
+    // the FR-4 back copper. 3U-16hp carries four slots.
+    expect(byRole.get('b-solder-mask')!.regions).toHaveLength(4);
+    expect(byRole.get('b-copper')!.regions).toHaveLength(4);
+  });
+
+  it('fills the alumi B.Mask with the screw-hole openings only (Decision 12)', async () => {
+    const ir = ok(await build({ ...doc(), material: 'alumi' }));
+    const mask = ir.layers.find((l) => l.role === 'b-solder-mask')!;
+    expect(mask.regions).toHaveLength(4);
+    for (const region of mask.regions) {
+      expect(polygonSignedArea(region.outer)).toBeGreaterThan(0);
+      expect(region.holes).toEqual([]);
+    }
   });
 
   it('keeps geometry in DOCUMENT space, +y down, un-flipped', async () => {
@@ -355,11 +387,13 @@ describe('screw-hole fabrication injections (#235, Decisions 11/12)', () => {
     expect(bounds(ir.layers[0].regions[0].outer)).toEqual([30, 50, 40, 60]);
   });
 
-  it('injects nothing on the alumi back mask — its openings are #236 back-extract territory', async () => {
-    const ir = ok(await build({ ...doc(), material: 'alumi' }));
-    const backMask = ir.layers.find((l) => l.role === 'b-solder-mask')!;
-    expect(backMask.regions).toEqual([]);
-  });
+  // Dropped at the merge: #235's branch asserted the alumi back mask was EMPTY
+  // here, which held only while back extraction was unimplemented. #236 now
+  // fills it with the four Decision-12 openings, so that assertion contradicted
+  // the spec rather than protecting it. The invariant it was reaching for —
+  // injectHoleFabrication names FRONT roles only — is asserted at the seam
+  // itself, and more strictly (exact key sets), by holes.test.ts's
+  // 'injects FRONT roles only' case. Not restated here.
 
   it('injects nothing on silkscreen or the outline', async () => {
     const ir = ok(await build(doc()));
