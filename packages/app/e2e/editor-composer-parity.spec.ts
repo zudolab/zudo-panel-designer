@@ -79,22 +79,30 @@ test('@smoke clipboard: a zpd envelope paste inserts fresh-id clones at the 2mm 
   await openEditor(page);
   const before = await bridge(page).getLayerCount();
 
+  // Envelope version + shape must match use-clipboard.ts's ENVELOPE_VERSION
+  // (3): material-tagged roots, `{material, node}`. Pre-v3 envelopes are no
+  // longer accepted at all — epic #226's compat cut deleted that path — so a
+  // stale version here makes the paste a silent no-op, not a failure at the
+  // paste itself.
   await page.evaluate(() => {
     const envelope = {
       app: 'zpd',
       kind: 'layers',
-      version: 1,
+      version: 3,
       layers: [
         {
-          id: 'env-rect',
-          name: 'Envelope rect',
-          type: 'shape',
-          shape: 'rect',
-          x: 5,
-          y: 5,
-          width: 10,
-          height: 10,
-          color: 1,
+          material: 'copper',
+          node: {
+            id: 'env-rect',
+            name: 'Envelope rect',
+            type: 'shape',
+            shape: 'rect',
+            x: 5,
+            y: 5,
+            width: 10,
+            height: 10,
+            color: 1,
+          },
         },
       ],
     };

@@ -20,6 +20,7 @@ import {
   importPanelJson,
   MOD,
   openEditor,
+  seedStoredDoc,
   toScreenPoint,
 } from './helpers';
 
@@ -326,36 +327,9 @@ const TEXT_LAYER: TextLayer = {
 test('@smoke a rotated text member bakes about its canvas-measured pivot (doc state, not pixels)', async ({
   page,
 }) => {
-  await page.addInitScript((textLayer) => {
-    localStorage.setItem(
-      'zpd.doc.v1',
-      JSON.stringify({
-        version: 1,
-        savedAt: 0,
-        config: {
-          version: 4,
-          app: 'zpd',
-          panel: { hp: 12, widthMm: 60.6, heightMm: 128.5 },
-          palette: ['Black', 'Gold', 'White'],
-          layers: [
-            {
-              id: 'demo-rect',
-              name: 'Rect',
-              type: 'shape',
-              shape: 'rect',
-              x: 8,
-              y: 14,
-              width: 24,
-              height: 16,
-              color: 2,
-            },
-            textLayer,
-          ],
-          guides: [],
-        },
-      }),
-    );
-  }, TEXT_LAYER);
+  // Both roots are color 2, so Silkscreen is their natural container and
+  // forceNodeMaterial leaves the seeded colors untouched.
+  await seedStoredDoc(page, { hp: 12, layers: { silkscreen: [RECT, TEXT_LAYER] } });
   await openEditor(page);
   // Text metrics are measured asynchronously (font load + canvas measure —
   // see text-geometry.ts); poll rather than assume they're ready the instant

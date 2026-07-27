@@ -65,47 +65,67 @@ test('@smoke export -> import a grouped doc round-trips intact at v6', async ({ 
   expect(docAfter).toEqual(docBefore);
 });
 
-test('@smoke a pre-existing v3 fixture migrates into the v5 fixed material stack without losing leaves', async ({
+// These two tests used to be one: "a pre-existing v3 fixture migrates into the
+// v5 fixed material stack without losing leaves". Epic #226 deleted migration
+// outright (no users yet — see the compat-cut notes in core/serialize.ts and
+// editor/doc-store.ts), so there is no longer any migration to assert. They now
+// pin the contract that REPLACED it, which is not one behaviour but two: an
+// imported pre-v6 file is refused and the open document survives, while a
+// pre-v6 payload already in storage simply boots the default document.
+//
+// legacy-v3-panel.json is deliberately kept as the fixture. A well-formed but
+// out-of-date zpd file is a different input class from the malformed JSON
+// covered by editor-composer-parity.spec.ts's garbage-import test, and it is
+// the one a real user hits after a rollback.
+
+test('@smoke a pre-v6 panel file is refused on import, leaving the open document untouched', async ({
   page,
 }) => {
   await openEditor(page);
-  await importPanelJson(page, V3_FIXTURE);
+  const before = await bridge(page).serialize();
 
-  const fixture = JSON.parse(fs.readFileSync(V3_FIXTURE, 'utf-8')) as {
-    version: number;
-    layers: { id: string; type: string; name: string }[];
-  };
+  const fixture = JSON.parse(fs.readFileSync(V3_FIXTURE, 'utf-8')) as { version: number };
   expect(fixture.version).toBe(3);
 
-  // A v3 doc has no fixed containers or group nodes. Migration preserves the
-  // ordinary leaves while deterministically partitioning their legacy colors.
-  const tree = await bridge(page).getLayerTree();
-  expect(tree.every((n) => n.kind === 'layer')).toBe(true);
-  expect(tree.map((n) => n.id)).toEqual(fixture.layers.map((l) => l.id));
-  expect(tree.map((n) => (n.kind === 'layer' ? n.type : null))).toEqual(
-    fixture.layers.map((l) => l.type),
-  );
-
-  expect(
-    (await bridge(page).getMaterialLayers()).map(({ id, material }) => ({ id, material })),
-  ).toEqual([
-    { id: 'legacy-copper', material: 'copper' },
-    { id: 'legacy-mask', material: 'solder-mask' },
-    { id: 'legacy-silkscreen', material: 'silkscreen' },
+  // Not importPanelJson(): that helper confirms the "Replace current panel?"
+  // dialog, and the whole point here is that a rejected file never reaches it.
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByTitle('Import panel config JSON').click(),
   ]);
+  await chooser.setFiles(V3_FIXTURE);
 
-  // Re-serializing the migrated doc emits the canonical v6 physical stack,
-  // never the legacy flat v3 shape.
-  const reserialized = await bridge(page).serialize();
-  expect(reserialized.version).toBe(6);
-  expect((await bridge(page).getPcbLayerStack()).map((root) => root.role)).toEqual([
-    'copper',
-    'solder-mask',
-    'silkscreen',
-  ]);
-  expect((await bridge(page).getLayerTree()).map((node) => node.id)).toEqual(
-    fixture.layers.map((layer) => layer.id),
-  );
+  // The toast names the version as the reason, so this can't pass on some
+  // unrelated parse failure that happens to share the title.
+  await expect(page.getByText('Could not import panel JSON')).toBeVisible();
+  await expect(page.getByText('this build reads only v6')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Replace current panel?' })).toHaveCount(0);
+
+  expect(await bridge(page).serialize()).toStrictEqual(before);
+});
+
+test('@smoke a pre-v6 autosave entry boots the default document instead of migrating it', async ({
+  page,
+}) => {
+  // Seeded raw, NOT via seedStoredDoc: that helper always writes the current
+  // schema, and a stale payload is exactly what this test needs. The storage
+  // envelope stays current (v2) so the ONLY thing under test is the pre-v6
+  // config inside it. doc-store.test.ts covers the sibling cases at the unit
+  // level (legacy zpd.doc.v1 key, corrupt bytes, retention of the raw entry).
+  const legacyConfig = fs.readFileSync(V3_FIXTURE, 'utf-8');
+  await page.addInitScript((config) => {
+    localStorage.setItem(
+      'zpd.doc.v2',
+      JSON.stringify({ version: 2, savedAt: 0, config: JSON.parse(config) }),
+    );
+  }, legacyConfig);
+  await openEditor(page);
+
+  // The demo document, not the fixture's legacy-* leaves.
+  const ids = (await bridge(page).getLayerTree()).map((node) => node.id);
+  expect(ids).not.toContain('legacy-copper');
+  expect(ids).toContain('demo-rect');
+  expect((await bridge(page).serialize()).version).toBe(6);
 });
 
 test('@smoke copy -> paste a group across the v3 material clipboard envelope preserves structure with fresh ids', async ({
